@@ -6,6 +6,7 @@ from typing import Callable
 
 import pandas as pd
 
+from pandas_engine.money import money_series
 from utils.table_parser import AMOUNT_COL_KEYWORDS, normalize_person_name
 from utils.semantic_schema import semantic_columns
 
@@ -92,6 +93,73 @@ class AggregationIntent:
     count_unit: str = ""
 
 
+@dataclass(frozen=True)
+class AmountColumnSelection:
+    candidates: tuple[str, ...]
+    selected: str | None
+
+
+def amount_column_candidates(df: pd.DataFrame) -> list[str]:
+    """공통 스키마와 실제 헤더에서 금액 컬럼 후보를 찾는다."""
+    mapped = semantic_columns(df, concept="measure", data_type="money")
+    if mapped:
+        return mapped
+    return [
+        str(column)
+        for column in df.columns
+        if any(keyword in str(column) for keyword in AMOUNT_COL_KEYWORDS)
+    ]
+
+
+def _comparison_tokens(value: object) -> list[str]:
+    """문서별 단어 목록 없이 질문·헤더의 실제 구성 토큰을 만든다."""
+    text = str(value or "").casefold().replace("_", " ")
+    return [
+        token
+        for token in re.findall(r"[0-9]+[a-z가-힣]+|[a-z]+[0-9]+|[a-z가-힣]+|[0-9]+", text)
+        if len(token) >= 2
+    ]
+
+
+def _amount_column_score(question: str, column: str) -> int:
+    question_tokens = _comparison_tokens(question)
+    column_tokens = _comparison_tokens(column)
+    score = 0
+    for question_token in question_tokens:
+        matches = [
+            min(len(question_token), len(column_token))
+            for column_token in column_tokens
+            if question_token in column_token or column_token in question_token
+        ]
+        score += max(matches, default=0)
+    return score
+
+
+def resolve_amount_column(df: pd.DataFrame, question: str) -> AmountColumnSelection:
+    """실제 후보 헤더와 질문이 명확히 연결될 때만 금액 컬럼을 선택한다."""
+    candidates = tuple(amount_column_candidates(df))
+    if len(candidates) == 1:
+        return AmountColumnSelection(candidates, candidates[0])
+    if not candidates:
+        return AmountColumnSelection(candidates, None)
+
+    ranked = sorted(
+        ((_amount_column_score(question, column), index, column)
+         for index, column in enumerate(candidates)),
+        key=lambda item: (-item[0], item[1]),
+    )
+    best_score, _, best_column = ranked[0]
+    second_score = ranked[1][0]
+    # 일반적인 공통어 하나가 우연히 더 맞는 정도로는 자동 선택하지 않는다.
+    selected = best_column if best_score >= 2 and best_score - second_score >= 2 else None
+    return AmountColumnSelection(candidates, selected)
+
+
+def amount_column_clarification(candidates: tuple[str, ...] | list[str]) -> str:
+    labels = ", ".join(str(column) for column in candidates)
+    return f"금액 항목이 여러 개입니다. 다음 중 계산할 항목을 질문에 포함해 주세요: {labels}"
+
+
 def detect_aggregation_intents(question: str) -> list[AggregationIntent]:
     """질문에 포함된 모든 기본 통계 연산을 의미 충돌 없이 반환한다."""
     text = str(question or "")
@@ -171,20 +239,10 @@ def aggregation_notice(message: str, *, kind: str = "error") -> dict[str, object
 
 def _amount_series(
     df: pd.DataFrame,
-    to_numeric_clean: Callable[[pd.Series], pd.Series],
+    amount_column: str,
 ) -> tuple[pd.Series, str, int]:
-    amount_cols = semantic_columns(df, concept="measure", data_type="money")
-    if not amount_cols:
-        amount_cols = [
-            col for col in df.columns
-            if any(keyword in str(col) for keyword in AMOUNT_COL_KEYWORDS)
-        ]
-    if not amount_cols:
-        return pd.Series(dtype=float), "금액", len(df)
-    numeric = pd.Series(float("nan"), index=df.index, dtype=float)
-    for col in amount_cols:
-        numeric = numeric.fillna(to_numeric_clean(df[col]))
-    label = str(amount_cols[0]) if len(amount_cols) == 1 else "금액"
+    numeric = money_series(df, amount_column)
+    label = str(amount_column)
     return numeric, label, int(numeric.isna().sum())
 
 
@@ -228,7 +286,7 @@ def aggregate_rows(
     sources: list[str],
     intent: AggregationIntent,
     *,
-    to_numeric_clean: Callable[[pd.Series], pd.Series],
+    question: str = "",
     count_valid_name_rows: Callable[[pd.DataFrame], int],
 ) -> tuple[object, list[str]]:
     """이미 선택·필터링된 행에 기본 통계를 적용한다.
@@ -260,7 +318,19 @@ def aggregate_rows(
             "matched_rows": int(len(working)),
         }, sources
 
-    numeric, label, invalid_rows = _amount_series(working, to_numeric_clean)
+    amount_selection = resolve_amount_column(working, question)
+    if not amount_selection.candidates:
+        return aggregation_notice("집계할 수 있는 금액 컬럼이 없습니다."), sources
+    if amount_selection.selected is None:
+        return aggregation_notice(
+            amount_column_clarification(amount_selection.candidates),
+            kind="clarification",
+        ), sources
+
+    numeric, label, invalid_rows = _amount_series(
+        working,
+        amount_selection.selected,
+    )
     valid = numeric.dropna()
     if valid.empty:
         return aggregation_notice("집계할 수 있는 금액 데이터가 없습니다."), sources

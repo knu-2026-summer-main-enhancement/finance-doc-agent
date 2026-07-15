@@ -212,6 +212,53 @@ class AggregationQueryTest(unittest.TestCase):
         intents = detect_aggregation_intents("가장 많이 낸 사람과 가장 적게 낸 사람 알려줘")
         self.assertEqual([intent.operation for intent in intents], ["max", "min"])
 
+    def test_multiple_amount_columns_are_selected_from_runtime_headers(self):
+        raw = pd.DataFrame([
+            {
+                "이름": "김하늘",
+                "융합인재_1단계_장학금액": "100,000",
+                "col_2단계_목표달성_장학금_지급_예정_금액": "300,000",
+            },
+            {
+                "이름": "이바다",
+                "융합인재_1단계_장학금액": "200,000",
+                "col_2단계_목표달성_장학금_지급_예정_금액": "400,000",
+            },
+        ])
+        df = _clean_dataframe(raw, source_file="multi_amount.xlsx", context_prefix="s0")
+        self.assertIsNotNone(df)
+        _df_namespace.clear()
+        _df_namespace["df0"] = df
+        _df_sources["df0"] = "multi_amount.xlsx"
+        _df_labels["df0"] = "다중 금액 테스트"
+
+        first, _ = _query_pandas_direct("1단계 장학금 총액 알려줘")
+        second, _ = _query_pandas_direct("2단계 목표달성 장학금 총액 알려줘")
+
+        self.assertEqual(first["label"], "융합인재_1단계_장학금액")
+        self.assertEqual(first["value"], 300_000)
+        self.assertEqual(second["label"], "col_2단계_목표달성_장학금_지급_예정_금액")
+        self.assertEqual(second["value"], 700_000)
+
+    def test_ambiguous_multiple_amount_columns_request_clarification(self):
+        raw = pd.DataFrame([
+            {"이름": "김하늘", "기준_장학금액": "100,000", "지급_장학금액": "200,000"},
+        ])
+        df = _clean_dataframe(raw, source_file="ambiguous.xlsx", context_prefix="s0")
+        self.assertIsNotNone(df)
+        _df_namespace.clear()
+        _df_namespace["df0"] = df
+        _df_sources["df0"] = "ambiguous.xlsx"
+        _df_labels["df0"] = "모호한 금액 테스트"
+
+        result, sources = _query_pandas_direct("장학금 총액 알려줘")
+
+        self.assertEqual(result["type"], "aggregation_notice")
+        self.assertEqual(result["kind"], "clarification")
+        self.assertIn("기준_장학금액", result["message"])
+        self.assertIn("지급_장학금액", result["message"])
+        self.assertEqual(sources, ["ambiguous.xlsx"])
+
 
 if __name__ == "__main__":
     unittest.main()

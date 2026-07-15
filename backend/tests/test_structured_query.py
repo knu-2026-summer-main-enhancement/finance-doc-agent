@@ -118,6 +118,19 @@ class StructuredQueryTest(unittest.TestCase):
         self.assertIn("10,000,000원", answer)
         self.assertIn("총 2회", answer)
 
+    def test_formatter_does_not_silently_choose_first_amount_column(self):
+        rows = pd.DataFrame([
+            {"이름": "김하늘", "기준_지원금액": "100,000", "실제_지원금액": "200,000"},
+        ])
+
+        ambiguous = _format_dataframe_result_for_question(rows, "김하늘 지원금액 알려줘")
+        selected = _format_dataframe_result_for_question(rows, "김하늘 실제 지원금액 알려줘")
+
+        self.assertIn("기준_지원금액", ambiguous)
+        self.assertIn("실제_지원금액", ambiguous)
+        self.assertIn("200,000", selected)
+        self.assertNotIn("100,000", selected)
+
 
 if __name__ == "__main__":
     unittest.main()

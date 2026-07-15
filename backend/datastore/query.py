@@ -10,8 +10,11 @@ from pandas_engine.aggregation import (
     AggregationIntent,
     aggregate_rows,
     aggregation_notice as _aggregation_notice,
+    amount_column_clarification,
     detect_aggregation_intents,
+    resolve_amount_column,
 )
+from pandas_engine.money import money_series
 from utils.table_parser import normalize_person_name, make_mask_pattern, is_masked_name, AMOUNT_COL_KEYWORDS
 from utils.semantic_schema import semantic_columns
 
@@ -87,9 +90,10 @@ def _series_norm(series: pd.Series) -> pd.Series:
 def _has_valid_amount(rows: pd.DataFrame, amount_cols: list[str]) -> pd.DataFrame:
     if not amount_cols or rows.empty:
         return rows
-    valid = rows[amount_cols].apply(
-        lambda col: ~col.astype(str).isin(["", "0", "-", "없음", "None", "nan"])
-    ).any(axis=1)
+    masks = [money_series(rows, column).notna() for column in amount_cols if column in rows]
+    if not masks:
+        return rows.iloc[0:0]
+    valid = pd.concat(masks, axis=1).any(axis=1)
     return rows[valid]
 
 
@@ -339,10 +343,15 @@ def _query_pandas_direct_base(question: str) -> tuple[object, list[str]]:
 
     # ── 단순 금액 질문: 실제 금액 컬럼명을 유지해 반환 ─────────────────────────
     if _is_amount_question(question):
-        amount_cols = _find_amount_cols(filtered)
-        if len(amount_cols) == 1:
-            amount_col = amount_cols[0]
-            nums = _to_numeric_clean(filtered[amount_col]).dropna()
+        amount_selection = resolve_amount_column(filtered, question)
+        if len(amount_selection.candidates) > 1 and amount_selection.selected is None:
+            return _aggregation_notice(
+                amount_column_clarification(amount_selection.candidates),
+                kind="clarification",
+            ), [source]
+        if amount_selection.selected:
+            amount_col = amount_selection.selected
+            nums = money_series(filtered, amount_col).dropna()
             if not nums.empty:
                 if len(nums) == 1 or len(filtered) == 1:
                     return _amount_payload(amount_col, float(nums.iloc[0]), None), [source]
@@ -391,56 +400,6 @@ def _select_best_source_rows(result: pd.DataFrame, question: str) -> pd.DataFram
 def _masked_shape(value: object) -> str:
     key = normalize_person_name(value)
     return "".join("*" if ch == "*" else ("가" if "가" <= ch <= "힣" else ch) for ch in key)
-
-
-def _amount_values_from_cell(value: object) -> list[float]:
-    """OCR 금액 문자열을 안전하게 숫자 후보 리스트로 변환한다.
-
-    특정 행/이름이 아니라 금액 컬럼 값의 형태만 보고 처리한다.
-    """
-    if value is None:
-        return []
-    text = str(value).strip()
-    if not text or text.lower() in {"none", "nan", "null", "-"}:
-        return []
-    # 금액 컬럼 내부에서만 OCR zero-like 문자를 0으로 보정
-    text = text.replace("원", "")
-    text = re.sub(r"[Ooㅇ○●〇]", "0", text)
-    text = re.sub(r"[^0-9,\s]", " ", text)
-    tokens = re.findall(r"\d[\d,]*,?|\d+", text)
-    values: list[float] = []
-    for tok in tokens:
-        tok = tok.strip()
-        if not tok:
-            continue
-        # 숫자만 0으로 구성된 OCR 조각: 누락된 leading 1을 보정한다.
-        compact = tok.replace(",", "")
-        if compact and set(compact) == {"0"}:
-            if len(compact) >= 3:
-                # 000, 000000, 000,000 등은 보통 1,000,000 계열 누락으로 처리
-                values.append(1_000_000.0)
-            continue
-        if tok.endswith(","):
-            tok = tok + "000"
-        num = tok.replace(",", "")
-        if not num:
-            continue
-        try:
-            val = float(num)
-        except Exception:
-            continue
-        # 금액 컬럼에서 너무 작은 꼬리 조각은 단독 후보로 쓰지 않는다.
-        if val > 0:
-            values.append(val)
-    return values
-
-
-def _to_numeric_clean(series: "pd.Series") -> "pd.Series":
-    # 기존 API 호환: 셀당 첫 번째 금액 후보만 Series로 반환한다.
-    def first_num(v):
-        vals = _amount_values_from_cell(v)
-        return vals[0] if vals else pd.NA
-    return pd.to_numeric(series.map(first_num), errors="coerce")
 
 
 # fuzzy를 좁게 유지해 최소 OCR 거리 후보만 남긴다.
@@ -1033,12 +992,13 @@ def _aggregate_rows(
     rows: pd.DataFrame,
     sources: list[str],
     intent: AggregationIntent,
+    question: str,
 ) -> tuple[object, list[str]]:
     return aggregate_rows(
         rows,
         sources,
         intent,
-        to_numeric_clean=_to_numeric_clean,
+        question=question,
         count_valid_name_rows=_count_valid_name_rows,
     )
 
@@ -1049,7 +1009,7 @@ def _query_aggregation(question: str, intent: AggregationIntent) -> tuple[object
     if _MASKED_NAME_TOKEN_RE.search(question):
         name_rows, name_sources, _ = _search_name_pandas(question)
         if name_rows is not None and not name_rows.empty:
-            return _aggregate_rows(name_rows, name_sources, intent)
+            return _aggregate_rows(name_rows, name_sources, intent, question)
         return _aggregation_notice("조건에 맞는 이름을 찾지 못했습니다."), []
 
     rows, sources, notice = _resolve_aggregation_scope(question)
@@ -1057,7 +1017,7 @@ def _query_aggregation(question: str, intent: AggregationIntent) -> tuple[object
         return notice, []
     if rows is None or rows.empty:
         return _aggregation_notice("조건에 맞는 데이터가 없습니다."), []
-    return _aggregate_rows(rows, sources, intent)
+    return _aggregate_rows(rows, sources, intent, question)
 
 
 def _query_pandas_direct(
@@ -1080,7 +1040,7 @@ def _query_pandas_direct(
         id_df, id_sources = _find_identifier_exact(question)
         if id_df is not None and not id_df.empty:
             if intent:
-                return _aggregate_rows(id_df, id_sources, intent)
+                return _aggregate_rows(id_df, id_sources, intent, question)
             return id_df, id_sources
         return None, []
 
@@ -1088,14 +1048,14 @@ def _query_pandas_direct(
         cohort_df, cohort_sources = _find_cohort_exact(question)
         if cohort_df is not None and not cohort_df.empty:
             if intent:
-                return _aggregate_rows(cohort_df, cohort_sources, intent)
+                return _aggregate_rows(cohort_df, cohort_sources, intent, question)
             return cohort_df, cohort_sources
         return None, []
 
     org_df, org_sources = _find_org_exact(question)
     if org_df is not None and not org_df.empty:
         if intent:
-            return _aggregate_rows(org_df, org_sources, intent)
+            return _aggregate_rows(org_df, org_sources, intent, question)
         return org_df, org_sources
 
     if intent:

@@ -5,9 +5,14 @@ from typing import Any
 
 import pandas as pd
 
-from pandas_engine.aggregation import _AGG_COUNT
-from utils.table_parser import AMOUNT_COL_KEYWORDS, IDENTITY_INTERNAL_COLS
-from utils.semantic_schema import semantic_columns
+from pandas_engine.aggregation import (
+    _AGG_COUNT,
+    amount_column_candidates,
+    amount_column_clarification,
+    resolve_amount_column,
+)
+from pandas_engine.money import money_values
+from utils.table_parser import IDENTITY_INTERNAL_COLS
 
 _INTERNAL_COLS = set(IDENTITY_INTERNAL_COLS)
 _DISPLAY_ORDER = (
@@ -24,10 +29,7 @@ def _is_internal_col(col: str) -> bool:
 
 
 def _find_amount_cols(df: pd.DataFrame) -> list[str]:
-    mapped = semantic_columns(df, concept="measure", data_type="money")
-    if mapped:
-        return mapped
-    return [c for c in df.columns if any(k in str(c) for k in AMOUNT_COL_KEYWORDS)]
+    return amount_column_candidates(df)
 
 
 def _format_number(value: Any) -> str:
@@ -211,45 +213,8 @@ def _format_scalar_result(result: object, question: str) -> str:
 # ---------------------------------------------------------------------------
 # 구조적 보강: 금액/기관/마스킹 답변 템플릿 일반화
 # ---------------------------------------------------------------------------
-def _amount_values_from_cell(value: Any) -> list[float]:
-    if value is None:
-        return []
-    text = str(value).strip()
-    if not text or text.lower() in {"none", "nan", "null", "-"}:
-        return []
-    text = text.replace("원", "")
-    text = re.sub(r"[Ooㅇ○●〇]", "0", text)
-    text = re.sub(r"[^0-9,\s]", " ", text)
-    tokens = re.findall(r"\d[\d,]*,?|\d+", text)
-    vals: list[float] = []
-    for tok in tokens:
-        tok = tok.strip()
-        if not tok:
-            continue
-        compact = tok.replace(",", "")
-        if compact and set(compact) == {"0"}:
-            if len(compact) >= 3:
-                vals.append(1_000_000.0)
-            continue
-        if tok.endswith(","):
-            tok = tok + "000"
-        num = tok.replace(",", "")
-        try:
-            val = float(num)
-        except Exception:
-            continue
-        if val >= 1000:
-            vals.append(val)
-    return vals
-
-
 def _amount_values_from_df(df: pd.DataFrame, col: str) -> list[float]:
-    vals: list[float] = []
-    if df is None or df.empty or col not in df.columns:
-        return vals
-    for v in df[col].tolist():
-        vals.extend(_amount_values_from_cell(v))
-    return vals
+    return money_values(df, col)
 
 
 def _format_payment_breakdown(values: list[float]) -> str:
@@ -282,13 +247,6 @@ def _format_payment_breakdown(values: list[float]) -> str:
         else:
             parts.append(f"{_format_number(value)}원씩 {count}회")
     return f"총 {len(values)}회에 걸쳐 " + ", ".join(parts) + " 납부했습니다."
-
-
-def _to_numeric_clean(series: pd.Series) -> pd.Series:
-    def first_num(v):
-        vals = _amount_values_from_cell(v)
-        return vals[0] if vals else pd.NA
-    return pd.to_numeric(series.map(first_num), errors="coerce")
 
 
 def _clean_identity_value(value: Any) -> str:
@@ -464,10 +422,12 @@ def _format_multi_entity_amount(groups: list[dict[str, Any]], col: str) -> str:
 
 
 def _format_dataframe_for_amount_question(df: pd.DataFrame, question: str) -> str | None:
-    amount_cols = _find_amount_cols(df)
-    if not amount_cols or not _AMOUNT_QUESTION_RE.search(question):
+    amount_selection = resolve_amount_column(df, question)
+    if not amount_selection.candidates or not _AMOUNT_QUESTION_RE.search(question):
         return None
-    col = amount_cols[0]
+    if amount_selection.selected is None:
+        return amount_column_clarification(amount_selection.candidates)
+    col = amount_selection.selected
     groups = _entity_groups(df)
     if not groups:
         display = _display_df(df)
