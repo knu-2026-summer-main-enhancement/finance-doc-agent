@@ -35,11 +35,14 @@ def _build_schema_for_vars(var_set: set[str]) -> str:
             cols = _visible_cols(df.columns)
             label = _df_labels.get(var, var)
 
+            semantic_schema = df.attrs.get("semantic_schema", {})
+            mappings = semantic_schema.get("columns", {}) if isinstance(semantic_schema, dict) else {}
+
             sample_str = ""
             if not df.empty:
                 row = df.iloc[0]
                 sample_str = ", ".join(
-                    f"{c}={repr(str(v)[:20])}"
+                    f"{c}={'[민감정보]' if isinstance(mappings.get(str(c)), dict) and (mappings[str(c)].get('sensitivity') or 'none') != 'none' else repr(str(v)[:20])}"
                     for c, v in row.items()
                     if c in cols and v is not None and str(v) not in ("None", "nan", "")
                 )[:200]
@@ -51,15 +54,21 @@ def _build_schema_for_vars(var_set: set[str]) -> str:
                 f"  예시(값): {sample_str}"
             )
 
-            semantic_schema = df.attrs.get("semantic_schema", {})
-            mappings = semantic_schema.get("columns", {}) if isinstance(semantic_schema, dict) else {}
             semantic_labels = []
             for col in cols:
                 mapping = mappings.get(str(col), {})
                 role = mapping.get("role") if isinstance(mapping, dict) else None
+                concept = mapping.get("concept") if isinstance(mapping, dict) else None
+                qualifier = mapping.get("qualifier") if isinstance(mapping, dict) else None
+                sensitivity = (mapping.get("sensitivity") or "none") if isinstance(mapping, dict) else "none"
                 confidence = float(mapping.get("confidence", 0.0) or 0.0) if isinstance(mapping, dict) else 0.0
                 if role and confidence >= 0.75:
-                    semantic_labels.append(f'"{col}"={role}')
+                    label_parts = [str(concept), str(role)]
+                    if qualifier:
+                        label_parts.append(str(qualifier))
+                    if sensitivity and sensitivity != "none":
+                        label_parts.append(f"sensitivity:{sensitivity}")
+                    semantic_labels.append(f'"{col}"={"/".join(label_parts)}')
             if semantic_labels:
                 entry_lines.append(f"  검증된 컬럼 의미: {', '.join(semantic_labels)}")
 
