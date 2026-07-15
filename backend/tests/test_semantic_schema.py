@@ -309,6 +309,59 @@ class SemanticSchemaTest(unittest.TestCase):
                 dataframe_state._df_labels.clear()
                 dataframe_state._df_schemas.clear()
 
+    def test_person_fields_and_derived_identity_keys_are_sensitive(self):
+        raw = pd.DataFrame([
+            {
+                "이름": "김*수",
+                "기수": "58",
+                "학번_수험번호": "20261234",
+                "출연금액": "1,000,000",
+            },
+            {
+                "이름": "박영희",
+                "기수": "49",
+                "학번_수험번호": "20265678",
+                "출연금액": "500,000",
+            },
+        ])
+        cleaned = _clean_dataframe(raw, source_file="people.xlsx", context_prefix="s0")
+        self.assertIsNotNone(cleaned)
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "utils.parquet_store.DATAFRAME_DIR", temp_dir
+        ):
+            save_dataframe(cleaned, "df_people", "people.xlsx", file_hash="people")
+            with open(os.path.join(temp_dir, "df_people.schema.json"), encoding="utf-8") as file:
+                mappings = json.load(file)["columns"]
+
+        for column in ("이름", "성명_원문", "표시명", "성명", "성명_검색키", "성명_마스킹패턴"):
+            with self.subTest(column=column):
+                self.assertEqual(mappings[column]["sensitivity"], "personal")
+                self.assertEqual(mappings[column]["pii_type"], "person_name")
+
+        self.assertEqual(mappings["person_candidate_key"]["sensitivity"], "personal")
+        self.assertEqual(mappings["person_candidate_key"]["pii_type"], "person_candidate_key")
+        self.assertEqual(mappings["row_uid"]["sensitivity"], "personal")
+        self.assertEqual(mappings["학번_수험번호"]["sensitivity"], "personal")
+        self.assertEqual(mappings["학번_수험번호"]["pii_type"], "education_identifier")
+
+    def test_organization_name_remains_non_personal(self):
+        raw = pd.DataFrame([
+            {"단체명": "푸른나무 사우회", "후원금": "1,000,000"},
+        ])
+        cleaned = _clean_dataframe(raw, source_file="organizations.xlsx", context_prefix="s0")
+        self.assertIsNotNone(cleaned)
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "utils.parquet_store.DATAFRAME_DIR", temp_dir
+        ):
+            save_dataframe(cleaned, "df_organizations", "organizations.xlsx", file_hash="organizations")
+            with open(os.path.join(temp_dir, "df_organizations.schema.json"), encoding="utf-8") as file:
+                mapping = json.load(file)["columns"]["단체명"]
+
+        self.assertEqual(mapping["qualifier"], "organization")
+        self.assertEqual(mapping["sensitivity"], "none")
+
 
 if __name__ == "__main__":
     unittest.main()

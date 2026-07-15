@@ -41,10 +41,15 @@ _MASK_CHARS_RE = re.compile(r"[＊○●Oo0xX×]")
 _PERSON_REAL_RE = re.compile(r"^[가-힣]{2,5}$")
 _PERSON_MASK_RE = re.compile(r"^[가-힣*]{2,6}$")
 _LEADING_COHORT_RE = re.compile(r"^\s*(\d{1,3})\s*(?:회|기)\s+(.+)$")
+_CORPORATE_PREFIX_RE = re.compile(r"^(?:\(주(?:\)|\*)?|㈜|주식회사|유한회사)")
+_DEPARTMENT_TOKEN_RE = re.compile(
+    r"^[가-힣A-Za-z0-9]{2,}(?:공학과|학과|학부|전공|계열|과)$"
+)
 
 _ORG_KEYWORDS = (
     "(주)", "㈜", "주식회사", "유한회사", "재단", "재단법인", "사단법인", "협회", "장학회",
-    "동문회", "총동문회", "대공동문회", "동기회", "회장단", "위원회", "조합", "법인",
+    "동문회", "총동문회", "대공동문회", "동기회", "사우회", "동호회", "친목회", "후원회",
+    "모임", "회장단", "위원회", "조합", "법인",
     "회사", "기업", "은행", "중공업", "공업", "산업", "건설", "전기", "전자", "기계",
     "학교", "대학교", "대학", "고등학교", "학회", "공단", "재단", "센터", "연구소",
 )
@@ -144,13 +149,20 @@ def make_mask_pattern(value: Any) -> str:
 
 
 def _has_org_indicator(value: str) -> bool:
-    compact = re.sub(r"\s+", "", str(value or ""))
+    original = str(value or "").strip()
+    compact = re.sub(r"\s+", "", original)
     if not compact:
         return False
+    # OCR이 법인 표기의 닫는 괄호를 '*'로 읽어도 원문은 보존한 채 단체로만 분류한다.
+    if _CORPORATE_PREFIX_RE.match(compact):
+        return True
     if any(k in compact for k in _ORG_KEYWORDS):
         return True
-    # "49회 동기회 기계과"처럼 회차 + 단체/학과 단서가 있으면 기관/단체로 본다.
-    if re.search(r"\d{1,3}회", compact) and any(k in compact for k in ("동기", "동문", "학과", "전공", "계열")):
+    # "56회 건축과 축쟁이"처럼 회차와 학과형 토큰이 함께 있으면 이름이 아닌
+    # 기수·학과 기반 모임으로 본다. 특정 학과명이나 단체명은 열거하지 않는다.
+    tokens = re.split(r"\s+", original)
+    has_department_token = any(_DEPARTMENT_TOKEN_RE.fullmatch(token) for token in tokens)
+    if re.search(r"\d{1,3}(?:회|기)", compact) and has_department_token:
         return True
     return False
 
@@ -473,8 +485,16 @@ def _ffill_merged_like_columns(df: pd.DataFrame) -> pd.DataFrame:
     ]
     fill_cols = [
         column for column, meaning in meanings.items()
-        if meaning.concept in {"entity", "identifier", "category"}
-        and meaning.sensitivity == "none"
+        if (
+            # 사람·단체 이름은 실제 표에서 세로 병합되는 대표적인 그룹 값이다.
+            # 컬럼의 민감도 표시는 유지하되 병합 복원까지 막지는 않는다.
+            (meaning.concept == "entity" and meaning.role == "entity_name")
+            # 전화번호·학번 같은 직접 식별자는 잘못 전파되면 위험하므로 제외한다.
+            or (
+                meaning.concept in {"identifier", "category"}
+                and meaning.sensitivity == "none"
+            )
+        )
     ]
     if not signal_cols or not fill_cols:
         return df

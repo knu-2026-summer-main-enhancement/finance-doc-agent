@@ -65,6 +65,23 @@ class StructuredQueryTest(unittest.TestCase):
         )
         self.assertEqual(classify_name_entity("49기 동기회 기계과")["cohort_from_name"], "49회")
 
+    def test_classifies_organizations_by_structure_without_specific_names(self):
+        cases = {
+            "56회 건축과 축쟁이": "organization",
+            "56회 건축과 사우회": "organization",
+            "푸른나무 모임": "organization",
+            "한빛 사우회": "organization",
+            "(주*산": "organization_masked",
+        }
+        for value, expected_type in cases.items():
+            with self.subTest(value=value):
+                result = classify_name_entity(value)
+                self.assertEqual(result["entity_type"], expected_type)
+                self.assertEqual(result["organization_name"], value)
+
+        # 사람 이름의 마지막 글자가 '회'여도 단체로 오인하면 안 된다.
+        self.assertEqual(classify_name_entity("김정회")["entity_type"], "person_real")
+
     def test_masked_name_search_filters_both_cohort_words(self):
         for cohort_word in ("58회", "58기"):
             with self.subTest(cohort_word=cohort_word):

@@ -11,7 +11,7 @@ from typing import Any
 import pandas as pd
 
 
-SCHEMA_VERSION = "2.1"
+SCHEMA_VERSION = "2.2"
 SYSTEM_COLUMNS = (
     "__schema_version",
     "__document_id",
@@ -198,11 +198,21 @@ def _deterministic_meaning(column: str, series: pd.Series, is_derived: bool) -> 
     if header == "rowcontext":
         return meaning("metadata", "row_context", "string")
     if header == "rowuid":
-        return meaning("identifier", "legacy_row_id", "string")
+        # 현재 row_uid에는 원본 행의 이름·금액 등이 포함될 수 있다.
+        return meaning(
+            "identifier", "legacy_row_id", "string",
+            sensitivity="personal", pii_type="derived_record_identifier",
+        )
     if header == "personcandidatekey":
-        return meaning("identifier", "person_candidate_key", "string")
+        return meaning(
+            "identifier", "person_candidate_key", "string",
+            sensitivity="personal", pii_type="person_candidate_key",
+        )
     if header == "성명마스킹패턴":
-        return meaning("entity", "name_mask_pattern", "string")
+        return meaning(
+            "entity", "name_mask_pattern", "string",
+            qualifier="person", sensitivity="personal", pii_type="person_name",
+        )
     if header == "성명마스킹여부":
         return meaning("entity", "is_name_masked", "boolean")
 
@@ -215,6 +225,11 @@ def _deterministic_meaning(column: str, series: pd.Series, is_derived: bool) -> 
 
     if header in {"발행번호", "발급번호", "접수번호", "문서번호", "관리번호"}:
         return meaning("identifier", "identifier_value", "string", qualifier="document")
+    if any(token in header for token in ("학번", "수험번호")):
+        return meaning(
+            "identifier", "identifier_value", "string",
+            qualifier="education", sensitivity="personal", pii_type="education_identifier",
+        )
     if header.endswith("코드"):
         return meaning("identifier", "identifier_value", "string")
     if header in {"연번", "순번"} or (header == "번호" and _is_row_sequence(values)):
@@ -240,7 +255,10 @@ def _deterministic_meaning(column: str, series: pd.Series, is_derived: bool) -> 
         header in {"성명", "이름", "학생명", "수혜자명", "기부자", "후원자", "출연자", "표시명", "성명원문", "성명검색키"}
         or header.endswith("자명")
     ):
-        return meaning("entity", "entity_name", "string", qualifier="person")
+        return meaning(
+            "entity", "entity_name", "string",
+            qualifier="person", sensitivity="personal", pii_type="person_name",
+        )
     if header in {"기관명", "단체명", "회사명", "법인명"} or header.endswith("기관"):
         return meaning("entity", "entity_name", "string", qualifier="organization")
     if header == "entitytype":
