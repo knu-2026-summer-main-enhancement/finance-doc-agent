@@ -1,0 +1,43 @@
+# Environment
+python-dotenv
+
+# Web Framework
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+
+# LangChain
+langchain
+langchain-community
+langchain-core
+langchain-ollama
+langchain-text-splitters
+
+# Database
+psycopg2-binary
+sqlalchemy
+chromadb
+langchain-chroma
+
+# Document Parsing
+pandas
+pyarrow
+openpyxl
+python-docx
+pdfplumber
+pdf2image
+pytesseract
+olefile
+pyhwp
+pyhwpx
+reportlab
+beautifulsoup4
+lxml
+html5lib
+
+# Image OCR
+numpy
+opencv-python-headless
+paddlepaddle>=3.2,<3.4
+paddleocr>=3.7,<3.8

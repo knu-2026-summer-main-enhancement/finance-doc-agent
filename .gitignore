@@ -1,0 +1,27 @@
+﻿.env
+.venv/
+venv/
+backend/logs/
+.claude/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+Thumbs.db
+
+# ?곸옱 ?곗씠??(濡쒖뺄 ?앹꽦臾?
+backend/data/*
+backend/dataframes/
+!backend/data/.gitkeep
+
+# ?됯? 寃곌낵 (濡쒖뺄 ?앹꽦臾?
+backend/tests/results/
+
+# ?됯? 吏덉쓽??諛?媛쒕컻 濡쒓렇 (濡쒖뺄 ?꾩슜)
+backend/tests/*.json
+backend/tests/make_goldset.py
+backend/tests/version.md
+backend/tests/*.json
+data/*
+!backend/data/.gitkeep
+docs/
