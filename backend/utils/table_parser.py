@@ -7,6 +7,8 @@ from typing import Any
 
 import pandas as pd
 
+from utils.semantic_schema import infer_column_meaning
+
 logger = logging.getLogger("ingest")
 
 # ---------------------------------------------------------------------------
@@ -18,6 +20,7 @@ _AGGREGATE_ROW_RE = re.compile(
 )
 _AMOUNT_FORMULA_RE = re.compile(r"\d+명\s*[*×x]\s*\d+", re.IGNORECASE)
 _DIGIT_AMOUNT_RE = re.compile(r"^\d[\d,]*$|^\d[\d,]*만원$|^\d[\d,]*원$")
+_EMPTY_CELL_VALUES = {"", "none", "nan", "nat", "null"}
 
 NAME_COLS = (
     "성명", "이름", "학생명", "수혜자명", "학생이름", "수혜자", "명단", "학생",
@@ -225,7 +228,18 @@ def classify_name_entity(value: Any, record: dict[str, Any] | pd.Series | None =
 
 
 def _find_name_col(df: pd.DataFrame) -> str | None:
-    return next((c for c in df.columns if c in NAME_COLS), None)
+    direct = next((c for c in df.columns if c in NAME_COLS), None)
+    if direct is not None:
+        return direct
+    for column in df.columns:
+        meaning = infer_column_meaning(str(column), df[column])
+        if (
+            meaning.concept == "entity"
+            and meaning.role == "entity_name"
+            and meaning.qualifier == "person"
+        ):
+            return column
+    return None
 
 
 def _find_first_col(df: pd.DataFrame, keywords: tuple[str, ...]) -> str | None:
@@ -371,8 +385,47 @@ def add_identity_columns(
     return df
 
 
+def _row_values(row: pd.Series) -> list[str]:
+    return [
+        str(value).strip()
+        for value in row
+        if str(value).strip().casefold() not in _EMPTY_CELL_VALUES
+    ]
+
+
+def _is_annotation_row(row: pd.Series) -> bool:
+    """표 데이터가 아니라 한 셀짜리 각주이거나 반복 복제된 긴 문장인지 판별한다."""
+    vals = _row_values(row)
+    if not vals:
+        return False
+    unique = {re.sub(r"\s+", " ", value).strip() for value in vals}
+    if len(vals) == 1:
+        return len(vals[0]) >= 20 and not _DIGIT_AMOUNT_RE.fullmatch(vals[0])
+    return len(unique) == 1 and len(next(iter(unique))) >= 20
+
+
+def _has_aggregate_label(value: str) -> bool:
+    text = re.sub(r"\s+", " ", value).strip()
+    if _AGGREGATE_ROW_RE.fullmatch(text):
+        return True
+    if re.search(r"(?:^|\s)(?:합계|소계|총계|합산|total|subtotal)$", text, re.IGNORECASE):
+        return True
+    return bool(re.match(r"^총\s+\S+", text, re.IGNORECASE))
+
+
+def _is_aggregate_row(row: pd.Series) -> bool:
+    vals = _row_values(row)
+    if not vals:
+        return False
+    if any(_AMOUNT_FORMULA_RE.search(value) for value in vals):
+        return True
+    has_label = any(_has_aggregate_label(value) for value in vals)
+    has_amount = any(_DIGIT_AMOUNT_RE.fullmatch(value.replace(" ", "")) for value in vals)
+    return has_label and has_amount
+
+
 def _is_footer_row(row: pd.Series) -> bool:
-    vals = [str(v).strip() for v in row if str(v).strip() not in ("", "None", "nan")]
+    vals = _row_values(row)
     if len(vals) < 2:
         return False
     non_amount = [v for v in vals if not _DIGIT_AMOUNT_RE.match(v)]
@@ -381,14 +434,62 @@ def _is_footer_row(row: pd.Series) -> bool:
     return all(_DIGIT_AMOUNT_RE.match(v) for v in vals) and len(set(vals)) <= 3
 
 
-def _ffill_merged_like_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """세로 병합셀 보정. 금액 컬럼은 누락 OCR 오인 방지를 위해 세로 채움에서 제외한다."""
+def _drop_non_data_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """채움 작업 전에 빈 행·각주·집계 행을 제거해 데이터 오염을 막는다."""
     if df.empty:
         return df
-    fill_cols = [c for c in df.columns if not any(k in str(c) for k in AMOUNT_COL_KEYWORDS)]
-    if fill_cols:
-        df[fill_cols] = df[fill_cols].ffill(axis=0)
+    df = df.replace(r"^\s*$", None, regex=True).dropna(how="all").reset_index(drop=True)
+    if df.empty:
+        return df
+
+    annotation_mask = df.apply(_is_annotation_row, axis=1)
+    aggregate_mask = df.apply(_is_aggregate_row, axis=1)
+    footer_mask = df.apply(_is_footer_row, axis=1)
+    remove_mask = annotation_mask | aggregate_mask | footer_mask
+    if remove_mask.any():
+        logger.info(
+            "비데이터 행 제거: total=%d annotation=%d aggregate=%d footer=%d",
+            int(remove_mask.sum()),
+            int(annotation_mask.sum()),
+            int(aggregate_mask.sum()),
+            int(footer_mask.sum()),
+        )
+        df = df[~remove_mask].reset_index(drop=True)
     return df
+
+
+def _ffill_merged_like_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """실제 데이터가 있는 연속 행에서 그룹 식별 컬럼만 제한적으로 채운다."""
+    if df.empty:
+        return df
+
+    meanings = {
+        column: infer_column_meaning(str(column), df[column])
+        for column in df.columns
+    }
+    signal_cols = [
+        column for column, meaning in meanings.items()
+        if meaning.concept in {"measure", "temporal"}
+    ]
+    fill_cols = [
+        column for column, meaning in meanings.items()
+        if meaning.concept in {"entity", "identifier", "category"}
+        and meaning.sensitivity == "none"
+    ]
+    if not signal_cols or not fill_cols:
+        return df
+
+    result = df.copy()
+    previous: dict[Any, Any] = {}
+    for index in result.index:
+        row_has_signal = any(_as_text(result.at[index, column]).strip() for column in signal_cols)
+        for column in fill_cols:
+            current = _as_text(result.at[index, column]).strip()
+            if current:
+                previous[column] = result.at[index, column]
+            elif row_has_signal and column in previous:
+                result.at[index, column] = previous[column]
+    return result
 
 
 def _clean_dataframe(
@@ -401,22 +502,10 @@ def _clean_dataframe(
     if df is None or df.empty:
         return df
 
-    df = df.copy()
+    df = _drop_non_data_rows(df.copy())
+    if df.empty:
+        return df
     source_columns = [str(column) for column in df.columns]
-
-    agg_mask = pd.Series(False, index=df.index)
-    for col in df.columns:
-        vals = df[col].astype(str).str.strip()
-        agg_mask |= vals.apply(lambda v: bool(_AGGREGATE_ROW_RE.match(_as_text(v))) or bool(_AMOUNT_FORMULA_RE.search(_as_text(v))))
-
-    if agg_mask.any():
-        logger.info("집계 행 제거: %d행", int(agg_mask.sum()))
-        df = df[~agg_mask].reset_index(drop=True)
-
-    footer_mask = df.apply(_is_footer_row, axis=1)
-    if footer_mask.any():
-        logger.info("숫자전용 footer 행 제거: %d행", int(footer_mask.sum()))
-        df = df[~footer_mask].reset_index(drop=True)
 
     seq_col = next((c for c in df.columns if any(k in str(c) for k in ("연번", "순번", "번호", "순"))), None)
     if seq_col:
@@ -458,12 +547,12 @@ def _parse_table(
     source_file: str = "",
     context_prefix: str = "",
     row_offset: int = 0,
-    horizontal_ffill_data: bool = True,
+    horizontal_ffill_data: bool = False,
 ) -> "pd.DataFrame | None":
     """병합 셀(None) 처리 + 2행 헤더 자동 탐지 후 DataFrame 반환.
 
-    image OCR에서 만든 raw_table은 빈 칸이 실제 공백일 수 있으므로
-    horizontal_ffill_data=False로 호출해 좌우 채움 오염을 막는다.
+    데이터 행의 가로 병합은 원본 병합 범위를 모르면 안전하게 추론할 수 없다.
+    기본값은 보존(False)이며, 구조적으로 병합이 확인된 호출만 명시적으로 켠다.
     """
     if not raw_table or len(raw_table) < 2:
         return None
@@ -509,24 +598,30 @@ def _parse_table(
             seen[name] = 0
         headers.append(name)
 
-    def ffill_row(row: list[Any]) -> list[Any]:
-        result, last = [], None
-        for cell in row:
-            v = _cell_val(cell)
-            if v:
-                last = v
-            result.append(last)
+    def fill_internal_gaps(row: list[Any]) -> list[Any]:
+        """양쪽에 실제 값이 있는 내부 공백만 병합 후보로 채운다."""
+        result = [_cell_val(cell) or None for cell in row]
+        occupied = [index for index, value in enumerate(result) if value is not None]
+        if len(occupied) < 2:
+            return result
+        last = None
+        for index in range(occupied[0], occupied[-1] + 1):
+            if result[index] is not None:
+                last = result[index]
+            elif last is not None:
+                result[index] = last
         return result
 
     if horizontal_ffill_data:
-        data_rows = [ffill_row(r) for r in table[data_start:]]
+        data_rows = [fill_internal_gaps(r) for r in table[data_start:]]
     else:
         data_rows = [[_cell_val(c) or None for c in r] for r in table[data_start:]]
 
     df = pd.DataFrame(data_rows, columns=headers)
-    df = df.replace("", None)
+    df = df.replace("", None).dropna(how="all").reset_index(drop=True)
+    df = _drop_non_data_rows(df)
     df = _ffill_merged_like_columns(df)
-    df = df.dropna(how="all").replace("\n", " ", regex=True)
+    df = df.replace("\n", " ", regex=True)
     if df.empty:
         return None
     df = _clean_dataframe(df, source_file=source_file, context_prefix=context_prefix, row_offset=row_offset)

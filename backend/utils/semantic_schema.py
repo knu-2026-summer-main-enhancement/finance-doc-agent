@@ -11,7 +11,7 @@ from typing import Any
 import pandas as pd
 
 
-SCHEMA_VERSION = "2.0"
+SCHEMA_VERSION = "2.1"
 SYSTEM_COLUMNS = (
     "__schema_version",
     "__document_id",
@@ -275,6 +275,16 @@ def _deterministic_meaning(column: str, series: pd.Series, is_derived: bool) -> 
         inferred_type,
         confidence=0.4 if inferred_type != "empty" else 0.0,
     )
+
+
+def infer_column_meaning(
+    column: str,
+    series: pd.Series,
+    *,
+    is_derived: bool = False,
+) -> ColumnMeaning:
+    """저장 전 정제 단계에서도 같은 의미 추론 규칙을 재사용한다."""
+    return _deterministic_meaning(column, series, is_derived)
 
 
 def schema_fingerprint(df: pd.DataFrame, source_columns: list[str]) -> str:
