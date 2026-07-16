@@ -144,6 +144,21 @@ class AggregationQueryTest(unittest.TestCase):
         answer = _format_scalar_result(payload, question)
         self.assertIn("이*규", answer)
         self.assertIn("10,000,000원", answer)
+        self.assertIn("계산 근거:", answer)
+        self.assertIn("- 문서: test2025.png", answer)
+        self.assertIn("- 계산 컬럼: 출연금액", answer)
+        self.assertIn("- 계산 방식: 최댓값", answer)
+        self.assertIn("- 조회 행: 4개", answer)
+        self.assertIn("- 계산 사용 행: 4개", answer)
+        self.assertIn("- 제외 행: 0개", answer)
+
+    def test_count_result_includes_traceable_evidence(self):
+        question = "기부한 사람은 모두 몇 명이야?"
+        answer = _format_scalar_result(self._payload(question), question)
+        self.assertIn("총 3명입니다.", answer)
+        self.assertIn("- 문서: test2025.png", answer)
+        self.assertIn("- 계산 방식: 개수 계산", answer)
+        self.assertIn("- 조회 행: 4개", answer)
 
     def test_shared_analysis_skips_query_layer_redetection(self):
         question = "출연금액 총 얼만지 알려줘"

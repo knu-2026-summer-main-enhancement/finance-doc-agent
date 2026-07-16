@@ -316,6 +316,7 @@ def aggregate_rows(
             "value": value,
             "unit": unit,
             "matched_rows": int(len(working)),
+            "sources": list(dict.fromkeys(sources)),
         }, sources
 
     amount_selection = resolve_amount_column(working, question)
@@ -342,6 +343,7 @@ def aggregate_rows(
         "matched_rows": int(len(working)),
         "valid_rows": int(valid.size),
         "invalid_rows": invalid_rows,
+        "sources": list(dict.fromkeys(sources)),
     }
     scalar_operations = {
         "sum": valid.sum,

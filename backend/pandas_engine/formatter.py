@@ -22,6 +22,16 @@ _DISPLAY_ORDER = (
 )
 _AMOUNT_QUESTION_RE = re.compile(r"얼마|금액|총액|합계|출연금|지급액|장학금|지원금|수혜금|후원금|기부금")
 _SUM_WORD_RE = re.compile(r"총|합계|전체|누적|합산|모두|다")
+_OPERATION_LABELS = {
+    "count": "개수 계산",
+    "sum": "합계",
+    "mean": "평균",
+    "median": "중앙값",
+    "mode": "최빈값",
+    "per_capita": "1인당 평균",
+    "max": "최댓값",
+    "min": "최솟값",
+}
 
 
 def _is_internal_col(col: str) -> bool:
@@ -74,15 +84,30 @@ def _format_aggregation_payload(payload: dict[str, Any]) -> str:
     invalid_rows = int(payload.get("invalid_rows") or 0)
     warning = f" 숫자로 변환하지 못한 {invalid_rows}개 행은 계산에서 제외했습니다." if invalid_rows else ""
 
+    def finalize(answer: str) -> str:
+        lines = [answer + warning, "", "계산 근거:"]
+        sources = [str(source) for source in payload.get("sources") or [] if source]
+        if sources:
+            lines.append(f"- 문서: {', '.join(sources)}")
+        if operation != "count" and label:
+            lines.append(f"- 계산 컬럼: {label}")
+        lines.append(f"- 계산 방식: {_OPERATION_LABELS.get(operation, operation or '집계')}")
+        if "matched_rows" in payload:
+            lines.append(f"- 조회 행: {int(payload.get('matched_rows') or 0):,}개")
+        if "valid_rows" in payload:
+            lines.append(f"- 계산 사용 행: {int(payload.get('valid_rows') or 0):,}개")
+            lines.append(f"- 제외 행: {invalid_rows:,}개")
+        return "\n".join(lines)
+
     if operation == "count":
         value = int(payload.get("value") or 0)
         unit = str(payload.get("unit") or "건")
-        return f"총 {value:,}{unit}입니다."
+        return finalize(f"총 {value:,}{unit}입니다.")
 
     if operation == "mode":
         values = payload.get("values") or []
         numbers = ", ".join(f"{_format_number(value)}원" for value in values)
-        return f"{label} 최빈값은 {numbers}입니다.{warning}"
+        return finalize(f"{label} 최빈값은 {numbers}입니다.")
 
     subjects = payload.get("subjects") or []
     if subjects:
@@ -91,16 +116,16 @@ def _format_aggregation_payload(payload: dict[str, Any]) -> str:
             order_word = "가장 적은" if operation == "min" else "가장 많은"
             if len(subjects) == 1:
                 subject = subjects[0]
-                return (
+                return finalize(
                     f"{subject.get('name', '이름 정보 없음')}의 누적 {label}이 "
-                    f"{_format_number(subject.get('value'))}원으로 {order_word} 금액입니다.{warning}"
+                    f"{_format_number(subject.get('value'))}원으로 {order_word} 금액입니다."
                 )
             lines = [
                 f"- {subject.get('name', '이름 정보 없음')}: {_format_number(subject.get('value'))}원"
                 for subject in subjects
             ]
             heading = "누적 금액 하위" if operation == "min" else "누적 금액 상위"
-            return f"{heading} 결과입니다.\n" + "\n".join(lines) + warning
+            return finalize(f"{heading} 결과입니다.\n" + "\n".join(lines))
 
         order_word = "가장 작은" if operation == "min" else "가장 큰"
         lines: list[str] = []
@@ -115,7 +140,7 @@ def _format_aggregation_payload(payload: dict[str, Any]) -> str:
                 f"- {subject.get('name', '이름 정보 없음')}: "
                 f"{_format_number(subject.get('value'))}원{suffix}"
             )
-        return f"한 번에 {order_word} {label}을 기록한 항목입니다.\n" + "\n".join(lines) + warning
+        return finalize(f"한 번에 {order_word} {label}을 기록한 항목입니다.\n" + "\n".join(lines))
 
     value = _format_number(payload.get("value"))
     if operation == "sum":
@@ -134,7 +159,7 @@ def _format_aggregation_payload(payload: dict[str, Any]) -> str:
         answer = f"최소 {label}은 {value}원입니다."
     else:
         answer = f"{label}은 {value}원입니다."
-    return answer + warning
+    return finalize(answer)
 
 
 def _format_pandas_result(result: object) -> str:
