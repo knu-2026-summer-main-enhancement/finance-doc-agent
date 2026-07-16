@@ -14,6 +14,7 @@ from core.llm import get_llm_rag, get_llm_code, get_vectorstore, _fmt_docs
 from rag.prompts import RAG_PROMPT, DOC_EXPLAIN_RAG_PROMPT, MULTI_QUERY_PROMPT
 from rag.question_analyzer import QuestionAnalysis
 from rag.question_detectors import is_vector_override_question
+from datastore.scope import selected_sources
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -96,17 +97,29 @@ async def _expanded_queries(question: str, is_doc_explain: bool) -> list[str]:
     return queries
 
 
+def _selected_source_filter() -> dict[str, object] | None:
+    sources = selected_sources()
+    if not sources:
+        return None
+    if len(sources) == 1:
+        return {"source": sources[0]}
+    return {"source": {"$in": list(sources)}}
+
+
 async def _retrieve_verified_documents(queries: list[str]) -> list[Any]:
     vectorstore = get_vectorstore()
+    source_filter = _selected_source_filter()
     qualified: dict[tuple[str, str, str], tuple[Any, float]] = {}
     mmr_order: list[tuple[str, str, str]] = []
 
     for query in queries:
         try:
+            score_kwargs = {"filter": source_filter} if source_filter else {}
             scored = await asyncio.to_thread(
                 vectorstore.similarity_search_with_relevance_scores,
                 query,
                 VECTOR_SEARCH_FETCH_K,
+                **score_kwargs,
             )
             for doc, score in scored:
                 score_value = float(score)
@@ -117,12 +130,14 @@ async def _retrieve_verified_documents(queries: list[str]) -> list[Any]:
                 if previous is None or score_value > previous[1]:
                     qualified[key] = (doc, score_value)
 
+            mmr_kwargs = {"filter": source_filter} if source_filter else {}
             mmr_docs = await asyncio.to_thread(
                 vectorstore.max_marginal_relevance_search,
                 query,
                 VECTOR_SEARCH_K,
                 VECTOR_SEARCH_FETCH_K,
                 0.6,
+                **mmr_kwargs,
             )
             for doc in mmr_docs:
                 key = _doc_key(doc)

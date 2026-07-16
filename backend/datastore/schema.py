@@ -7,6 +7,7 @@ from datastore.state import (
     _df_namespace, _df_sources, _df_labels,
     _df_schema_cache, _SCHEMA_CACHE_TTL,
 )
+from datastore.scope import scoped_mapping
 import datastore.state as _state
 from utils.table_parser import IDENTITY_INTERNAL_COLS
 
@@ -89,6 +90,9 @@ def _build_schema_for_vars(var_set: set[str]) -> str:
 
 def _get_df_schema() -> str:
     """전체 schema (캐시됨)."""
+    scoped = scoped_mapping(_df_namespace, _df_sources)
+    if len(scoped) != len(_df_namespace):
+        return _build_schema_for_vars(set(scoped))
     now = time.time()
     if _state._df_schema_cache and now - _state._df_schema_cache[1] < _SCHEMA_CACHE_TTL:
         return _state._df_schema_cache[0]

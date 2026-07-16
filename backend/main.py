@@ -42,6 +42,7 @@ from core.config import (
 from core.security import _verify_api_key, _validate_ingest_path
 from core.llm import get_llm_rag
 from datastore.state import _df_namespace, _df_sources, _load_dataframes
+from datastore.scope import document_scope
 from datastore.query import (
     _count_valid_name_rows,
     _extract_total_from_source,
@@ -106,6 +107,7 @@ app = FastAPI(title="Local RAG Chatbot API", version="2.0.0", lifespan=lifespan)
 # ---------------------------------------------------------------------------
 class ChatRequest(BaseModel): #베이스모델 -> 제이슨으로 return
     question: str #질문 
+    sources: list[str] = Field(default_factory=list) #선택한 원본 문서명
 
 class ChatResponse(BaseModel):
     answer: str #답변,
@@ -214,27 +216,30 @@ async def chat(req: ChatRequest, _: None = Depends(_verify_api_key)):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="question이 비어있습니다.")
     try:
-        guard_result = check_question(req.question)
-        if guard_result.status == "GUIDE":
-            logger.info("[GUARD] GUIDE | reason=%s", guard_result.reason_code)
-            return ChatResponse(
-                answer=build_guide_response(guard_result),
-                source="guide",
-                sources=[],
-            )
-        route = _route_with_guard(req.question, guard_result)
-        logger.info("[ROUTE] %s | question=%s", route, req.question[:50])
-        if route == "PANDAS":
-            answer, sources, actual_route = await _answer_pandas(
-                req.question,
-                analysis=guard_result.analysis,
-            )
-        else:
-            answer, sources, actual_route = await _answer_vector(
-                req.question,
-                analysis=guard_result.analysis,
-            )
-        return ChatResponse(answer=answer, source=actual_route, sources=sources)
+        with document_scope(req.sources) as selected:
+            if selected:
+                logger.info("[SCOPE] 선택 문서 | sources=%s", list(selected))
+            guard_result = check_question(req.question)
+            if guard_result.status == "GUIDE":
+                logger.info("[GUARD] GUIDE | reason=%s", guard_result.reason_code)
+                return ChatResponse(
+                    answer=build_guide_response(guard_result),
+                    source="guide",
+                    sources=[],
+                )
+            route = _route_with_guard(req.question, guard_result)
+            logger.info("[ROUTE] %s | question=%s", route, req.question[:50])
+            if route == "PANDAS":
+                answer, sources, actual_route = await _answer_pandas(
+                    req.question,
+                    analysis=guard_result.analysis,
+                )
+            else:
+                answer, sources, actual_route = await _answer_vector(
+                    req.question,
+                    analysis=guard_result.analysis,
+                )
+            return ChatResponse(answer=answer, source=actual_route, sources=sources)
     except Exception as e:
         logger.exception("[CHAT] 처리 오류 | question=%s", req.question[:50])
         raise HTTPException(status_code=500, detail=str(e))
@@ -248,21 +253,22 @@ async def chat_stream(req: ChatRequest, _: None = Depends(_verify_api_key)):
 
     async def generate() -> AsyncIterator[str]:
         try:
-            guard_result = check_question(req.question)
-            if guard_result.status == "GUIDE":
-                logger.info("[GUARD] GUIDE(stream) | reason=%s", guard_result.reason_code)
-                yield build_guide_response(guard_result)
-                return
-            route = _route_with_guard(req.question, guard_result)
-            if route == "PANDAS":
-                answer, _, _ = await _answer_pandas(
-                    req.question,
-                    analysis=guard_result.analysis,
-                )
-                yield answer
-            else:
-                async for chunk in _stream_vector(req.question):
-                    yield chunk
+            with document_scope(req.sources):
+                guard_result = check_question(req.question)
+                if guard_result.status == "GUIDE":
+                    logger.info("[GUARD] GUIDE(stream) | reason=%s", guard_result.reason_code)
+                    yield build_guide_response(guard_result)
+                    return
+                route = _route_with_guard(req.question, guard_result)
+                if route == "PANDAS":
+                    answer, _, _ = await _answer_pandas(
+                        req.question,
+                        analysis=guard_result.analysis,
+                    )
+                    yield answer
+                else:
+                    async for chunk in _stream_vector(req.question):
+                        yield chunk
         except Exception as e:
             logger.exception("Stream 처리 오류")
             yield f"\n[오류] {e}"

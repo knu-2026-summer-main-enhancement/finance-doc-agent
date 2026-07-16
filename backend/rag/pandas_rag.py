@@ -6,6 +6,7 @@ import re
 import pandas as pd
 
 from datastore.state import _df_namespace, _df_sources
+from datastore.scope import scoped_mapping, source_scope_active, source_is_selected
 from datastore.schema import _get_df_schema_filtered
 from datastore.query import (
     _search_name_pandas,
@@ -35,8 +36,10 @@ async def _answer_pandas(
     allow_vector_fallback: bool = True,
     analysis: QuestionAnalysis | None = None,
 ) -> tuple[str, list[str], str]:
-    if not _df_namespace:
-        return "현재 로드된 데이터프레임이 없습니다.", [], "pandas"
+    scoped_dataframes = scoped_mapping(_df_namespace, _df_sources)
+    if not scoped_dataframes:
+        message = "선택한 문서에서 조회 가능한 표 데이터를 찾을 수 없습니다." if source_scope_active() else "현재 로드된 데이터프레임이 없습니다."
+        return message, [], "pandas"
 
     analysis = analysis or analyze_question(question)
 
@@ -64,6 +67,13 @@ async def _answer_pandas(
     # 1단계: 이름 전수 검색 (기존)
     name_df, name_sources, name_searched = _search_name_pandas(question)
     if name_df is not None:
+        if not source_scope_active() and len(name_sources) > 1:
+            names = ", ".join(name_sources[:5])
+            return (
+                f"같은 이름의 기록이 여러 문서에서 발견되었습니다. 조회할 문서를 선택해주세요: {names}",
+                name_sources,
+                "pandas",
+            )
         logger.info("[NAME_SEARCH] %d건 발견, 코드 생성 생략", len(name_df))
         return _format_dataframe_result_for_question(name_df, question), name_sources, "pandas"
     if name_searched and re.search(
@@ -150,7 +160,11 @@ async def _answer_pandas(
         )
         return v_answer, v_sources, "vector"
 
-    source_files = list({_df_sources.get(v, v) for v in _df_namespace if v in code})
+    source_files = list({
+        _df_sources.get(v, v)
+        for v in _df_namespace
+        if v in code and source_is_selected(_df_sources.get(v, v))
+    })
 
     if formatted == "조회된 데이터가 없습니다.":
         return formatted, source_files, "pandas"

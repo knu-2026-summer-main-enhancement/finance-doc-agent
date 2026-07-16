@@ -5,6 +5,8 @@ import re
 import pandas as pd
 
 from datastore.state import _df_namespace
+from datastore.state import _df_sources
+from datastore.scope import scoped_mapping
 
 _FORBIDDEN_CODE = re.compile(
     r'\b(import|exec|eval|compile|__import__|__builtins__|'
@@ -47,6 +49,6 @@ def _exec_pandas_code(code: str) -> object:
     if _FORBIDDEN_CODE.search(code):
         raise ValueError("금지된 코드 패턴이 감지되었습니다.")
     namespace = dict(_EXEC_GLOBALS)
-    namespace.update(_df_namespace)
+    namespace.update(scoped_mapping(_df_namespace, _df_sources))
     exec(code, namespace)
     return namespace.get("result")

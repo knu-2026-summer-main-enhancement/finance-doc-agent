@@ -6,6 +6,7 @@ import re
 import pandas as pd
 
 from datastore.state import _df_namespace, _df_sources, _df_labels
+from datastore.scope import scoped_mapping
 from pandas_engine.aggregation import (
     AggregationIntent,
     aggregate_rows,
@@ -19,6 +20,10 @@ from utils.table_parser import normalize_person_name, make_mask_pattern, is_mask
 from utils.semantic_schema import semantic_columns
 
 logger = logging.getLogger("uvicorn.error")
+
+
+def _scoped_dataframes() -> dict[str, pd.DataFrame]:
+    return scoped_mapping(_df_namespace, _df_sources)
 
 # ---------------------------------------------------------------------------
 # 이름 검색용 상수
@@ -161,7 +166,8 @@ def _expand_명단_column(df: pd.DataFrame) -> pd.DataFrame:
 
 def _find_filter_conditions(question: str) -> dict[str, list[tuple[str, str]]]:
     """질문 키워드를 실제 DataFrame 셀 값과 대조해 {alias: [(col, value), ...]} 반환."""
-    if not _df_namespace:
+    dataframes = _scoped_dataframes()
+    if not dataframes:
         return {}
 
     candidates: list[str] = []
@@ -188,7 +194,7 @@ def _find_filter_conditions(question: str) -> dict[str, list[tuple[str, str]]]:
     visited: set[tuple[str, str]] = set()
 
     for cand in candidates[:10]:
-        for alias, df in _df_namespace.items():
+        for alias, df in dataframes.items():
             for col in df.columns:
                 if _is_internal_col(col):
                     continue
@@ -219,7 +225,7 @@ def _find_dfs_by_source_label(question: str) -> list[str]:
                 words.add(cand)
 
     scored: list[tuple[str, int]] = []
-    for alias in _df_namespace:
+    for alias in _scoped_dataframes():
         text = (_df_sources.get(alias, "") + " " + _df_labels.get(alias, ""))
         score = sum(1 for w in words if w in text)
         if score > 0:
@@ -318,6 +324,15 @@ def _query_pandas_direct_base(question: str) -> tuple[object, list[str]]:
         return df
 
     if conditions:
+        condition_sources = list(dict.fromkeys(
+            _df_sources.get(alias, alias) for alias in conditions
+        ))
+        if len(condition_sources) > 1:
+            return _aggregation_notice(
+                "조건과 일치하는 기록이 여러 문서에 있습니다. 조회할 문서를 선택해주세요: "
+                + ", ".join(condition_sources[:5]),
+                kind="clarification",
+            ), condition_sources
         best_alias = _pick_best_alias(list(conditions.keys()))
         df = _df_namespace[best_alias]
 
@@ -389,11 +404,8 @@ def _select_best_source_rows(result: pd.DataFrame, question: str) -> pd.DataFram
     sources = list(result["source"].dropna().astype(str).unique())
     if len(sources) <= 1:
         return result
-    # 질문에 source 단서가 없으면 최신 연도 source를 우선한다.
-    best = max(sources, key=_source_year)
-    best_year = _source_year(best)
-    if best_year > 0:
-        return result[result["source"].astype(str) == best].copy()
+    # 문서 범위가 없는 질문에서 임의로 최신 문서를 선택하지 않는다. 여러 문서의
+    # 동명이인은 호출부가 출처를 보여주거나 문서 선택을 요청할 수 있게 그대로 둔다.
     return result
 
 
@@ -447,7 +459,7 @@ def _search_name_pandas_core(question: str) -> tuple[pd.DataFrame | None, list[s
     masked_candidate_matches: list[tuple[pd.DataFrame, str, int]] = []
     fallback_matches: list[tuple[pd.DataFrame, str, int]] = []
 
-    for var_name, df in _df_namespace.items():
+    for var_name, df in _scoped_dataframes().items():
         name_col = next((c for c in df.columns if c in _NAME_COLS_SET), None)
         if name_col is None and "성명_검색키" not in df.columns:
             continue
@@ -595,7 +607,7 @@ def _find_cohort_exact(question: str) -> tuple[pd.DataFrame | None, list[str]]:
         return None, []
 
     frames: list[pd.DataFrame] = []
-    for alias, df in _df_namespace.items():
+    for alias, df in _scoped_dataframes().items():
         rows = _filter_rows_by_question_cohort(df, question)
         if rows.empty:
             continue
@@ -681,7 +693,7 @@ def _find_org_exact(question: str) -> tuple[pd.DataFrame | None, list[str]]:
         return None, []
 
     ranked_frames: list[tuple[int, pd.DataFrame, str]] = []
-    for alias, df in _df_namespace.items():
+    for alias, df in _scoped_dataframes().items():
         candidate_mask = _organization_candidate_mask(df)
         if not candidate_mask.any():
             continue
@@ -783,7 +795,7 @@ def _question_identifier_targets(question: str) -> list[str]:
         for key in (_identifier_norm(match.group(0)) for match in _QUESTION_IDENTIFIER_RE.finditer(question))
         if key
     ]
-    for df in _df_namespace.values():
+    for df in _scoped_dataframes().values():
         for col in _identifier_columns(df):
             for raw in df[col].dropna().astype(str).unique().tolist():
                 key = _identifier_norm(raw)
@@ -820,7 +832,7 @@ def _find_identifier_exact(question: str) -> tuple[pd.DataFrame | None, list[str
         return None, []
     target = targets[0]
     frames: list[pd.DataFrame] = []
-    for alias, df in _df_namespace.items():
+    for alias, df in _scoped_dataframes().items():
         masks: list[pd.Series] = []
         matched_col = ""
         for col in _identifier_columns(df):
@@ -927,7 +939,7 @@ def _source_aliases_from_question(question: str) -> list[str]:
     # 영문·숫자가 포함된 파일명(test2025 등)도 직접 지정할 수 있게 한다.
     qkey = re.sub(r"[^0-9A-Za-z가-힣]", "", str(question or "")).lower()
     matched: list[str] = []
-    for alias in _df_namespace:
+    for alias in _scoped_dataframes():
         src = _df_sources.get(alias, "")
         label = _df_labels.get(alias, "")
         stem = re.sub(r"\.[^.]+$", "", src)
@@ -945,6 +957,15 @@ def _resolve_aggregation_scope(question: str) -> tuple[pd.DataFrame | None, list
     """집계할 행을 결정한다. 한 원본만 로드된 경우에는 문서명을 생략해도 된다."""
     conditions = _find_filter_conditions(question)
     if conditions:
+        condition_sources = list(dict.fromkeys(
+            _df_sources.get(alias, alias) for alias in conditions
+        ))
+        if len(condition_sources) > 1:
+            names = ", ".join(condition_sources[:5])
+            return None, [], _aggregation_notice(
+                f"조건과 일치하는 기록이 여러 문서에 있습니다. 조회할 문서를 선택해주세요: {names}",
+                kind="clarification",
+            )
         context_words = set(re.findall(r"[0-9A-Za-z가-힣]{2,}", question))
 
         def score(alias: str) -> tuple[int, int, int]:
@@ -975,7 +996,7 @@ def _resolve_aggregation_scope(question: str) -> tuple[pd.DataFrame | None, list
         )
 
     sources_to_aliases: dict[str, list[str]] = {}
-    for alias in _df_namespace:
+    for alias in _scoped_dataframes():
         sources_to_aliases.setdefault(_df_sources.get(alias, alias), []).append(alias)
     if len(sources_to_aliases) == 1:
         aliases = next(iter(sources_to_aliases.values()))
