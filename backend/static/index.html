@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>재정 문서 에이전트</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand-row">
+        <div class="brand-mark" aria-hidden="true">F</div>
+        <div><strong>Finance Doc</strong><span>문서 조회 에이전트</span></div>
+        <button class="icon-button mobile-only" id="closeSidebar" aria-label="문서 패널 닫기">×</button>
+      </div>
+
+      <section class="side-section document-section">
+        <div class="section-heading">
+          <div><p class="eyebrow">DOCUMENT SCOPE</p><h2>조회 문서</h2></div>
+          <button class="icon-button" id="refreshDocuments" title="문서 목록 새로고침" aria-label="새로고침">↻</button>
+        </div>
+        <label class="search-box">
+          <span aria-hidden="true">⌕</span>
+          <input id="documentSearch" type="search" placeholder="문서명 검색" autocomplete="off">
+        </label>
+        <button class="all-documents selected" id="allDocuments" type="button">
+          <span class="document-icon">ALL</span>
+          <span><strong>전체 문서</strong><small>문서를 지정하지 않고 질문</small></span>
+          <span class="selection-dot"></span>
+        </button>
+        <div class="document-list" id="documentList" aria-live="polite">
+          <div class="document-loading">문서 목록을 불러오는 중입니다.</div>
+        </div>
+      </section>
+
+      <section class="side-section upload-section">
+        <div class="upload-heading">
+          <div><p class="eyebrow">INGEST</p><strong>새 문서 적재</strong></div>
+          <button class="upload-toggle" id="uploadToggle" type="button" aria-expanded="false">열기</button>
+        </div>
+        <form class="upload-panel" id="uploadForm" hidden>
+          <label class="file-picker" for="uploadFile" id="filePicker">
+            <span class="file-picker-icon">＋</span>
+            <span><strong id="uploadFileName">파일 선택</strong><small>XLSX·PDF·HWP·HWPX·이미지</small></span>
+          </label>
+          <input id="uploadFile" type="file" accept=".xlsx,.pdf,.hwp,.hwpx,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff" hidden>
+          <label class="override-label" for="filenameOverride">저장 파일명 <small>(선택)</small></label>
+          <input class="override-input" id="filenameOverride" type="text" placeholder="원본 파일명 그대로 사용" autocomplete="off">
+          <button class="upload-button" id="uploadButton" type="submit">업로드하고 적재</button>
+          <div class="upload-progress" id="uploadProgress" hidden>
+            <span></span><small id="uploadProgressText">업로드 중</small>
+          </div>
+        </form>
+      </section>
+
+      <section class="side-section api-section">
+        <label for="apiKey">API Key</label>
+        <div class="api-input-row">
+          <input id="apiKey" type="password" placeholder="설정된 경우 입력" autocomplete="off">
+          <button id="saveApiKey" type="button">적용</button>
+        </div>
+        <small>키는 현재 브라우저 탭에만 보관됩니다.</small>
+      </section>
+      <div class="server-state">
+        <span class="status-dot" id="statusDot"></span><span id="serverStatus">서버 확인 중</span>
+        <a href="/docs" target="_blank" rel="noreferrer">Swagger</a>
+      </div>
+    </aside>
+
+    <main class="main-panel">
+      <header class="topbar">
+        <button class="icon-button mobile-only" id="openSidebar" aria-label="문서 패널 열기">☰</button>
+        <div><p class="eyebrow">LOCAL HYBRID RAG</p><h1>재정 문서 질의</h1></div>
+        <div class="top-actions">
+          <div class="scope-summary" id="scopeSummary">전체 문서</div>
+          <button class="secondary-button" id="clearChat" type="button">대화 지우기</button>
+        </div>
+      </header>
+
+      <section class="chat-area" id="chatArea" aria-live="polite">
+        <div class="welcome-card">
+          <div class="welcome-icon">₩</div>
+          <p class="eyebrow">READY TO SEARCH</p>
+          <h2>문서를 선택하고 편하게 질문하세요.</h2>
+          <p>명단과 금액 계산은 PANDAS로, 기준과 목적 설명은 VECTOR로 자동 처리합니다.</p>
+          <div class="suggestion-grid">
+            <button class="suggestion" type="button">출연금액 총액 알려줘</button>
+            <button class="suggestion" type="button">가장 많이 기부한 사람은 누구야?</button>
+            <button class="suggestion" type="button">평균 지급액과 계산 근거 알려줘</button>
+            <button class="suggestion" type="button">이 문서의 지급 기준을 설명해줘</button>
+          </div>
+        </div>
+      </section>
+
+      <footer class="composer-wrap">
+        <div class="selected-files" id="selectedFiles"></div>
+        <form class="composer" id="chatForm">
+          <textarea id="questionInput" rows="1" maxlength="2000" placeholder="문서에 대해 질문하세요. Enter 전송 · Shift+Enter 줄바꿈"></textarea>
+          <button class="send-button" id="sendButton" type="submit"><span>전송</span><span aria-hidden="true">→</span></button>
+        </form>
+        <p class="composer-note">답변은 적재된 문서를 기준으로 생성됩니다. 중요한 금액은 계산 근거와 원문을 함께 확인하세요.</p>
+      </footer>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

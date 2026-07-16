@@ -31,6 +31,12 @@ _CONNECTOR = re.compile(r"그리고|또한|추가로|동시에|함께|및|하고
 
 _COMPARE = re.compile(r"비교|차이|다른점|같은점", re.IGNORECASE)
 _EXPLICIT_LIST = re.compile(r"명단|목록|리스트", re.IGNORECASE)
+_DOCUMENT_INVENTORY = re.compile(
+    r"(?:전체|모든|전부|적재(?:된)?|등록(?:된)?|업로드(?:된)?|현재)?\s*"
+    r"(?:문서|파일)(?:들)?(?:을|를|의|은|는)?\s*"
+    r"(?:목록|리스트|보여|알려|조회|확인)",
+    re.IGNORECASE,
+)
 _ENTITY_NOUN = re.compile(r"수혜자|출연자|기부자", re.IGNORECASE)
 _AMOUNT = re.compile(
     r"얼마|얼마나|금액|총액|지급액|출연액|기부액|후원액|장학금액|지원금액|예산액|집행액",
@@ -67,10 +73,11 @@ _VECTOR_OVERRIDE = re.compile(
 )
 
 STRUCTURED_OPERATIONS = frozenset({
-    "compare", "max_person_by_amount", "min_person_by_amount", "list_records",
+    "compare", "max_person_by_amount", "min_person_by_amount", "list_records", "filter_records",
     "count_records", "sum_amount", "average_amount", "median_amount",
     "mode_amount", "max_amount", "min_amount", "lookup_amount",
 })
+DOCUMENT_INVENTORY_OPERATIONS = frozenset({"list_documents"})
 DOCUMENT_OPERATIONS = frozenset({
     "document_reason", "document_purpose", "document_criteria",
     "document_procedure", "document_explain",
@@ -136,12 +143,16 @@ def _detect_operations(question: str, intents: list[AggregationIntent]) -> list[
         if operation not in operations:
             operations.append(operation)
 
+    document_inventory = bool(_DOCUMENT_INVENTORY.search(question))
+    if document_inventory:
+        add("list_documents")
+
     if _COMPARE.search(question):
         add("compare")
     else:
         # 수혜자·출연자·기부자는 순위 질문의 대상 명사로도 쓰인다. 명시적인
         # 목록 표현이 있거나 집계 의도가 없는 단독 조회일 때만 목록 작업이다.
-        if _EXPLICIT_LIST.search(question) or (
+        if (not document_inventory and _EXPLICIT_LIST.search(question)) or (
             _ENTITY_NOUN.search(question) and not intents
         ):
             add("list_records")
@@ -197,6 +208,8 @@ def detect_question_signals(
 
 def operation_domains(operations: list[str]) -> list[str]:
     domains: list[str] = []
+    if any(operation in DOCUMENT_INVENTORY_OPERATIONS for operation in operations):
+        domains.append("document_inventory")
     if any(operation in STRUCTURED_OPERATIONS for operation in operations):
         domains.append("structured_data")
     if any(operation in DOCUMENT_OPERATIONS for operation in operations):

@@ -62,6 +62,16 @@ def _display_df(df: pd.DataFrame) -> pd.DataFrame:
     return df.loc[:, cols]
 
 
+def _sanitize_mapping(value: dict) -> dict:
+    """LLM 결과가 dict여도 검색용 내부 컬럼이 응답으로 노출되지 않게 한다."""
+    cleaned: dict = {}
+    for key, item in value.items():
+        if _is_internal_col(str(key)):
+            continue
+        cleaned[key] = _sanitize_mapping(item) if isinstance(item, dict) else item
+    return cleaned
+
+
 def _format_amount_payload(payload: dict[str, Any]) -> str:
     label = str(payload.get("label") or "금액")
     value = payload.get("value", "")
@@ -97,6 +107,13 @@ def _format_aggregation_payload(payload: dict[str, Any]) -> str:
         if "valid_rows" in payload:
             lines.append(f"- 계산 사용 행: {int(payload.get('valid_rows') or 0):,}개")
             lines.append(f"- 제외 행: {invalid_rows:,}개")
+        date_evidence = payload.get("date_filter")
+        if isinstance(date_evidence, dict) and "items" not in date_evidence:
+            if date_evidence.get("column"):
+                lines.append(f"- 날짜 컬럼: {date_evidence['column']}")
+            if date_evidence.get("period"):
+                lines.append(f"- 조회 기간: {date_evidence['period']}")
+            lines.append(f"- 날짜 변환 제외 행: {int(date_evidence.get('invalid_date_rows') or 0):,}개")
         return "\n".join(lines)
 
     if operation == "count":
@@ -171,6 +188,18 @@ def _format_pandas_result(result: object) -> str:
         return _format_aggregation_payload(result)
     if isinstance(result, dict) and result.get("type") == "amount":
         return _format_amount_payload(result)
+    if isinstance(result, dict):
+        safe_result = _sanitize_mapping(result)
+        if not safe_result:
+            return "조회된 데이터가 없습니다."
+        try:
+            if all(isinstance(value, dict) for value in safe_result.values()):
+                df = pd.DataFrame(safe_result)
+            else:
+                df = pd.DataFrame([safe_result])
+            return _mask_warning(df) + _display_df(df).to_string(index=False)
+        except Exception:
+            return str(safe_result)
     if hasattr(result, "item"):
         result = result.item()
     if isinstance(result, (int, float)):
@@ -198,6 +227,12 @@ def _format_list_result(df: pd.DataFrame) -> str:
     warning = _mask_warning(df)
     display = _display_df(df)
     header = f"총 {len(display)}건\n"
+    date_evidence = df.attrs.get("date_filter_evidence")
+    if isinstance(date_evidence, dict) and "items" not in date_evidence:
+        header += (
+            f"날짜 기준: {date_evidence.get('period', '')}"
+            f" ({date_evidence.get('column', '날짜 컬럼')})\n"
+        )
     if "source" in display.columns:
         try:
             sort_cols = ["source"]
@@ -219,6 +254,8 @@ def _format_scalar_result(result: object, question: str) -> str:
         return _format_aggregation_payload(result)
     if isinstance(result, dict) and result.get("type") == "amount":
         return _format_amount_payload(result)
+    if isinstance(result, (dict, list, pd.Series, pd.DataFrame)):
+        return _format_pandas_result(result)
     if hasattr(result, "item"):
         result = result.item()
     if isinstance(result, int):

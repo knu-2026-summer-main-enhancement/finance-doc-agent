@@ -35,6 +35,7 @@ DATE_COL_KEYWORDS = ("일자", "날짜", "지급일", "출연일", "입금일", 
 IDENTITY_INTERNAL_COLS = {
     "성명_원문", "성명_검색키", "성명_마스킹패턴", "성명_마스킹여부",
     "row_uid", "person_candidate_key", "_row_index", "_row_context", "_질문이름", "_매칭유형",
+    "ocr_row_index", "ocr_confidence",
 }
 
 _MASK_CHARS_RE = re.compile(r"[＊○●Oo0xX×]")

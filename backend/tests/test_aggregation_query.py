@@ -160,6 +160,24 @@ class AggregationQueryTest(unittest.TestCase):
         self.assertIn("- 계산 방식: 개수 계산", answer)
         self.assertIn("- 조회 행: 4개", answer)
 
+    def test_generic_dict_result_hides_internal_identity_columns(self):
+        raw_result = {
+            "이름": {0: "이*규"},
+            "출연금액": {0: "1,000,000"},
+            "성명_마스킹패턴": {0: "이*규"},
+            "성명_마스킹여부": {0: True},
+            "person_candidate_key": {0: "internal-key"},
+            "ocr_row_index": {0: 17},
+        }
+        answer = _format_scalar_result(raw_result, "명단 보여줘")
+        self.assertIn("이*규", answer)
+        self.assertIn("출연금액", answer)
+        self.assertNotIn("성명_마스킹패턴", answer)
+        self.assertNotIn("성명_마스킹여부", answer)
+        self.assertNotIn("person_candidate_key", answer)
+        self.assertNotIn("internal-key", answer)
+        self.assertNotIn("ocr_row_index", answer)
+
     def test_shared_analysis_skips_query_layer_redetection(self):
         question = "출연금액 총 얼만지 알려줘"
         analysis = analyze_question(question)

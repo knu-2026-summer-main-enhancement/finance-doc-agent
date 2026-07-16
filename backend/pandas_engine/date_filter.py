@@ -1,0 +1,218 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+
+import pandas as pd
+
+from utils.semantic_schema import infer_data_type, semantic_columns
+
+
+_YEAR = r"(?:19|20)\d{2}"
+_MONTH = r"(?:1[0-2]|0?[1-9])"
+_ALL_YEARS_RE = re.compile(r"모든\s*연도|전체\s*연도|연도\s*상관없이", re.IGNORECASE)
+_MONTH_RANGE_RE = re.compile(
+    rf"(?:(?P<year>{_YEAR})\s*년?\s*)?"
+    rf"(?P<start>{_MONTH})\s*월?\s*"
+    rf"(?:~|～|−|–|—|-|부터|에서)\s*"
+    rf"(?:(?P<end_year>{_YEAR})\s*년?\s*)?"
+    rf"(?P<end>{_MONTH})\s*월(?:\s*까지|\s*사이)?",
+    re.IGNORECASE,
+)
+_SINGLE_MONTH_RE = re.compile(
+    rf"(?:(?P<year>{_YEAR})\s*년\s*)?(?P<month>{_MONTH})\s*월",
+    re.IGNORECASE,
+)
+_DATE_HEADER_HINTS = (
+    "일자", "날짜", "지급일", "출연일", "후원일", "기부일", "입금일", "납입일", "등록일",
+)
+_QUESTION_ROLE_HINTS = (
+    (("지급", "받은", "수령"), ("지급", "수령")),
+    (("출연",), ("출연",)),
+    (("후원",), ("후원",)),
+    (("기부",), ("기부",)),
+    (("납부", "입금", "낸", "냈"), ("납부", "입금", "출연", "기부", "후원")),
+)
+
+
+@dataclass(frozen=True)
+class DateFilter:
+    start_month: int
+    end_month: int
+    year: int | None = None
+    end_year: int | None = None
+    all_years: bool = False
+    expression: str = ""
+    error: str = ""
+
+
+@dataclass
+class DateFilterResult:
+    rows: pd.DataFrame | None
+    column: str | None = None
+    matched_rows: int = 0
+    invalid_rows: int = 0
+    evidence: dict[str, object] | None = None
+    message: str = ""
+
+
+def parse_date_filter(question: str) -> DateFilter | None:
+    """질문에서 월 또는 월 범위를 구조화한다. 특정 문서 값은 사용하지 않는다."""
+    text = str(question or "").strip()
+    matched = _MONTH_RANGE_RE.search(text)
+    if matched:
+        year = int(matched.group("year")) if matched.group("year") else None
+        end_year = int(matched.group("end_year")) if matched.group("end_year") else year
+        start_month = int(matched.group("start"))
+        end_month = int(matched.group("end"))
+        error = ""
+        if year is None and start_month > end_month:
+            error = "연도를 생략한 상태에서는 연도를 넘는 월 범위를 판단할 수 없습니다. 시작 연도와 종료 연도를 지정해 주세요."
+        elif year is not None and end_year is not None and (end_year, end_month) < (year, start_month):
+            error = "종료 시점이 시작 시점보다 빠릅니다. 날짜 범위를 다시 확인해 주세요."
+        return DateFilter(
+            start_month=start_month,
+            end_month=end_month,
+            year=year,
+            end_year=end_year,
+            all_years=bool(_ALL_YEARS_RE.search(text)),
+            expression=matched.group(0),
+            error=error,
+        )
+
+    matched = _SINGLE_MONTH_RE.search(text)
+    if not matched:
+        return None
+    month = int(matched.group("month"))
+    year = int(matched.group("year")) if matched.group("year") else None
+    return DateFilter(
+        start_month=month,
+        end_month=month,
+        year=year,
+        end_year=year,
+        all_years=bool(_ALL_YEARS_RE.search(text)),
+        expression=matched.group(0),
+    )
+
+
+def date_column_candidates(df: pd.DataFrame) -> list[str]:
+    candidates = semantic_columns(df, roles={"temporal"}, data_type="date")
+    for column in df.columns:
+        if str(column).startswith("_") or column in candidates:
+            continue
+        header = re.sub(r"\s+", "", str(column))
+        if any(hint in header for hint in _DATE_HEADER_HINTS) or infer_data_type(df[column]) == "date":
+            candidates.append(str(column))
+    return candidates
+
+
+def resolve_date_column(df: pd.DataFrame, question: str) -> tuple[str | None, list[str]]:
+    candidates = date_column_candidates(df)
+    if len(candidates) <= 1:
+        return (candidates[0] if candidates else None), candidates
+
+    question_text = str(question or "")
+    scores = {column: 0 for column in candidates}
+    for question_words, column_words in _QUESTION_ROLE_HINTS:
+        if not any(word in question_text for word in question_words):
+            continue
+        for column in candidates:
+            normalized = re.sub(r"\s+", "", str(column))
+            scores[column] += sum(1 for word in column_words if word in normalized)
+
+    best_score = max(scores.values(), default=0)
+    selected = [column for column, score in scores.items() if score == best_score and score > 0]
+    return (selected[0] if len(selected) == 1 else None), candidates
+
+
+def _to_datetime(series: pd.Series) -> pd.Series:
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return pd.to_datetime(series, errors="coerce")
+
+    text = series.astype("string").str.strip()
+    normalized = (
+        text.str.replace(r"\s*년\s*", "-", regex=True)
+        .str.replace(r"\s*월\s*", "-", regex=True)
+        .str.replace(r"\s*일\s*$", "", regex=True)
+        .str.replace(".", "-", regex=False)
+        .str.replace("/", "-", regex=False)
+    )
+    try:
+        parsed = pd.to_datetime(normalized, format="mixed", errors="coerce")
+    except (TypeError, ValueError):
+        parsed = pd.to_datetime(normalized, errors="coerce")
+
+    numeric = pd.to_numeric(text, errors="coerce")
+    compact_date = text.str.fullmatch(r"\d{8}", na=False)
+    if compact_date.any():
+        parsed.loc[compact_date] = pd.to_datetime(text.loc[compact_date], format="%Y%m%d", errors="coerce")
+    excel_serial = numeric.between(20_000, 80_000, inclusive="both") & ~compact_date
+    if excel_serial.any():
+        parsed.loc[excel_serial] = pd.to_datetime(
+            numeric.loc[excel_serial], unit="D", origin="1899-12-30", errors="coerce"
+        )
+    return parsed
+
+
+def _period_label(spec: DateFilter, years: list[int]) -> str:
+    if spec.year is not None:
+        end_year = spec.end_year or spec.year
+        if spec.year == end_year and spec.start_month == spec.end_month:
+            return f"{spec.year}년 {spec.start_month}월"
+        return f"{spec.year}년 {spec.start_month}월~{end_year}년 {spec.end_month}월"
+    month_label = f"{spec.start_month}월" if spec.start_month == spec.end_month else f"{spec.start_month}~{spec.end_month}월"
+    return f"모든 연도의 {month_label}" if spec.all_years else f"{years[0]}년 {month_label}"
+
+
+def apply_date_filter(df: pd.DataFrame, spec: DateFilter, question: str) -> DateFilterResult:
+    if spec.error:
+        return DateFilterResult(None, message=spec.error)
+
+    column, candidates = resolve_date_column(df, question)
+    if not candidates:
+        return DateFilterResult(None, message="이 문서에는 날짜로 판단할 수 있는 컬럼이 없습니다.")
+    if column is None:
+        return DateFilterResult(
+            None,
+            message=f"날짜 기준을 하나로 결정할 수 없습니다. 사용할 날짜 컬럼을 지정해 주세요: {', '.join(candidates)}",
+        )
+
+    parsed = _to_datetime(df[column])
+    invalid_rows = int(parsed.isna().sum())
+    available_years = sorted({int(value) for value in parsed.dropna().dt.year.unique()})
+    if not available_years:
+        return DateFilterResult(None, column=column, invalid_rows=invalid_rows, message="변환 가능한 날짜 데이터가 없습니다.")
+    if spec.year is None and not spec.all_years and len(available_years) > 1:
+        years = ", ".join(str(year) for year in available_years)
+        return DateFilterResult(
+            None,
+            column=column,
+            invalid_rows=invalid_rows,
+            message=f"이 문서에는 여러 연도의 날짜가 있습니다({years}). 연도를 지정하거나 '모든 연도'라고 질문해 주세요.",
+        )
+
+    if spec.year is not None:
+        start_key = spec.year * 100 + spec.start_month
+        end_key = (spec.end_year or spec.year) * 100 + spec.end_month
+        date_key = parsed.dt.year * 100 + parsed.dt.month
+        mask = date_key.between(start_key, end_key, inclusive="both")
+    else:
+        mask = parsed.dt.month.between(spec.start_month, spec.end_month, inclusive="both")
+
+    rows = df[mask.fillna(False)].copy()
+    period = _period_label(spec, available_years)
+    evidence = {
+        "column": column,
+        "period": period,
+        "matched_rows": int(len(rows)),
+        "invalid_date_rows": invalid_rows,
+    }
+    rows.attrs.update(df.attrs)
+    rows.attrs["date_filter_evidence"] = evidence
+    return DateFilterResult(
+        rows,
+        column=column,
+        matched_rows=len(rows),
+        invalid_rows=invalid_rows,
+        evidence=evidence,
+    )

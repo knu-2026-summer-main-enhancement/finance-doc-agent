@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from pandas_engine.aggregation import AggregationIntent, detect_aggregation_intents
+from pandas_engine.date_filter import DateFilter, parse_date_filter
 from rag.question_detectors import (
     QuestionSignals,
     detect_question_signals,
@@ -16,6 +17,7 @@ class QuestionAnalysis:
     question: str
     operations: list[str] = field(default_factory=list)
     aggregation_intents: list[AggregationIntent] = field(default_factory=list)
+    date_filter: DateFilter | None = None
     domains: list[str] = field(default_factory=list)
     signals: QuestionSignals = field(default_factory=QuestionSignals)
     is_empty: bool = False
@@ -64,11 +66,15 @@ def analyze_question(question: str) -> QuestionAnalysis:
         return QuestionAnalysis(question="", is_empty=True)
 
     aggregation_intents = detect_aggregation_intents(normalized)
+    date_filter = parse_date_filter(normalized)
     signals = detect_question_signals(normalized, aggregation_intents)
+    if date_filter and not signals.operations:
+        signals.operations.append("filter_records")
     return QuestionAnalysis(
         question=normalized,
         operations=signals.operations,
         aggregation_intents=aggregation_intents,
+        date_filter=date_filter,
         domains=operation_domains(signals.operations),
         signals=signals,
     )

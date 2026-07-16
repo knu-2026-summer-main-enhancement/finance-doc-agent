@@ -4,6 +4,8 @@ from rag.question_analyzer import QuestionAnalysis, analyze_question
 
 
 _ENGINE_BY_OPERATION = {
+    "list_documents": "DOCUMENTS",
+    "filter_records": "PANDAS",
     "compare": "PANDAS",
     "max_person_by_amount": "PANDAS",
     "min_person_by_amount": "PANDAS",

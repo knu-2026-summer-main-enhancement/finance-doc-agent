@@ -6,7 +6,7 @@ import re
 import pandas as pd
 
 from datastore.state import _df_namespace, _df_sources, _df_labels
-from datastore.scope import scoped_mapping
+from datastore.scope import scoped_mapping, source_scope_active
 from pandas_engine.aggregation import (
     AggregationIntent,
     aggregate_rows,
@@ -16,6 +16,7 @@ from pandas_engine.aggregation import (
     resolve_amount_column,
 )
 from pandas_engine.money import money_series
+from pandas_engine.date_filter import DateFilter, apply_date_filter
 from utils.table_parser import normalize_person_name, make_mask_pattern, is_masked_name, AMOUNT_COL_KEYWORDS
 from utils.semantic_schema import semantic_columns
 
@@ -1041,9 +1042,99 @@ def _query_aggregation(question: str, intent: AggregationIntent) -> tuple[object
     return _aggregate_rows(rows, sources, intent, question)
 
 
+def _query_date_filtered(
+    question: str,
+    date_filter: DateFilter,
+    intent: AggregationIntent | None,
+) -> tuple[object, list[str]]:
+    frames: list[pd.DataFrame] = []
+    sources: list[str] = []
+    evidences: list[dict[str, object]] = []
+    messages: list[str] = []
+    conditions = _find_filter_conditions(question)
+    identifier_targets = _question_identifier_targets(question)
+    cohort_requested = bool(_question_cohort(question))
+    person_list_requested = intent is None and bool(re.search(
+        r"사람|개인|학생|수혜자|기부자|후원자|출연자|납부자", question
+    ))
+
+    for alias, df in _scoped_dataframes().items():
+        result = apply_date_filter(df, date_filter, question)
+        if result.rows is None:
+            if result.message:
+                messages.append(result.message)
+            continue
+        source = _df_sources.get(alias, alias)
+        rows = result.rows.copy()
+        if conditions:
+            if alias not in conditions:
+                continue
+            for column, value in conditions[alias]:
+                rows = rows[rows[column].astype(str).str.contains(re.escape(value), na=False)]
+        if identifier_targets:
+            rows = _filter_rows_by_question_identifier(rows, question)
+        if cohort_requested:
+            rows = _filter_rows_by_question_cohort(rows, question)
+        if person_list_requested:
+            if "entity_type" in rows.columns:
+                entity_types = rows["entity_type"].astype(str)
+                known = entity_types.str.contains(
+                    r"^(?:person|organization|department)(?:_|$)", case=False, regex=True, na=False
+                )
+                if known.any():
+                    rows = rows[entity_types.str.contains(
+                        r"^person(?:_|$)", case=False, regex=True, na=False
+                    )]
+        if "source" not in rows.columns:
+            rows.insert(0, "source", source)
+        frames.append(rows)
+        if source not in sources:
+            sources.append(source)
+        if result.evidence:
+            evidences.append({**result.evidence, "source": source})
+
+    if not frames:
+        message = next(iter(dict.fromkeys(messages)), "조건에 맞는 날짜 데이터가 없습니다.")
+        return _aggregation_notice(message, kind="clarification"), []
+    if len(sources) > 1 and not source_scope_active():
+        return _aggregation_notice(
+            "날짜 조건을 적용할 문서를 선택해주세요: " + ", ".join(sources[:5]),
+            kind="clarification",
+        ), sources
+
+    rows = pd.concat(frames, ignore_index=True, sort=False)
+    if "row_uid" in rows.columns:
+        rows = rows.drop_duplicates(subset=["row_uid"])
+    rows.attrs["date_filter_evidence"] = evidences[0] if len(evidences) == 1 else {"items": evidences}
+
+    if rows.empty:
+        return _aggregation_notice("해당 날짜 조건과 일치하는 데이터가 없습니다."), sources
+    if intent:
+        payload, payload_sources = _aggregate_rows(rows, sources, intent, question)
+        if isinstance(payload, dict) and payload.get("type") == "aggregation":
+            payload["date_filter"] = rows.attrs["date_filter_evidence"]
+        return payload, payload_sources
+    if person_list_requested:
+        key_column = next((column for column in (
+            "person_candidate_key", "성명_검색키", "표시명", "이름", "성명", "성명_원문"
+        ) if column in rows.columns), None)
+        if key_column:
+            keys = rows[key_column].astype(str).map(normalize_person_name)
+            valid = keys.str.strip().ne("")
+            rows = rows[valid & ~keys.duplicated(keep="first")].copy()
+            identity_columns = [column for column in (
+                "source", "기수", "학과", "전공", "학년", "표시명", "이름", "성명"
+            ) if column in rows.columns]
+            if identity_columns:
+                rows = rows.loc[:, identity_columns]
+            rows.attrs["date_filter_evidence"] = evidences[0] if len(evidences) == 1 else {"items": evidences}
+    return rows, sources
+
+
 def _query_pandas_direct(
     question: str,
     aggregation_intents: list[AggregationIntent] | None = None,
+    date_filter: DateFilter | None = None,
 ) -> tuple[object, list[str]]:
     """식별번호, 기관명, 일반 조건 순으로 직접 조회한다."""
     # None은 독립 호출의 하위 호환 경로이고, 빈 목록은 이미 분석했지만 집계가
@@ -1056,6 +1147,11 @@ def _query_pandas_direct(
             kind="clarification",
         ), []
     intent = aggregation_intents[0] if aggregation_intents else None
+    if date_filter is None:
+        from pandas_engine.date_filter import parse_date_filter
+        date_filter = parse_date_filter(question)
+    if date_filter is not None:
+        return _query_date_filtered(question, date_filter, intent)
     identifier_targets = _question_identifier_targets(question)
     if identifier_targets:
         id_df, id_sources = _find_identifier_exact(question)

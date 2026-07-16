@@ -8,10 +8,11 @@
 
 ### 현재 체크포인트
 
-- XLSX·PDF·HWP/HWPX·표 이미지 업로드 및 정형/비정형 데이터 분리 적재
+- XLSX·PDF·HWP/HWPX와 현재 지원하는 5열 장부형 표 이미지 업로드 및 정형/비정형 데이터 분리 적재
 - 표 데이터를 공통 의미 스키마와 함께 Parquet에 저장하고 검색용 청크를 ChromaDB에 저장
 - Question Analyzer → Guard/Guide → Router를 통한 PANDAS·VECTOR 경로 결정
 - 합계·평균·중앙값·최빈값·최댓값·최솟값 등 기본 집계를 검증된 함수로 처리
+- `3월`, `3~4월`, `2025년 3월부터 5월까지` 같은 날짜 조건을 표의 날짜 컬럼에 적용한 명단·집계 조회
 - 금액 컬럼이 여러 개인 경우 질문과 컬럼 의미를 비교하고 모호하면 사용자에게 선택 요청
 - `/chat`의 `sources` 필드로 선택 문서 범위를 PANDAS와 VECTOR에 동일하게 적용
 - 집계 답변에 문서·계산 컬럼·계산 방식·사용/제외 행을 근거로 표시
@@ -100,7 +101,7 @@
 → ✅ 신입생 동문장학금 3월-480만원.xlsx 색인 완료 (24건)
 ```
 
-지원 형식: `xlsx`, `pdf`, `hwp`, `hwpx`, `png`, `jpg`, `jpeg`, `bmp`, `tif`, `tiff`
+지원 형식: `xlsx`, `pdf`, `hwp`, `hwpx`, `png`, `jpg`, `jpeg`, `webp`, `bmp`, `tif`, `tiff`
 
 #### 문서 목록 조회
 
@@ -174,6 +175,8 @@ VECTOR → 문서에서 확인 불가 → PANDAS 자동 시도 (정형 데이터
 
 `/chat` 요청에 `sources`를 지정하면 PANDAS DataFrame과 ChromaDB 검색이 같은 문서 범위로 제한됩니다. 집계 답변에는 실제 계산에 사용한 문서, 컬럼, 연산, 행 수와 제외 행 수가 함께 표시됩니다.
 
+> 백엔드 API와 스트리밍 API는 `sources`를 지원하지만, 현재 저장된 `my_workflow.json`의 일반 질의 노드는 아직 `question`만 전송합니다. Slack에서 파일 태그를 문서 범위로 사용하려면 n8n 질의 노드에 `sources` 전달을 추가해야 합니다.
+
 ```text
 출연금액 합계는 977,070,000원입니다.
 
@@ -190,7 +193,7 @@ VECTOR → 문서에서 확인 불가 → PANDAS 자동 시도 (정형 데이터
 
 ### 기능 2 — 명세서 자동 작성 (`/summary` + n8n)
 
-적재된 모든 문서에서 **목적·인원·지원금액·지급처·지출월**을 자동 추출하여 Google Sheets 기부금 활용실적명세서 템플릿에 자동 입력합니다.
+적재된 문서의 DataFrame에서 **인원·지급처**를 집계하고, 현재 규칙에서는 파일명에서 **목적·지원금액·지출월**을 추출하여 Google Sheets 기부금 활용실적명세서 템플릿에 자동 입력합니다. 파일명에 금액이나 월 정보가 없으면 해당 값은 `미확인` 또는 빈 값으로 남을 수 있습니다.
 
 ```
 @봇 명세서 만들어줘
@@ -206,13 +209,15 @@ VECTOR → 문서에서 확인 불가 → PANDAS 자동 시도 (정형 데이터
 Slack에서 파일을 첨부하여 봇을 멘션하면 자동으로 문서를 색인합니다.
 
 ```
-@봇 [xlsx / pdf / hwp 파일 첨부]
+@봇 [xlsx / pdf / hwp / hwpx / 이미지 파일 첨부]
   → n8n 파일 감지 → Slack 다운로드 → POST /ingest/upload
   → "색인 시작" 안내 → 30초 후 GET /status 폴링
   → "✅ N건 색인 완료" 또는 "⚠️ 실패" 결과 회신
 ```
 
-지원 형식: `xlsx`, `pdf`, `hwp`, `hwpx`, `png`, `jpg`, `jpeg`, `bmp`, `tif`, `tiff`
+지원 형식: `xlsx`, `pdf`, `hwp`, `hwpx`, `png`, `jpg`, `jpeg`, `webp`, `bmp`, `tif`, `tiff`
+
+현재 이미지 표 파서는 `발행번호·출연일자·기수·이름·출연금액`으로 구성된 5열 장부형 표에 맞춰져 있습니다. 임의 개수의 열이나 완전히 다른 헤더를 가진 이미지 표는 아직 범용 지원하지 않습니다.
 
 ---
 
@@ -277,11 +282,11 @@ POST /ingest/upload  또는  POST /ingest  또는  POST /ingest/all
   ├─ XLSX ─▶ 시트별 표 → 공통 정제·의미 스키마 → Parquet + ChromaDB
   ├─ PDF  ─▶ 표 → Parquet  /  텍스트(표 제외) → ChromaDB
   │          스캔 PDF → pytesseract OCR → ChromaDB
-  ├─ HWP  ─▶ pyhwpx COM 자동화 → 표 → Parquet + ChromaDB (표·개요 청크)
-  └─ IMAGE ─▶ OpenCV 표/셀 분리 → PaddleOCR → 병합 셀 보정 → Parquet + ChromaDB
+  ├─ HWP  ─▶ pyhwpx COM 자동화 → 임시 HTML → 첫 번째 표 → Parquet + ChromaDB
+  └─ IMAGE ─▶ 5열 장부형 표를 OpenCV 셀 분리 → PaddleOCR → 병합 셀 보정 → Parquet + ChromaDB
 
-* 각 문서마다 [문서 개요] 청크를 ChromaDB에 추가 주입 (vector 검색 품질 향상)
-* PostgreSQL: ingestion_manifest 테이블 (중복 적재 방지용 MD5 해시)
+* 표가 추출된 문서에는 [문서 개요] 청크를 ChromaDB에 추가 주입
+* PostgreSQL: ingestion_manifest 테이블 (MD5 해시와 스키마 버전으로 중복 적재 방지)
 * 적재 완료 후 _load_dataframes()로 인메모리 namespace 즉시 갱신
 ```
 
@@ -296,6 +301,10 @@ finance-doc-agent/
 │   ├── database.py                     # PostgreSQL·ChromaDB 연결
 │   ├── data/                           # [Git Ignored] 업로드 원본 문서
 │   ├── dataframes/                     # [Git Ignored] Parquet·메타·스키마 sidecar
+│   ├── static/                         # 별도 빌드 없는 웹 질의 화면
+│   │   ├── index.html                  # 문서 선택형 채팅 UI
+│   │   ├── style.css                   # 반응형 화면 스타일
+│   │   └── app.js                      # documents·chat API 연결
 │   ├── core/
 │   │   ├── config.py                   # 환경변수와 실행 설정
 │   │   ├── llm.py                      # Ollama LLM·임베딩·벡터 저장소
@@ -307,6 +316,7 @@ finance-doc-agent/
 │   │   └── query.py                    # 이름·기관·기수·식별번호·집계 조회
 │   ├── pandas_engine/
 │   │   ├── aggregation.py              # 고정 집계 감지와 계산
+│   │   ├── date_filter.py              # 날짜 표현 분석·컬럼 선택·행 필터링
 │   │   ├── money.py                    # 공통 금액 파싱과 단위 처리
 │   │   ├── executor.py                 # 제한된 LLM Pandas 코드 실행
 │   │   └── formatter.py                # 답변·계산 근거 포맷팅
@@ -336,6 +346,7 @@ finance-doc-agent/
 │   │       └── image_table_ocr_parser.py # 셀 단위 PaddleOCR 파싱
 │   └── tests/
 │       ├── test_aggregation_query.py   # 집계·계산 근거 테스트
+│       ├── test_date_query.py          # 월·기간별 명단과 집계 테스트
 │       ├── test_document_scope.py      # 선택 문서 범위 테스트
 │       ├── test_semantic_schema.py     # 공통 의미 스키마 테스트
 │       ├── test_structured_query.py    # 이름·기관·식별번호 조회 테스트
@@ -392,6 +403,11 @@ HWP 파일 적재는 **한글과컴퓨터 한글**이 설치된 Windows에서만
 - https://github.com/oschwartz10612/poppler-windows/releases 에서 다운로드
 - 압축 해제 후 `bin/` 경로를 시스템 PATH에 추가
 
+**이미지 표 OCR**
+- `opencv-python-headless`, `paddleocr`, `paddlepaddle` 패키지는 `requirements.txt`로 설치
+- 첫 실행에서는 `korean_PP-OCRv5_mobile_rec` 모델을 내려받아 시간이 더 걸릴 수 있음
+- 이 OCR 경로는 일반 PDF OCR이 아니라 현재 지원하는 5열 장부형 이미지 표 처리에 사용
+
 ---
 
 ### 7-4. 인프라 실행 (Docker)
@@ -403,7 +419,7 @@ docker compose up -d
 | 서비스 | 포트 | 용도 |
 |---|---|---|
 | Ollama | 11434 | 로컬 LLM 서버 |
-| PostgreSQL | 5432 | ingestion_manifest (중복 방지) |
+| PostgreSQL | 5433 → 5432 | 호스트 5433, 컨테이너 5432 · ingestion_manifest |
 | ChromaDB | 8000 | 벡터 DB |
 | n8n | 5678 | 워크플로우 자동화 |
 
@@ -432,7 +448,23 @@ uvicorn main:app --host 0.0.0.0 --port 8080 --reload
 
 ---
 
-### 7-7. 문서 적재
+### 7-7. 웹 질의 화면
+
+백엔드 실행 후 브라우저에서 아래 주소를 엽니다.
+
+```text
+http://localhost:8080/ui
+```
+
+- 왼쪽에서 전체 문서 또는 여러 문서를 선택해 질문할 수 있습니다.
+- 새 문서를 업로드해 적재 상태를 확인하고, 기존 문서를 삭제할 수 있습니다.
+- 답변에 PANDAS·VECTOR·GUIDE 처리 경로와 실제 출처가 함께 표시됩니다.
+- `API_KEY`를 사용하는 환경에서는 왼쪽 API Key 입력란에 키를 입력합니다. 키는 현재 브라우저 탭의 `sessionStorage`에만 저장됩니다.
+- 기존 Swagger UI는 `http://localhost:8080/docs`에서 그대로 사용할 수 있습니다.
+
+---
+
+### 7-8. 문서 적재
 
 **방법 1 — Slack 파일 첨부 (권장)**
 ```
@@ -457,7 +489,7 @@ curl -X POST http://localhost:8080/ingest \
 
 ---
 
-### 7-8. n8n 워크플로우 설정
+### 7-9. n8n 워크플로우 설정
 
 1. `http://localhost:5678` 접속
 2. 상단 메뉴 → **Import from file** → `my_workflow.json` 선택
@@ -476,6 +508,7 @@ curl -X POST http://localhost:8080/ingest \
 
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
+| GET | `/ui` | 불필요 | 문서 선택형 웹 채팅 화면 |
 | GET | `/health` | 불필요 | 서버·Ollama·ChromaDB 상태 확인 |
 | POST | `/chat` | * | 질문과 선택 문서(`sources`) → 자동 라우팅 → 답변 반환 |
 | POST | `/chat/stream` | * | 스트리밍 답변 (프론트 직접 연동용) |
@@ -535,7 +568,7 @@ curl -X POST http://localhost:8080/chat \
 | `POSTGRES_PASSWORD` | **(필수 설정)** | PostgreSQL 비밀번호 |
 | `POSTGRES_DB` | `rag_database` | PostgreSQL DB명 |
 | `POSTGRES_HOST` | `localhost` | PostgreSQL 호스트 |
-| `POSTGRES_PORT` | `5432` | PostgreSQL 포트 |
+| `POSTGRES_PORT` | `5433` | 로컬 백엔드에서 Docker PostgreSQL에 접속하는 호스트 포트 |
 | `CHROMA_HOST` | `localhost` | ChromaDB 호스트 |
 | `CHROMA_PORT` | `8000` | ChromaDB 포트 |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 서버 주소 |

@@ -58,6 +58,7 @@ async def _answer_pandas(
         direct_result, direct_sources = _query_pandas_direct(
             question,
             aggregation_intents=analysis.aggregation_intents,
+            date_filter=analysis.date_filter,
         )
         if direct_result is None:
             return "조회된 데이터가 없습니다.", [], "pandas"
@@ -88,6 +89,7 @@ async def _answer_pandas(
     direct_result, direct_sources = _query_pandas_direct(
         question,
         aggregation_intents=analysis.aggregation_intents,
+        date_filter=analysis.date_filter,
     )
     if direct_result is not None:
         formatted = _format_pandas_result(direct_result)

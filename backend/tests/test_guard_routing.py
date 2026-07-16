@@ -135,6 +135,19 @@ class GuardRoutingTest(unittest.TestCase):
         self.assertIsNotNone(result.analysis)
         self.assertEqual(_route(analysis.question, result.analysis), "PANDAS")
 
+    def test_document_inventory_is_not_treated_as_table_rows(self):
+        for question in (
+            "전체 문서 보여줘",
+            "적재된 파일 목록 알려줘",
+            "현재 문서 리스트 조회",
+        ):
+            with self.subTest(question=question):
+                result = check_question(question)
+                self.assertEqual(result.status, "PASS")
+                self.assertEqual(result.operations, ["list_documents"])
+                self.assertEqual(result.domains, ["document_inventory"])
+                self.assertEqual(_route_with_guard(question, result), "DOCUMENTS")
+
     def test_compare_routes_to_pandas_but_guard_blocks_execution(self):
         analysis = analyze_question("연도별 출연금액을 비교해줘")
         self.assertEqual(analysis.operations, ["compare"])
