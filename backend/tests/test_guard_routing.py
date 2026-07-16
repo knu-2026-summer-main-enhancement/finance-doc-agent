@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from main import ChatResponse, _route_with_guard
+from main import ChatRequest, ChatResponse, _route_with_guard
 from rag.guard import check_question
 from rag.question_analyzer import analyze_question
 from rag.router import _route, required_engines, route_analysis
@@ -21,6 +21,15 @@ class GuardRoutingTest(unittest.TestCase):
         self.assertEqual(result.status, "PASS")
         self.assertEqual(result.operations, ["document_criteria"])
         self.assertEqual(_route_with_guard("장학금 지급 기준 알려줘", result), "VECTOR")
+
+    def test_natural_mode_forces_vector_without_changing_default_route(self):
+        question = "가장 돈을 많이 낸 사람은?"
+        result = check_question(question)
+        self.assertEqual(_route_with_guard(question, result), "PANDAS")
+        self.assertEqual(_route_with_guard(question, result, "natural"), "VECTOR")
+
+        self.assertEqual(ChatRequest(question=question).mode, "auto")
+        self.assertEqual(ChatRequest(question=question, mode="natural").mode, "natural")
 
     def test_result_how_and_procedure_how_are_distinguished(self):
         for question, operation in (

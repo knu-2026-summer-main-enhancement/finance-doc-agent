@@ -7,7 +7,12 @@ import pandas as pd
 
 from datastore.query import _query_pandas_direct
 from datastore.state import _df_labels, _df_namespace, _df_sources
-from pandas_engine.aggregation import detect_aggregation_intent, detect_aggregation_intents
+from pandas_engine.aggregation import (
+    amount_column_clarification,
+    detect_aggregation_intent,
+    detect_aggregation_intents,
+    display_column_label,
+)
 from pandas_engine.formatter import _format_scalar_result
 from rag.router import _route
 from rag.question_analyzer import analyze_question
@@ -288,9 +293,24 @@ class AggregationQueryTest(unittest.TestCase):
 
         self.assertEqual(result["type"], "aggregation_notice")
         self.assertEqual(result["kind"], "clarification")
-        self.assertIn("기준_장학금액", result["message"])
-        self.assertIn("지급_장학금액", result["message"])
+        self.assertIn("기준 장학금액", result["message"])
+        self.assertIn("지급 장학금액", result["message"])
+        self.assertNotIn("_", result["message"])
         self.assertEqual(sources, ["ambiguous.xlsx"])
+
+    def test_internal_column_prefix_is_hidden_in_user_facing_amount_labels(self):
+        raw_column = "col_2단계_목표달성_장학금_지급_예정_금액"
+        self.assertEqual(
+            display_column_label(raw_column),
+            "2단계 목표달성 장학금 지급 예정 금액",
+        )
+        message = amount_column_clarification([
+            "융합인재_1단계_장학금액",
+            raw_column,
+        ])
+        self.assertIn("융합인재 1단계 장학금액", message)
+        self.assertIn("2단계 목표달성 장학금 지급 예정 금액", message)
+        self.assertNotIn("col_", message)
 
 
 if __name__ == "__main__":

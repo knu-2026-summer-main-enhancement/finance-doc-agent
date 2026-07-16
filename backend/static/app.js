@@ -25,6 +25,11 @@ const elements = {
   clearChat: document.getElementById("clearChat"),
   chatArea: document.getElementById("chatArea"),
   selectedFiles: document.getElementById("selectedFiles"),
+  queryModeRow: document.getElementById("queryModeRow"),
+  naturalMode: document.getElementById("naturalMode"),
+  modeHelpWrap: document.getElementById("modeHelpWrap"),
+  modeHelpButton: document.getElementById("modeHelpButton"),
+  modeHelpPopover: document.getElementById("modeHelpPopover"),
   chatForm: document.getElementById("chatForm"),
   questionInput: document.getElementById("questionInput"),
   sendButton: document.getElementById("sendButton"),
@@ -276,7 +281,7 @@ function appendMessage(role, text, route = "", sources = []) {
     if (route) {
       const badge = document.createElement("span");
       badge.className = `route-badge ${route.toLocaleLowerCase()}`;
-      badge.textContent = route.toUpperCase();
+      badge.textContent = route === "natural" ? "자연어 검색" : route.toUpperCase();
       head.append(badge);
     }
     message.append(head);
@@ -332,7 +337,9 @@ async function sendQuestion(question) {
   if (!value || state.busy) return;
 
   state.busy = true;
+  const mode = elements.naturalMode.checked ? "natural" : "auto";
   elements.sendButton.disabled = true;
+  elements.naturalMode.disabled = true;
   elements.questionInput.value = "";
   resizeTextarea();
   elements.chatArea.querySelector(".welcome-card")?.remove();
@@ -343,18 +350,20 @@ async function sendQuestion(question) {
     const response = await fetch("/chat", {
       method: "POST",
       headers: apiHeaders(true),
-      body: JSON.stringify({ question: value, sources: [...state.selected] }),
+      body: JSON.stringify({ question: value, sources: [...state.selected], mode }),
     });
     if (!response.ok) throw new Error(await errorMessage(response));
     const data = await response.json();
     loading.remove();
-    appendMessage("assistant", data.answer || "답변이 비어 있습니다.", data.source || "", data.sources || []);
+    const responseMode = mode === "natural" ? "natural" : (data.source || "");
+    appendMessage("assistant", data.answer || "답변이 비어 있습니다.", responseMode, data.sources || []);
   } catch (error) {
     loading.remove();
     appendMessage("assistant", error.message, "error");
   } finally {
     state.busy = false;
     elements.sendButton.disabled = false;
+    elements.naturalMode.disabled = false;
     elements.questionInput.focus();
   }
 }
@@ -368,6 +377,26 @@ function bindSuggestions() {
   elements.chatArea.querySelectorAll(".suggestion").forEach((button) => {
     button.addEventListener("click", () => sendQuestion(button.textContent));
   });
+}
+
+function setUploadPanelOpen(open) {
+  elements.uploadForm.hidden = !open;
+  elements.uploadToggle.classList.toggle("active", open);
+  elements.uploadToggle.setAttribute("aria-expanded", String(open));
+  elements.uploadToggle.setAttribute("aria-label", open ? "문서 업로드 닫기" : "문서 업로드 열기");
+}
+
+function setModeHelpOpen(open) {
+  elements.modeHelpPopover.hidden = !open;
+  elements.modeHelpButton.setAttribute("aria-expanded", String(open));
+}
+
+function updateNaturalMode() {
+  const active = elements.naturalMode.checked;
+  elements.queryModeRow.classList.toggle("active", active);
+  elements.questionInput.placeholder = active
+    ? "질문의 의미와 문맥으로 검색하세요."
+    : "문서에 대해 질문하세요.";
 }
 
 elements.chatForm.addEventListener("submit", (event) => {
@@ -384,10 +413,35 @@ elements.questionInput.addEventListener("keydown", (event) => {
 elements.documentSearch.addEventListener("input", renderDocuments);
 elements.refreshDocuments.addEventListener("click", loadDocuments);
 elements.uploadToggle.addEventListener("click", () => {
-  const willOpen = elements.uploadForm.hidden;
-  elements.uploadForm.hidden = !willOpen;
-  elements.uploadToggle.textContent = willOpen ? "닫기" : "열기";
-  elements.uploadToggle.setAttribute("aria-expanded", String(willOpen));
+  setUploadPanelOpen(elements.uploadForm.hidden);
+});
+document.addEventListener("pointerdown", (event) => {
+  if (
+    !elements.uploadForm.hidden
+    && !elements.uploadForm.contains(event.target)
+    && !elements.uploadToggle.contains(event.target)
+  ) {
+    setUploadPanelOpen(false);
+  }
+  if (!elements.modeHelpPopover.hidden && !elements.modeHelpWrap.contains(event.target)) {
+    setModeHelpOpen(false);
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    if (!elements.uploadForm.hidden) {
+      setUploadPanelOpen(false);
+      elements.uploadToggle.focus();
+    }
+    if (!elements.modeHelpPopover.hidden) {
+      setModeHelpOpen(false);
+      elements.modeHelpButton.focus();
+    }
+  }
+});
+elements.naturalMode.addEventListener("change", updateNaturalMode);
+elements.modeHelpButton.addEventListener("click", () => {
+  setModeHelpOpen(elements.modeHelpPopover.hidden);
 });
 elements.uploadFile.addEventListener("change", () => selectUploadFile(elements.uploadFile.files[0]));
 elements.uploadForm.addEventListener("submit", uploadDocument);
@@ -427,4 +481,5 @@ elements.closeSidebar.addEventListener("click", () => elements.sidebar.classList
 bindSuggestions();
 checkServer();
 loadDocuments();
+updateNaturalMode();
 elements.questionInput.focus();

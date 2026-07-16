@@ -155,8 +155,16 @@ def resolve_amount_column(df: pd.DataFrame, question: str) -> AmountColumnSelect
     return AmountColumnSelection(candidates, selected)
 
 
+def display_column_label(column: object) -> str:
+    """내부 정규화 헤더를 사용자에게 보여줄 읽기 쉬운 이름으로 변환한다."""
+    label = str(column or "").strip()
+    label = re.sub(r"^col_+", "", label, flags=re.IGNORECASE)
+    label = re.sub(r"_+", " ", label)
+    return re.sub(r"\s+", " ", label).strip()
+
+
 def amount_column_clarification(candidates: tuple[str, ...] | list[str]) -> str:
-    labels = ", ".join(str(column) for column in candidates)
+    labels = ", ".join(display_column_label(column) for column in candidates)
     return f"금액 항목이 여러 개입니다. 다음 중 계산할 항목을 질문에 포함해 주세요: {labels}"
 
 
@@ -242,6 +250,8 @@ def _amount_series(
     amount_column: str,
 ) -> tuple[pd.Series, str, int]:
     numeric = money_series(df, amount_column)
+    # 계산 payload에는 실제 DataFrame 컬럼명을 유지하고, 사용자 표시 단계에서만
+    # display_column_label()을 적용한다.
     label = str(amount_column)
     return numeric, label, int(numeric.isna().sum())
 

@@ -9,6 +9,7 @@ from pandas_engine.aggregation import (
     _AGG_COUNT,
     amount_column_candidates,
     amount_column_clarification,
+    display_column_label,
     resolve_amount_column,
 )
 from pandas_engine.money import money_values
@@ -73,7 +74,7 @@ def _sanitize_mapping(value: dict) -> dict:
 
 
 def _format_amount_payload(payload: dict[str, Any]) -> str:
-    label = str(payload.get("label") or "금액")
+    label = display_column_label(payload.get("label") or "금액")
     value = payload.get("value", "")
     agg = str(payload.get("agg") or "")
     number = _format_number(value)
@@ -490,6 +491,7 @@ def _format_dataframe_for_amount_question(df: pd.DataFrame, question: str) -> st
     if amount_selection.selected is None:
         return amount_column_clarification(amount_selection.candidates)
     col = amount_selection.selected
+    display_col = display_column_label(col)
     groups = _entity_groups(df)
     if not groups:
         display = _display_df(df)
@@ -517,11 +519,11 @@ def _format_dataframe_for_amount_question(df: pd.DataFrame, question: str) -> st
     explicit_sum = _SUM_WORD_RE.search(question) is not None
     if len(values) > 1 or explicit_sum:
         answer = (
-            f"{prefix}{col} 합계는 {_format_number(sum(values))}원입니다. "
+            f"{prefix}{display_col} 합계는 {_format_number(sum(values))}원입니다. "
             f"{_format_payment_breakdown(values)}"
         )
     else:
-        answer = f"{prefix}{col}은 {_format_number(values[0])}입니다."
+        answer = f"{prefix}{display_col}은 {_format_number(values[0])}입니다."
     return _mask_warning(df) + answer
 
 

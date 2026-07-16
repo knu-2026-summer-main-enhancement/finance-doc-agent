@@ -939,6 +939,35 @@ def _concat_aggregation_aliases(aliases: list[str]) -> tuple[pd.DataFrame | None
     return result, sources
 
 
+def _query_all_records() -> tuple[object, list[str]]:
+    """선택 문서가 하나일 때 해당 원본의 전체 표 행을 직접 반환한다.
+
+    목록 요청을 LLM Pandas 코드에 맡기지 않기 위한 결정론적 실행 경로다.
+    한 원본에 시트·표가 여러 개면 같은 source의 DataFrame을 합치고, 서로
+    다른 원본이 함께 범위에 들어오면 임의로 섞지 않고 문서 선택을 요청한다.
+    """
+    sources_to_aliases: dict[str, list[str]] = {}
+    for alias in _scoped_dataframes():
+        source = _df_sources.get(alias, alias)
+        sources_to_aliases.setdefault(source, []).append(alias)
+
+    if not sources_to_aliases:
+        return _aggregation_notice("조회 가능한 표 데이터가 없습니다."), []
+
+    if len(sources_to_aliases) > 1:
+        names = ", ".join(list(sources_to_aliases)[:5])
+        return _aggregation_notice(
+            f"전체 목록을 조회할 문서를 하나 선택해주세요: {names}",
+            kind="clarification",
+        ), list(sources_to_aliases)
+
+    aliases = next(iter(sources_to_aliases.values()))
+    rows, sources = _concat_aggregation_aliases(aliases)
+    if rows is None or rows.empty:
+        return _aggregation_notice("선택한 문서에 조회할 표 데이터가 없습니다."), sources
+    return rows, sources
+
+
 def _source_aliases_from_question(question: str) -> list[str]:
     aliases = _find_dfs_by_source_label(question)
     if aliases:

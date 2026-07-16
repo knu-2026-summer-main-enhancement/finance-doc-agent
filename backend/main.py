@@ -9,7 +9,7 @@ import shutil  #파일 폴더 제어
 import sys
 from contextlib import asynccontextmanager #비동기 처리
 from datetime import datetime, timezone #시간 계산 
-from typing import AsyncIterator #비동기 처리
+from typing import AsyncIterator, Literal #비동기 처리
 from urllib.request import urlopen #웹 요청
 from urllib.error import URLError
 
@@ -59,7 +59,13 @@ from rag.pandas_rag import _answer_pandas
 logger = logging.getLogger("uvicorn.error")
 
 
-def _route_with_guard(question: str, guard_result) -> str:
+def _route_with_guard(
+    question: str,
+    guard_result,
+    mode: Literal["auto", "natural"] = "auto",
+) -> str:
+    if mode == "natural":
+        return "VECTOR"
     return _route(question, analysis=guard_result.analysis)
 
 
@@ -133,6 +139,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 class ChatRequest(BaseModel): #베이스모델 -> 제이슨으로 return
     question: str #질문 
     sources: list[str] = Field(default_factory=list) #선택한 원본 문서명
+    mode: Literal["auto", "natural"] = "auto" #자동 분기 또는 자연어 의미 검색
 
 class ChatResponse(BaseModel):
     answer: str #답변,
@@ -157,7 +164,10 @@ def root_ui():
 
 @app.get("/ui", include_in_schema=False)
 def chatbot_ui():
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+    return FileResponse(
+        os.path.join(STATIC_DIR, "index.html"),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/health") #서버 상태 확인
@@ -262,8 +272,8 @@ async def chat(req: ChatRequest, _: None = Depends(_verify_api_key)):
                     source="guide",
                     sources=[],
                 )
-            route = _route_with_guard(req.question, guard_result)
-            logger.info("[ROUTE] %s | question=%s", route, req.question[:50])
+            route = _route_with_guard(req.question, guard_result, req.mode)
+            logger.info("[ROUTE] %s | mode=%s question=%s", route, req.mode, req.question[:50])
             if route == "DOCUMENTS":
                 answer, sources = _document_list_answer(get_all_manifest_entries())
                 actual_route = "documents"
@@ -275,6 +285,7 @@ async def chat(req: ChatRequest, _: None = Depends(_verify_api_key)):
             else:
                 answer, sources, actual_route = await _answer_vector(
                     req.question,
+                    allow_pandas_fallback=req.mode != "natural",
                     analysis=guard_result.analysis,
                 )
             return ChatResponse(answer=answer, source=actual_route, sources=sources)
@@ -297,7 +308,7 @@ async def chat_stream(req: ChatRequest, _: None = Depends(_verify_api_key)):
                     logger.info("[GUARD] GUIDE(stream) | reason=%s", guard_result.reason_code)
                     yield build_guide_response(guard_result)
                     return
-                route = _route_with_guard(req.question, guard_result)
+                route = _route_with_guard(req.question, guard_result, req.mode)
                 if route == "PANDAS":
                     answer, _, _ = await _answer_pandas(
                         req.question,

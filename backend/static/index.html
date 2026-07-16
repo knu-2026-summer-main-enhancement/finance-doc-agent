@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>재정 문서 에이전트</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=20260716-5">
 </head>
 <body>
   <div class="app-shell">
@@ -33,26 +33,6 @@
         <div class="document-list" id="documentList" aria-live="polite">
           <div class="document-loading">문서 목록을 불러오는 중입니다.</div>
         </div>
-      </section>
-
-      <section class="side-section upload-section">
-        <div class="upload-heading">
-          <div><p class="eyebrow">INGEST</p><strong>새 문서 적재</strong></div>
-          <button class="upload-toggle" id="uploadToggle" type="button" aria-expanded="false">열기</button>
-        </div>
-        <form class="upload-panel" id="uploadForm" hidden>
-          <label class="file-picker" for="uploadFile" id="filePicker">
-            <span class="file-picker-icon">＋</span>
-            <span><strong id="uploadFileName">파일 선택</strong><small>XLSX·PDF·HWP·HWPX·이미지</small></span>
-          </label>
-          <input id="uploadFile" type="file" accept=".xlsx,.pdf,.hwp,.hwpx,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff" hidden>
-          <label class="override-label" for="filenameOverride">저장 파일명 <small>(선택)</small></label>
-          <input class="override-input" id="filenameOverride" type="text" placeholder="원본 파일명 그대로 사용" autocomplete="off">
-          <button class="upload-button" id="uploadButton" type="submit">업로드하고 적재</button>
-          <div class="upload-progress" id="uploadProgress" hidden>
-            <span></span><small id="uploadProgressText">업로드 중</small>
-          </div>
-        </form>
       </section>
 
       <section class="side-section api-section">
@@ -88,7 +68,7 @@
           <div class="suggestion-grid">
             <button class="suggestion" type="button">출연금액 총액 알려줘</button>
             <button class="suggestion" type="button">가장 많이 기부한 사람은 누구야?</button>
-            <button class="suggestion" type="button">평균 지급액과 계산 근거 알려줘</button>
+            <button class="suggestion" type="button">전체목록을 알려줘</button>
             <button class="suggestion" type="button">이 문서의 지급 기준을 설명해줘</button>
           </div>
         </div>
@@ -96,15 +76,46 @@
 
       <footer class="composer-wrap">
         <div class="selected-files" id="selectedFiles"></div>
+        <div class="query-mode-row" id="queryModeRow">
+          <label class="natural-mode-option" for="naturalMode">
+            <input id="naturalMode" type="checkbox">
+            <span class="mode-switch" aria-hidden="true"><i></i></span>
+            <span>자연어 검색</span>
+          </label>
+          <div class="mode-help-wrap" id="modeHelpWrap">
+            <button class="mode-help-button" id="modeHelpButton" type="button" aria-expanded="false" aria-controls="modeHelpPopover" aria-label="자연어 검색 주의사항">i</button>
+            <div class="mode-help-popover" id="modeHelpPopover" role="note" hidden>
+              <strong>주의</strong>
+              <p>자연어 검색은 의미가 비슷한 내용을 찾는 보조 기능으로, 답변이 부정확할 수 있습니다. 자동 분류가 잘못될 때만 사용하고 정확한 계산에는 사용하지 마세요.</p>
+            </div>
+          </div>
+        </div>
+        <form class="upload-panel" id="uploadForm" hidden>
+          <div class="upload-popover-head">
+            <div><strong>문서 업로드</strong><small>업로드 후 표 추출과 검색 색인 자동 진행</small></div>
+          </div>
+          <label class="file-picker" for="uploadFile" id="filePicker">
+            <span class="file-picker-icon">＋</span>
+            <span><strong id="uploadFileName">파일 선택</strong><small>XLSX·PDF·HWP·HWPX·이미지</small></span>
+          </label>
+          <input id="uploadFile" type="file" accept=".xlsx,.pdf,.hwp,.hwpx,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff" hidden>
+          <label class="override-label" for="filenameOverride">저장 파일명 <small>(선택)</small></label>
+          <input class="override-input" id="filenameOverride" type="text" placeholder="원본 파일명 그대로 사용" autocomplete="off">
+          <button class="upload-button" id="uploadButton" type="submit"><span>업로드하고 적재</span><span aria-hidden="true">↑</span></button>
+          <div class="upload-progress" id="uploadProgress" hidden>
+            <span></span><small id="uploadProgressText">업로드 중</small>
+          </div>
+        </form>
         <form class="composer" id="chatForm">
-          <textarea id="questionInput" rows="1" maxlength="2000" placeholder="문서에 대해 질문하세요. Enter 전송 · Shift+Enter 줄바꿈"></textarea>
+          <button class="attach-button" id="uploadToggle" type="button" aria-expanded="false" aria-label="문서 업로드 열기" title="문서 업로드">＋</button>
+          <textarea id="questionInput" rows="1" maxlength="2000" placeholder="문서에 대해 질문하세요."></textarea>
           <button class="send-button" id="sendButton" type="submit"><span>전송</span><span aria-hidden="true">→</span></button>
         </form>
-        <p class="composer-note">답변은 적재된 문서를 기준으로 생성됩니다. 중요한 금액은 계산 근거와 원문을 함께 확인하세요.</p>
+        <p class="composer-note">금액·인원·통계 외의 문서 검색은 핵심 키워드 중심 입력 권장 · 중요한 금액은 계산 근거와 원문 확인</p>
       </footer>
     </main>
   </div>
   <div class="toast" id="toast" role="status"></div>
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js?v=20260716-5" defer></script>
 </body>
 </html>

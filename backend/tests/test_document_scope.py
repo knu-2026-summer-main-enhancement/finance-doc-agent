@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import unittest
+import asyncio
 
 import pandas as pd
 
-from datastore.query import _search_name_pandas
+from datastore.query import _query_all_records, _search_name_pandas
 from datastore.scope import document_scope, selected_sources, source_is_selected
 from datastore.state import _df_labels, _df_namespace, _df_sources
 from pandas_engine.executor import _exec_pandas_code
 from rag.vector import _selected_source_filter
+from rag.pandas_rag import _answer_pandas
+from rag.question_analyzer import analyze_question
 from utils.table_parser import _clean_dataframe
 
 
@@ -68,6 +71,29 @@ class DocumentScopeTests(unittest.TestCase):
                 {"source": {"$in": ["후원대장_이전.xlsx", "후원대장_현재.xlsx"]}},
             )
         self.assertIsNone(_selected_source_filter())
+
+    def test_full_list_questions_return_selected_rows_without_llm(self):
+        questions = ("전체목록", "전체 목록 알려줘")
+        answers = []
+        with document_scope(["후원대장_현재.xlsx"]):
+            for question in questions:
+                answer, sources, route = asyncio.run(
+                    _answer_pandas(question, analysis=analyze_question(question))
+                )
+                answers.append(answer)
+                self.assertEqual(sources, ["후원대장_현재.xlsx"])
+                self.assertEqual(route, "pandas")
+                self.assertIn("총 1건", answer)
+                self.assertIn("김철수", answer)
+                self.assertIn("200,000", answer)
+        self.assertEqual(answers[0], answers[1])
+
+    def test_full_list_requires_one_document_when_scope_is_ambiguous(self):
+        result, sources = _query_all_records()
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result.get("type"), "aggregation_notice")
+        self.assertIn("문서를 하나 선택", str(result.get("message")))
+        self.assertEqual(set(sources), {"후원대장_이전.xlsx", "후원대장_현재.xlsx"})
 
 
 if __name__ == "__main__":

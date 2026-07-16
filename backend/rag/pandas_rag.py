@@ -11,6 +11,7 @@ from datastore.schema import _get_df_schema_filtered
 from datastore.query import (
     _search_name_pandas,
     _query_pandas_direct,
+    _query_all_records,
     _find_value_locations,
     _has_explicit_structured_filter,
 )
@@ -99,6 +100,15 @@ async def _answer_pandas(
                 return _format_dataframe_result_for_question(direct_result, question), direct_sources, "pandas"
             # scalar(int/float/str): LLM 우회, 직접 포맷
             return _format_scalar_result(direct_result, question), direct_sources, "pandas"
+
+    # Analyzer가 목록 요청으로 확정한 경우 LLM이 len(df)와 df 반환 사이에서
+    # 임의로 선택하지 않도록 선택 문서의 전체 행을 직접 반환한다.
+    if "list_records" in analysis.operations:
+        list_result, list_sources = _query_all_records()
+        if isinstance(list_result, pd.DataFrame):
+            logger.info("[LIST_RECORDS] 전체 목록 직접 조회 | source=%s", list_sources)
+            return _format_dataframe_result_for_question(list_result, question), list_sources, "pandas"
+        return _format_scalar_result(list_result, question), list_sources, "pandas"
 
     if _has_explicit_structured_filter(question):
         logger.info("[PANDAS] 명시된 기수/식별번호와 일치하는 데이터 없음")
