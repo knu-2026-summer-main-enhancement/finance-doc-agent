@@ -1,676 +1,509 @@
-# 로컬 LLM 기반 하이브리드 RAG 문서 챗봇
+# Finance Document Agent
 
-## 1. 프로젝트 개요
+장학금·후원금·지원금·예산 명세처럼 **금액과 표가 중심인 문서**를 적재하고, 자연어로 검색·계산·조회할 수 있는 로컬 문서 질의 에이전트입니다.
 
-- **과제명**: 로컬 LLM을 활용한 하이브리드 RAG 기반 사내 문서 처리 및 의사결정 지원 시스템
-- **추진 배경**: 기존 텍스트 위주의 단순 RAG는 예산 계산 등 정형 데이터 기반의 수치 연산에서 할루시네이션을 유발함. 정형(표·수치)과 비정형(규정·문서) 데이터를 분리 저장하고 질의 유형에 따라 자동 라우팅하여 정확도를 높임.
-- **최종 목표**: 오픈소스 로컬 LLM(Ollama)과 하이브리드 DB(Parquet + ChromaDB)를 결합하여 Slack 기반 자동화 챗봇 에이전트 구축.
+Excel, PDF, HWP/HWPX뿐 아니라 세로로 긴 표 이미지도 직접 처리합니다. 표 데이터는 Parquet에 구조화해 저장하고, 문서 설명과 행 텍스트는 ChromaDB에 임베딩합니다. 질문이 들어오면 하나의 질문 분석 결과를 기준으로 문서 목록 조회, 결정론적 PANDAS 계산, 근거 기반 VECTOR 검색 중 적절한 경로를 선택합니다.
 
-### 현재 체크포인트
+이 프로젝트의 핵심 목표는 단순한 문서 요약 챗봇이 아니라 다음과 같은 재정 문서 업무를 안전하게 처리하는 것입니다.
 
-- XLSX·PDF·HWP/HWPX와 현재 지원하는 5열 장부형 표 이미지 업로드 및 정형/비정형 데이터 분리 적재
-- 표 데이터를 공통 의미 스키마와 함께 Parquet에 저장하고 검색용 청크를 ChromaDB에 저장
-- Question Analyzer → Guard/Guide → Router를 통한 PANDAS·VECTOR 경로 결정
-- 합계·평균·중앙값·최빈값·최댓값·최솟값 등 기본 집계를 검증된 함수로 처리
-- `3월`, `3~4월`, `2025년 3월부터 5월까지` 같은 날짜 조건을 표의 날짜 컬럼에 적용한 명단·집계 조회
-- 금액 컬럼이 여러 개인 경우 질문과 컬럼 의미를 비교하고 모호하면 사용자에게 선택 요청
-- `/chat`의 `sources` 필드로 선택 문서 범위를 PANDAS와 VECTOR에 동일하게 적용
-- 집계 답변에 문서·계산 컬럼·계산 방식·사용/제외 행을 근거로 표시
-- 자동 테스트 63개 통과
+- 장학재단 지급·후원 문서 조회
+- 지자체 예산·지원금 명세 내부 검색
+- 수혜자·기부자·기관 명단 관리
+- 금액 합계, 평균, 최댓값, 기간별 집계
+- 원본 문서와 계산 근거를 확인할 수 있는 답변
 
-다음 개발 목표는 집계 결과를 막대·선·원형 그래프로 표현하는 **시각화 기능**입니다.
+> 현재는 로컬 개발·검증 단계입니다. 역할 기반 접근 제어와 감사 로그는 향후 구현 예정이며, 민감한 실데이터를 운영 환경에 배포하기 전 별도의 보안 검토가 필요합니다.
 
 ---
 
-## 2. 기술 스택
+## 핵심 특징
 
-### Languages & Frameworks
-![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
-![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
-![LangChain](https://img.shields.io/badge/LangChain-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white)
+### 1. 여러 문서 형식의 통합 적재
 
-### AI & Database
-![Ollama](https://img.shields.io/badge/Ollama-000000?style=for-the-badge&logo=ollama&logoColor=white)
-![Qwen2.5](https://img.shields.io/badge/Qwen2.5--3B-FF6A00?style=for-the-badge&logo=huggingface&logoColor=white)
-![BGE-M3](https://img.shields.io/badge/BGE--M3-4285F4?style=for-the-badge&logo=huggingface&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-336791?style=for-the-badge&logo=postgresql&logoColor=white)
-![ChromaDB](https://img.shields.io/badge/ChromaDB-FF6D5A?style=for-the-badge&logo=chroma&logoColor=white)
+| 입력 형식 | 처리 방식 | 구조화 저장 | 벡터 저장 |
+|---|---|---:|---:|
+| Excel | 시트별 표 추출 및 공통 정제 | Parquet | ChromaDB |
+| PDF | 표와 본문을 분리 추출, 스캔 페이지 OCR 보완 | Parquet | ChromaDB |
+| HWP/HWPX | `pyhwpx`로 임시 HTML 변환 후 표 추출 | Parquet | ChromaDB |
+| PNG/JPG 등 | OpenCV 표 구조 탐지 + 셀 단위 PaddleOCR | Parquet | ChromaDB |
 
-### Automation & Infrastructure
-![n8n](https://img.shields.io/badge/n8n-FF6D5A?style=for-the-badge&logo=n8n&logoColor=white)
-![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)
-
-### Interface
-![Slack](https://img.shields.io/badge/Slack-4A154B?style=for-the-badge&logo=slack&logoColor=white)
-
----
-
-## 3. Slack 명령어
-
-봇을 멘션(`@봇`)하여 다음 명령을 사용합니다.
-
-| 명령 | 설명 |
-|---|---|
-| `@봇 질문` | 자연어 질의응답 |
-| `@봇 명세서 만들어줘` | 기부금 활용실적명세서 자동 작성 (Google Sheets) |
-| `@봇 [파일 첨부]` | 파일 색인 (xlsx / pdf / hwp / hwpx / 이미지) |
-| `@봇 문서목록` | 현재 색인된 문서 목록 및 상태 조회 |
-| `@봇 삭제 파일명.xlsx` | 색인된 문서 완전 삭제 |
-| `@봇 도움말` | 전체 기능 안내 |
-
----
-
-### 명령어 사용 예시
-
-> **※ 아래 이름·파일명·금액은 모두 데모 샘플 데이터 기준입니다.**  
-> 실제 운영 시에는 적재된 문서의 내용에 따라 응답이 달라집니다.
-
-#### 질의응답
-
-```
-@봇 성적우수 장학금 상반기 명단 알려줘
-→ 1. 홍예준 (건축과 1학년, 250,000원)
-   2. 장서연 (자동화과 1학년, 250,000원)
-   ...총 16명
-
-@봇 신입생 동문장학금 총 지급 금액은 얼마야
-→ 신입생 동문장학금 총 지급 금액은 480만원입니다.
-
-@봇 오태양 학생이 성적우수 장학금 받았어
-→ 조회된 데이터가 없습니다.
-
-@봇 신입생 동문장학금 선발 기준이 어떻게 돼
-→ 당해 신입학생 전원에게 균등 지급하는 방식입니다.
-   지급 기관은 한빛공업고등학교 동문회이며, ...
-```
-
-#### 명세서 자동 작성
-
-```
-@봇 명세서 만들어줘
-→ 명세서를 작성 중입니다... (수초 소요)
-→ ✅ 명세서 작성 완료: https://docs.google.com/spreadsheets/d/...
-```
-
-#### 파일 색인
-
-```
-@봇 [신입생 동문장학금 3월-480만원.xlsx 첨부]
-→ 📥 색인을 시작합니다. 잠시 후 알려드릴게요.
-→ (약 30초 후)
-→ ✅ 신입생 동문장학금 3월-480만원.xlsx 색인 완료 (24건)
-```
-
-지원 형식: `xlsx`, `pdf`, `hwp`, `hwpx`, `png`, `jpg`, `jpeg`, `webp`, `bmp`, `tif`, `tiff`
-
-#### 문서 목록 조회
-
-```
-@봇 문서목록
-→ 📂 현재 색인된 문서 목록 (6건)
-   ✅ 신입생 동문장학금 3월-480만원.xlsx (24건)
-   ✅ 성적우수 장학금 상반기 6월-320만원.pdf (16건)
-   ✅ 성적우수 장학금 하반기 12월-280만원.pdf (14건)
-   ✅ 체육특기생 지원금 9월-150만원.xlsx (10건)
-   ✅ 학년말 성적우수 장학금 12월-200만원.xlsx (10건)
-   ✅ 장학재단 특별장학금 9월-240만원.hwp (12건)
-```
-
-#### 문서 삭제
-
-```
-@봇 삭제 신입생 동문장학금 3월-480만원.xlsx
-→ ✅ 삭제 완료: 신입생 동문장학금 3월-480만원.xlsx
-```
-
-> 파일명은 `@봇 문서목록`으로 먼저 확인하세요. 파일명이 정확히 일치해야 삭제됩니다.
-
-#### 도움말
-
-```
-@봇 도움말
-→ 사용 가능한 명령어 안내 (위 표 내용 전송)
-```
-
----
-
-## 4. 핵심 기능
-
-### 기능 1 — 질의응답 (`/chat`)
-
-자연어 질문을 자동 분류하여 두 가지 경로로 처리합니다.
-
-| 경로 | 트리거 키워드 | 처리 방식 |
-|---|---|---|
-| **PANDAS** | 명단, 몇 명, 금액, 인원, 종목 등 | Parquet 직접 조회 → 집계/필터링 → 결과 반환 |
-| **VECTOR** | 방법, 절차, 설명, 목적, 내용, 기준 등 | ChromaDB 의미 검색 → LLM 답변 생성 |
-
-```
-질문 예시:
-  "하반기 장학금 1학년 대상자 명단을 알려줘"   → PANDAS
-  "신입생 장학금 선발 기준이 뭐야?"            → VECTOR
-```
-
-**이름 기반 학생 검색 (LLM 코드 생성 생략)**
-
-질문에서 한국어 이름을 자동 감지하면 LLM 코드 생성 없이 선택 문서 범위에서 검색합니다. `sources`를 생략한 경우에는 전체 적재 문서를 대상으로 하며, 여러 문서에서 같은 이름이 발견되면 문서 선택을 요청합니다. 이름이 없으면 "조회된 데이터가 없습니다"를 즉시 반환합니다.
-
-```
-"오태양 학생이 성적우수 장학금 받았어?" → 이름 추출 → 전체 DF 검색 → 결과 없으면 "없음" 반환
-"장서연 학생이 상반기에 있어?"          → 이름 추출 → 상반기 DF에서 발견 → 해당 행 반환
-```
-
-**Fallback 체인**
-
-한쪽 경로에서 유효한 결과가 없으면 자동으로 반대 경로를 시도합니다.
-
-```
-PANDAS → 결과 없음 → VECTOR 자동 시도 (규정·설명 추출)
-VECTOR → 문서에서 확인 불가 → PANDAS 자동 시도 (정형 데이터 조회)
-```
-
-합계·평균·최댓값 등 기본 집계는 fallback에 의존하지 않고 고정 집계 함수로 계산합니다. 복잡한 자유 형식 질문에서만 LLM Pandas 코드 생성과 상호 fallback이 사용될 수 있습니다.
-
-**선택 문서 범위와 계산 근거**
-
-`/chat` 요청에 `sources`를 지정하면 PANDAS DataFrame과 ChromaDB 검색이 같은 문서 범위로 제한됩니다. 집계 답변에는 실제 계산에 사용한 문서, 컬럼, 연산, 행 수와 제외 행 수가 함께 표시됩니다.
-
-> 백엔드 API와 스트리밍 API는 `sources`를 지원하지만, 현재 저장된 `my_workflow.json`의 일반 질의 노드는 아직 `question`만 전송합니다. Slack에서 파일 태그를 문서 범위로 사용하려면 n8n 질의 노드에 `sources` 전달을 추가해야 합니다.
+지원 확장자:
 
 ```text
-출연금액 합계는 977,070,000원입니다.
+xlsx, pdf, hwp, hwpx,
+png, jpg, jpeg, webp, bmp, tif, tiff
+```
 
-계산 근거:
+### 2. 셀 단위 이미지 표 OCR
+
+세로로 길고 글자가 작은 표는 이미지를 일정 길이로만 자르는 방식으로는 행·열과 병합 셀을 안정적으로 복원하기 어렵습니다. 이 프로젝트의 이미지 파서는 다음 순서로 처리합니다.
+
+```text
+이미지 로드
+→ OpenCV로 가로선·세로선 검출
+→ 행·열 경계와 병합 셀 구조 복원
+→ 각 셀을 개별 이미지로 분리
+→ PaddleOCR로 셀 단위 인식
+→ OCR 신뢰도와 보정 이력 기록
+→ 첫 번째 표 행을 실제 헤더로 사용
+→ DataFrame 정제 및 품질 검증
+→ Parquet + ChromaDB 적재
+```
+
+특정 연도, 특정 컬럼명, 고정 5열 구조를 코드에 넣지 않습니다. 감지된 열 개수와 실제 헤더를 사용하므로 서로 다른 표 구조를 같은 적재 흐름으로 처리할 수 있습니다.
+
+현재 이미지 파서는 **격자선이 분명한 단일 표 이미지**에 최적화되어 있습니다. 테두리가 없는 표, 한 이미지의 여러 표, 심한 기울기·왜곡은 추가 개선 대상입니다.
+
+### 3. 원본을 보존하는 의미 스키마
+
+모든 문서의 컬럼을 하나의 고정 컬럼 집합에 강제로 맞추지 않습니다. 원본 컬럼을 유지하면서 별도의 의미 스키마를 생성합니다.
+
+예를 들어 `출연금액`, `후원액`, `지급액`은 원본 이름을 보존하되, 신뢰도가 충분하면 금액 의미와 KRW 단위 정보를 메타데이터에 기록합니다. 판단하기 어려운 컬럼은 `unknown`으로 남겨 잘못된 자동 매핑을 피합니다.
+
+스키마에는 다음 정보가 포함됩니다.
+
+- 문서·표·행 식별자
+- 원본 컬럼명과 추론된 의미
+- 데이터 타입과 단위
+- 민감정보·개인정보 여부
+- 매핑 신뢰도
+- 컬럼 구조 지문과 스키마 버전
+
+DataFrame은 Parquet로, 스키마는 `.schema.json` 사이드카로 저장됩니다. 현재 스키마 버전은 `2.2`입니다.
+
+### 4. 하나의 질문 분석 결과를 공유하는 라우팅
+
+기존처럼 Guard와 Router가 각각 다른 정규식으로 질문을 다시 판단하지 않습니다.
+
+```text
+사용자 질문
+→ Question Detectors: 표현과 작업 신호 탐지
+→ Question Analyzer: 의도·집계·날짜·대상 통합 분석
+→ Guard/Guide: 모호하거나 충돌하는 요청 안내
+→ Router: DOCUMENTS / PANDAS / VECTOR 실행 경로 선택
+```
+
+| 경로 | 용도 | 예시 |
+|---|---|---|
+| `DOCUMENTS` | 적재 문서 목록 조회 | `전체 문서 보여줘` |
+| `PANDAS` | 표 필터링·명단·금액 계산 | `3월 출연금액 합계 알려줘` |
+| `VECTOR` | 본문 내용·절차·목적 검색 | `이 장학금의 지급 기준이 뭐야?` |
+| `GUIDE` | 모호하거나 복합적인 질문 재작성 안내 | `금액이랑 규정 전부 비교해줘` |
+
+### 5. LLM 대신 검증된 함수로 처리하는 기본 집계
+
+합계나 최솟값 같은 기본 계산을 LLM이 즉석에서 Pandas 코드로 생성하게 두면, `1,000,000` 같은 문자열 금액을 연결하거나 문자열 사전순으로 비교할 수 있습니다. 현재는 다음 연산을 전용 집계 엔진이 처리합니다.
+
+- 인원·행 개수
+- 합계
+- 평균
+- 중앙값
+- 최빈값
+- 1인당 금액
+- 최댓값·최솟값
+- 상위 N개·하위 N개
+- 개인별 누적 금액 최대·최소
+
+금액 파서는 쉼표, 원, 천원, 만원, 음수와 0을 처리하며, 손상되거나 해석이 모호한 값은 임의로 계산에 포함하지 않습니다.
+
+### 6. 날짜 조건과 집계의 결합
+
+표에서 날짜 컬럼을 찾아 다음과 같은 질문을 처리합니다.
+
+```text
+3월에 낸 사람 리스트 알려줘
+3~4월 출연금액 합계 알려줘
+2025년 4월에 가장 많이 낸 사람은?
+3월에 가장 적게 지급된 금액은?
+```
+
+하이픈·점·슬래시·한글 날짜·`YYYYMMDD`·Excel 날짜 일련번호를 지원합니다. 여러 연도가 섞였는데 질문에 연도가 없거나 날짜 컬럼이 여러 개라서 판단하기 어려우면 임의로 선택하지 않고 사용자에게 확인을 요청합니다.
+
+### 7. 개인·기관·마스킹 이름 검색
+
+표에 있는 값을 개인 이름으로만 가정하지 않습니다.
+
+- 개인·기관·단체·학과 구분
+- 마스킹 이름 정규화 및 패턴 검색
+- 기수·발행번호·식별번호 검색
+- 같은 이름을 기수·발행번호·행 문맥으로 구분
+- 여러 문서에서 같은 이름이 발견되면 문서 선택 요청
+
+현재의 사람 식별자는 문서 안에서 후보를 구분하기 위한 값입니다. 여러 문서를 관통하는 확정 인물 ID는 아직 만들지 않았습니다.
+
+### 8. 문서 범위 격리
+
+`/chat` 요청의 `sources`에 파일명을 전달하면 PANDAS와 VECTOR가 동일한 문서 범위만 사용합니다.
+
+```json
+{
+  "question": "가장 많이 낸 사람 누구야?",
+  "sources": ["test2025.png"]
+}
+```
+
+선택하지 않은 문서의 DataFrame은 LLM이 생성하는 제한적 Pandas 코드에서도 접근할 수 없습니다. 문서를 선택하지 않은 상태에서 여러 문서의 동명이인이 발견되면 임의로 한 사람을 고르지 않고 문서 선택을 안내합니다.
+
+### 9. 답변 근거와 계산 내역
+
+표 계산 결과에는 가능한 경우 다음 근거가 함께 표시됩니다.
+
+- 사용한 원본 문서
+- 계산 대상 컬럼
+- 수행한 연산
+- 조건에 일치한 행 수
+- 실제 계산에 사용한 유효 행 수
+- 제외된 행 수
+- 적용한 날짜 컬럼과 기간
+
+```text
+총 출연금액은 977,070,000원입니다.
+
+계산 근거
 - 문서: test2025.png
-- 계산 컬럼: 출연금액
-- 계산 방식: 합계
-- 조회 행: 158개
-- 계산 사용 행: 158개
-- 제외 행: 0개
+- 대상 컬럼: 출연금액
+- 계산: 합계
+- 유효 행: 158행
+```
+
+VECTOR 답변은 검색된 문서에 직접적인 근거가 없으면 일반 지식이나 파일명 추측으로 내용을 채우지 않도록 제한합니다.
+
+### 10. 별도 웹 UI와 Swagger UI
+
+FastAPI의 Swagger UI뿐 아니라 문서 업무에 맞춘 간단한 웹 화면을 제공합니다.
+
+- 웹 UI: `http://localhost:8080/ui`
+- Swagger UI: `http://localhost:8080/docs`
+
+웹 UI에서 다음 작업을 할 수 있습니다.
+
+- 문서 업로드
+- 적재 상태 확인
+- 전체 문서 목록 조회
+- 질문에 사용할 문서 선택
+- 질문 및 답변
+- 적재 문서 삭제
+
+---
+
+## 전체 구조
+
+```text
+파일 업로드
+  ├─ Excel parser
+  ├─ PDF text/table parser
+  ├─ HWP/HWPX → HTML parser
+  └─ Image grid detector + cell OCR
+          ↓
+공통 표 정제 + 의미 스키마 생성
+  ├─ Parquet + schema sidecar
+  ├─ ChromaDB text chunks + metadata
+  └─ PostgreSQL ingestion manifest
+
+질문 입력 + 선택 문서
+          ↓
+Question Detectors → Question Analyzer
+          ↓
+Guard / Guide
+          ↓
+Router
+  ├─ DOCUMENTS → 문서 목록
+  ├─ PANDAS    → 필터·집계·날짜·이름 검색
+  └─ VECTOR    → 관련도 검색 + 근거 기반 LLM 답변
+          ↓
+답변 + 출처 + 계산 근거
 ```
 
 ---
 
-### 기능 2 — 명세서 자동 작성 (`/summary` + n8n)
+## 기술 구성
 
-적재된 문서의 DataFrame에서 **인원·지급처**를 집계하고, 현재 규칙에서는 파일명에서 **목적·지원금액·지출월**을 추출하여 Google Sheets 기부금 활용실적명세서 템플릿에 자동 입력합니다. 파일명에 금액이나 월 정보가 없으면 해당 값은 `미확인` 또는 빈 값으로 남을 수 있습니다.
-
-```
-@봇 명세서 만들어줘
-  → /summary 호출 → 문서별 인원·금액·지급처 집계
-  → Google Drive 템플릿 복사 → Sheets 자동 입력
-  → 완성된 시트 링크를 Slack으로 회신
-```
-
----
-
-### 기능 3 — 파일 색인 (`/ingest/upload`)
-
-Slack에서 파일을 첨부하여 봇을 멘션하면 자동으로 문서를 색인합니다.
-
-```
-@봇 [xlsx / pdf / hwp / hwpx / 이미지 파일 첨부]
-  → n8n 파일 감지 → Slack 다운로드 → POST /ingest/upload
-  → "색인 시작" 안내 → 30초 후 GET /status 폴링
-  → "✅ N건 색인 완료" 또는 "⚠️ 실패" 결과 회신
-```
-
-지원 형식: `xlsx`, `pdf`, `hwp`, `hwpx`, `png`, `jpg`, `jpeg`, `webp`, `bmp`, `tif`, `tiff`
-
-현재 이미지 표 파서는 `발행번호·출연일자·기수·이름·출연금액`으로 구성된 5열 장부형 표에 맞춰져 있습니다. 임의 개수의 열이나 완전히 다른 헤더를 가진 이미지 표는 아직 범용 지원하지 않습니다.
+| 영역 | 기술 |
+|---|---|
+| API/UI | FastAPI, Pydantic, HTML, CSS, JavaScript |
+| 표 처리 | Pandas, PyArrow, OpenPyXL |
+| 이미지 OCR | OpenCV, PaddleOCR, PaddlePaddle |
+| PDF/HWP | pdfplumber, pdf2image, Tesseract, pyhwpx, BeautifulSoup |
+| LLM/Embedding | Ollama, Qwen2.5, BGE-M3, LangChain |
+| 저장소 | Parquet, ChromaDB, PostgreSQL |
+| 자동화 | Docker Compose, n8n, Slack 연동 워크플로 |
 
 ---
 
-### 기능 4 — 문서 목록 조회 (`/documents`)
-
-```
-@봇 문서목록
-  → GET /documents → 색인 상태별 이모지 포함 목록 Slack 회신
-  ✅ 신입생 동문장학금 3월-480만원.xlsx (4건)
-  ✅ 장학재단 특별장학금 9월-240만원.hwp (3건)
-  ...
-```
-
----
-
-### 기능 5 — 문서 삭제 (`/documents/{source}`)
-
-색인된 문서를 ChromaDB·Parquet·manifest·data 파일까지 완전 삭제하고 인메모리 DataFrame을 즉시 갱신합니다.
-
-```
-@봇 삭제 취업특기생 지원금 11월-240만원.xlsx
-  → DELETE /documents/{source}
-  → ChromaDB 벡터 삭제 → Parquet 삭제 → manifest 삭제 → 메모리 재로드
-  → "✅ 삭제 완료" 또는 "❌ 실패" 결과 회신
-```
-
----
-
-## 5. 시스템 아키텍처
-
-```
-Slack 멘션
-  └─▶ n8n (Slack Trigger → Edit Fields → 분기 체인)
-        │
-        ├─▶ [파일 첨부]       POST /ingest/upload
-        │     └─▶ data/ 저장 → 백그라운드 색인 (PDF/HWP/XLSX 파서)
-        │           └─▶ GET /status 폴링 (30s) → Slack 완료 알림
-        │
-        ├─▶ [문서목록]        GET /documents
-        │     └─▶ manifest 전체 조회 → 상태 이모지 포함 목록 회신
-        │
-        ├─▶ [삭제]           DELETE /documents/{source}
-        │     └─▶ ChromaDB·Parquet·manifest·data 일괄 삭제 → 메모리 갱신
-        │
-        ├─▶ [도움말]          n8n 정적 텍스트 회신
-        │
-        ├─▶ [명세서]          GET /summary
-        │     └─▶ 문서별 인원·금액·목적·지급처·지출월 집계
-        │           → Google Drive 템플릿 복사 → Sheets 자동 입력 → 링크 회신
-        │
-        └─▶ [질의]           POST /chat
-              └─▶ Question Analyzer → Guard/Guide → Router
-                    ├─ PANDAS ─▶ 선택 문서 Parquet → 직접 조회 / 고정 집계 → 근거 포함 포맷팅
-                    │              └─ 복잡한 미지원 질문만 제한적 LLM 코드 생성
-                    └─ VECTOR ─▶ 선택 문서 ChromaDB 검색 (bge-m3) → 근거 기반 LLM 답변
-```
-
-### 문서 적재 파이프라인
-
-```
-POST /ingest/upload  또는  POST /ingest  또는  POST /ingest/all
-  ├─ XLSX ─▶ 시트별 표 → 공통 정제·의미 스키마 → Parquet + ChromaDB
-  ├─ PDF  ─▶ 표 → Parquet  /  텍스트(표 제외) → ChromaDB
-  │          스캔 PDF → pytesseract OCR → ChromaDB
-  ├─ HWP  ─▶ pyhwpx COM 자동화 → 임시 HTML → 첫 번째 표 → Parquet + ChromaDB
-  └─ IMAGE ─▶ 5열 장부형 표를 OpenCV 셀 분리 → PaddleOCR → 병합 셀 보정 → Parquet + ChromaDB
-
-* 표가 추출된 문서에는 [문서 개요] 청크를 ChromaDB에 추가 주입
-* PostgreSQL: ingestion_manifest 테이블 (MD5 해시와 스키마 버전으로 중복 적재 방지)
-* 적재 완료 후 _load_dataframes()로 인메모리 namespace 즉시 갱신
-```
-
----
-
-## 6. 폴더 구조
+## 폴더 구조
 
 ```text
 finance-doc-agent/
-├── backend/
-│   ├── main.py                         # FastAPI 엔드포인트와 앱 수명 주기
-│   ├── database.py                     # PostgreSQL·ChromaDB 연결
-│   ├── data/                           # [Git Ignored] 업로드 원본 문서
-│   ├── dataframes/                     # [Git Ignored] Parquet·메타·스키마 sidecar
-│   ├── static/                         # 별도 빌드 없는 웹 질의 화면
-│   │   ├── index.html                  # 문서 선택형 채팅 UI
-│   │   ├── style.css                   # 반응형 화면 스타일
-│   │   └── app.js                      # documents·chat API 연결
-│   ├── core/
-│   │   ├── config.py                   # 환경변수와 실행 설정
-│   │   ├── llm.py                      # Ollama LLM·임베딩·벡터 저장소
-│   │   └── security.py                 # API Key와 적재 경로 검증
-│   ├── datastore/
-│   │   ├── state.py                    # DataFrame과 스키마 로드·공유 상태
-│   │   ├── scope.py                    # 요청별 선택 문서 범위 격리
-│   │   ├── schema.py                   # PANDAS 코드 생성용 스키마 구성
-│   │   └── query.py                    # 이름·기관·기수·식별번호·집계 조회
-│   ├── pandas_engine/
-│   │   ├── aggregation.py              # 고정 집계 감지와 계산
-│   │   ├── date_filter.py              # 날짜 표현 분석·컬럼 선택·행 필터링
-│   │   ├── money.py                    # 공통 금액 파싱과 단위 처리
-│   │   ├── executor.py                 # 제한된 LLM Pandas 코드 실행
-│   │   └── formatter.py                # 답변·계산 근거 포맷팅
-│   ├── rag/
-│   │   ├── question_detectors.py       # 질문 신호와 작업 감지
-│   │   ├── question_analyzer.py        # 질문 분석 결과 통합
-│   │   ├── guard.py                    # 처리 불가·복합 질문 판정
-│   │   ├── guide.py                    # 올바른 질문 예시 안내
-│   │   ├── router.py                   # PANDAS·VECTOR 실행 경로 선택
-│   │   ├── pandas_rag.py               # 구조화 데이터 답변 흐름
-│   │   ├── vector.py                   # 선택 문서 벡터 검색과 근거 답변
-│   │   └── prompts.py                  # LLM 프롬프트 템플릿
-│   ├── utils/
-│   │   ├── ingest.py                   # 파일 유형별 적재 진입점
-│   │   ├── manifest.py                 # 적재 상태와 중복 관리
-│   │   ├── parquet_store.py            # Parquet·스키마 sidecar 저장
-│   │   ├── chroma_store.py             # ChromaDB 청크 저장·삭제
-│   │   ├── semantic_schema.py          # 공통 의미·민감도 스키마
-│   │   ├── table_parser.py             # 표 정제·엔티티·병합 셀 처리
-│   │   ├── text_utils.py               # 텍스트 청킹과 개요 생성
-│   │   ├── hwp_extract.py              # pyhwpx 별도 프로세스 추출
-│   │   └── parsers/
-│   │       ├── xlsx_parser.py          # Excel 표 추출
-│   │       ├── pdf_parser.py           # PDF 표·텍스트 추출
-│   │       ├── hwp_parser.py           # HWP/HWPX 변환·표 추출
-│   │       ├── image_table_extractor.py # OpenCV 표·셀 구조 추출
-│   │       └── image_table_ocr_parser.py # 셀 단위 PaddleOCR 파싱
-│   └── tests/
-│       ├── test_aggregation_query.py   # 집계·계산 근거 테스트
-│       ├── test_date_query.py          # 월·기간별 명단과 집계 테스트
-│       ├── test_document_scope.py      # 선택 문서 범위 테스트
-│       ├── test_semantic_schema.py     # 공통 의미 스키마 테스트
-│       ├── test_structured_query.py    # 이름·기관·식별번호 조회 테스트
-│       ├── test_table_cleanup.py       # 표 정제 테스트
-│       ├── test_image_table_ocr_parser.py # 이미지 표 구조 테스트
-│       ├── test_money.py               # 금액 파서 테스트
-│       ├── test_guard_routing.py       # 분석·Guard·Router 테스트
-│       ├── make_goldset.py             # 골드셋 생성 도구
-│       └── eval.py                     # `/chat` 평가 도구
-├── .env.example                        # 환경변수 템플릿
-├── .gitignore
-├── docker-compose.yml                  # PostgreSQL·ChromaDB·n8n 실행
-├── my_workflow.json                    # n8n Slack 워크플로우
-├── requirements.txt
-└── README.md
+├─ backend/
+│  ├─ main.py                       # FastAPI 엔드포인트와 UI 연결
+│  ├─ core/
+│  │  ├─ config.py                  # 실행 환경 설정
+│  │  ├─ llm.py                     # Ollama·Embedding·VectorStore
+│  │  └─ security.py                # API Key 검사
+│  ├─ datastore/
+│  │  ├─ state.py                   # DataFrame·스키마 메모리 상태
+│  │  ├─ scope.py                   # 요청별 선택 문서 범위
+│  │  ├─ schema.py                  # LLM용 안전한 DataFrame 스키마
+│  │  └─ query.py                   # 이름·기관·식별번호·집계 조회
+│  ├─ pandas_engine/
+│  │  ├─ aggregation.py             # 결정론적 집계
+│  │  ├─ date_filter.py             # 날짜 표현과 기간 필터
+│  │  ├─ money.py                   # 금액 파싱과 단위 처리
+│  │  ├─ executor.py                # 제한된 Pandas 코드 실행
+│  │  └─ formatter.py               # 사용자 답변과 계산 근거
+│  ├─ rag/
+│  │  ├─ question_detectors.py      # 질문 신호 탐지
+│  │  ├─ question_analyzer.py       # 공통 질문 분석 결과
+│  │  ├─ guard.py                   # 처리 가능성과 충돌 검사
+│  │  ├─ guide.py                   # 질문 재작성 안내
+│  │  ├─ router.py                  # 실행 경로 결정
+│  │  ├─ pandas_rag.py              # 구조화 데이터 답변 흐름
+│  │  ├─ vector.py                  # 관련도 기반 벡터 검색
+│  │  └─ prompts.py                 # 근거 제한 LLM 프롬프트
+│  ├─ utils/
+│  │  ├─ ingest.py                  # 파일 형식별 적재 진입점
+│  │  ├─ semantic_schema.py         # 의미·단위·민감도 스키마
+│  │  ├─ table_parser.py            # 표 정제와 엔티티 처리
+│  │  ├─ parquet_store.py           # Parquet·스키마 저장
+│  │  ├─ chroma_store.py            # ChromaDB 저장·삭제
+│  │  ├─ manifest.py                # 중복 적재와 상태 관리
+│  │  └─ parsers/
+│  │     ├─ xlsx_parser.py
+│  │     ├─ pdf_parser.py
+│  │     ├─ hwp_parser.py
+│  │     ├─ image_table_extractor.py
+│  │     └─ image_table_ocr_parser.py
+│  ├─ static/                       # 문서 관리·채팅 웹 UI
+│  ├─ tests/                        # 집계·날짜·스키마·OCR 테스트
+│  ├─ data/                         # 원본 문서, Git 제외
+│  └─ dataframes/                   # Parquet·schema sidecar, Git 제외
+├─ docker-compose.yml
+├─ my_workflow.json                 # 선택적 n8n·Slack 연동
+├─ requirements.txt
+├─ .env.example
+└─ README.md
 ```
 
 ---
 
-## 7. 시작하기
+## 설치 및 실행
 
-### 7-1. 환경변수 설정
+### 1. 저장소와 환경변수 준비
 
-`.env.example`을 복사해 `.env`를 생성하고 값을 설정합니다.
-
-```bash
-cp .env.example .env
-cp .env.example backend/.env
+```powershell
+git clone https://github.com/goyojin/finance-doc-agent.git
+cd finance-doc-agent
+Copy-Item .env.example .env
+Copy-Item .env.example backend/.env
 ```
 
-반드시 변경해야 할 항목:
+최소한 다음 값은 실제 환경에 맞게 변경합니다.
 
 ```dotenv
-POSTGRES_PASSWORD=강력한_비밀번호로_변경
-API_KEY=랜덤한_API_키로_변경
+POSTGRES_PASSWORD=change_me_secure_password
+API_KEY=change_me_api_key
 ```
 
----
+`.env`에는 실제 비밀번호와 API Key가 들어가므로 Git에 커밋하지 않습니다.
 
-### 7-2. HWP 파일 처리 (Windows 전용)
+### 2. 인프라 실행
 
-HWP 파일 적재는 **한글과컴퓨터 한글**이 설치된 Windows에서만 동작합니다.  
-`pyhwpx`가 COM 자동화로 자동 처리하며, 한글 미설치 환경에서는 HWP 파일 적재를 건너뜁니다.
+Docker Desktop이 로컬 Docker context로 실행 중인지 확인한 후 다음 명령을 실행합니다.
 
----
-
-### 7-3. 시스템 의존성 (OCR 사용 시)
-
-**Tesseract OCR** (한국어 언어팩 포함)
-- Windows: https://github.com/UB-Mannheim/tesseract/wiki 에서 installer 다운로드
-- 설치 시 "Additional language data" → **Korean** 체크
-
-**Poppler** (pdf2image 의존성, Windows만 필요)
-- https://github.com/oschwartz10612/poppler-windows/releases 에서 다운로드
-- 압축 해제 후 `bin/` 경로를 시스템 PATH에 추가
-
-**이미지 표 OCR**
-- `opencv-python-headless`, `paddleocr`, `paddlepaddle` 패키지는 `requirements.txt`로 설치
-- 첫 실행에서는 `korean_PP-OCRv5_mobile_rec` 모델을 내려받아 시간이 더 걸릴 수 있음
-- 이 OCR 경로는 일반 PDF OCR이 아니라 현재 지원하는 5열 장부형 이미지 표 처리에 사용
-
----
-
-### 7-4. 인프라 실행 (Docker)
-
-```bash
+```powershell
 docker compose up -d
 ```
 
-| 서비스 | 포트 | 용도 |
-|---|---|---|
-| Ollama | 11434 | 로컬 LLM 서버 |
-| PostgreSQL | 5433 → 5432 | 호스트 5433, 컨테이너 5432 · ingestion_manifest |
-| ChromaDB | 8000 | 벡터 DB |
-| n8n | 5678 | 워크플로우 자동화 |
+| 서비스 | 호스트 포트 | 용도 |
+|---|---:|---|
+| Ollama | 11434 | LLM·Embedding 서버 |
+| PostgreSQL | 5433 | 적재 manifest |
+| ChromaDB | 8000 | 벡터 저장소 |
+| n8n | 5678 | 선택적 자동화 워크플로 |
 
----
+모델을 준비합니다.
 
-### 7-5. Ollama 모델 준비
-
-```bash
+```powershell
 docker exec ollama_server ollama pull qwen2.5:3b
 docker exec ollama_server ollama pull bge-m3
 ```
 
----
+### 3. Python 환경 준비
 
-### 7-6. 백엔드 실행
-
-```bash
+```powershell
 cd backend
 python -m venv venv
-venv\Scripts\activate      # Windows
-source venv/bin/activate   # Mac/Linux
+venv\Scripts\Activate.ps1
+pip install -r ..\requirements.txt
+```
 
-pip install -r ../requirements.txt
+HWP/HWPX 적재에는 Windows에 한글 프로그램이 설치되어 있어야 합니다. 스캔 PDF OCR에는 Tesseract와 Poppler가 필요합니다. PaddleOCR 모델은 최초 이미지 적재 시 내려받기 때문에 첫 실행은 오래 걸릴 수 있습니다.
+
+### 4. 백엔드 실행
+
+```powershell
 uvicorn main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
----
-
-### 7-7. 웹 질의 화면
-
-백엔드 실행 후 브라우저에서 아래 주소를 엽니다.
+접속 주소:
 
 ```text
-http://localhost:8080/ui
-```
-
-- 왼쪽에서 전체 문서 또는 여러 문서를 선택해 질문할 수 있습니다.
-- 새 문서를 업로드해 적재 상태를 확인하고, 기존 문서를 삭제할 수 있습니다.
-- 답변에 PANDAS·VECTOR·GUIDE 처리 경로와 실제 출처가 함께 표시됩니다.
-- `API_KEY`를 사용하는 환경에서는 왼쪽 API Key 입력란에 키를 입력합니다. 키는 현재 브라우저 탭의 `sessionStorage`에만 저장됩니다.
-- 기존 Swagger UI는 `http://localhost:8080/docs`에서 그대로 사용할 수 있습니다.
-
----
-
-### 7-8. 문서 적재
-
-**방법 1 — Slack 파일 첨부 (권장)**
-```
-@봇 [파일 첨부]  → 자동 색인
-```
-
-**방법 2 — API (파일 업로드)**
-```bash
-curl -X POST "http://localhost:8080/ingest/upload?filename_override=파일명.xlsx" \
-  -F "file=@파일명.xlsx"
-
-# 색인 상태 확인
-curl "http://localhost:8080/status?source=파일명.xlsx"
-```
-
-**방법 3 — API (서버 경로 지정)**
-```bash
-curl -X POST http://localhost:8080/ingest \
-  -H "Content-Type: application/json" \
-  -d '{"file_path": "data/파일명.xlsx"}'
+웹 UI      http://localhost:8080/ui
+Swagger UI http://localhost:8080/docs
+상태 확인   http://localhost:8080/health
 ```
 
 ---
 
-### 7-9. n8n 워크플로우 설정
+## API
 
-1. `http://localhost:5678` 접속
-2. 상단 메뉴 → **Import from file** → `my_workflow.json` 선택
-3. 다음 credential 연결:
-   - **Slack account** (Bot Token): Download File, Send* 노드
-   - **Google Drive account**: Copy Template1 노드
-   - **Google Sheets account**: Append* 노드
-4. Slack 앱 설정에서 Bot Token Scopes 확인:
-   - `app_mentions:read`, `chat:write`, `files:read`
+`API_KEY`가 설정된 경우 보호된 엔드포인트에 `X-API-Key` 헤더가 필요합니다.
 
----
-
-## 8. API 엔드포인트
-
-`API_KEY` 환경변수 미설정 시 인증 없이 사용 가능합니다. 설정 시 `*` 표시 엔드포인트에 `X-API-Key` 헤더가 필요합니다.
-
-| Method | Path | 인증 | 설명 |
-|---|---|---|---|
-| GET | `/ui` | 불필요 | 문서 선택형 웹 채팅 화면 |
-| GET | `/health` | 불필요 | 서버·Ollama·ChromaDB 상태 확인 |
-| POST | `/chat` | * | 질문과 선택 문서(`sources`) → 자동 라우팅 → 답변 반환 |
-| POST | `/chat/stream` | * | 스트리밍 답변 (프론트 직접 연동용) |
-| GET | `/summary` | * | 전체 문서 명세서 (인원·금액·목적·지급처·지출월 집계) |
-| GET | `/documents` | * | 색인된 문서 전체 목록 + 상태 조회 |
-| DELETE | `/documents/{source}` | * | 문서 완전 삭제 (ChromaDB·Parquet·manifest·data) |
-| POST | `/ingest` | * | 단일 파일 적재 — 서버 경로 지정 (data/ 내부만 허용) |
-| POST | `/ingest/upload` | * | 파일 업로드 적재 — multipart (`filename_override` 쿼리 파라미터로 파일명 지정 가능) |
-| POST | `/ingest/all` | * | `data/` 폴더 전체 일괄 적재 |
-| GET | `/status` | * | 파일별 색인 상태 조회 (`?source=파일명`) |
-
-### 응답 예시
-
-```bash
-# 문서 목록
-curl http://localhost:8080/documents
-```
-```json
-{
-  "count": 6,
-  "files": [
-    {"source": "신입생 동문장학금 3월-480만원.xlsx", "status": "SUCCESS", "chroma_doc_count": 4},
-    {"source": "장학재단 특별장학금 9월-240만원.hwp", "status": "SUCCESS", "chroma_doc_count": 3}
-  ]
-}
-```
-
-```bash
-# 문서 삭제
-curl -X DELETE "http://localhost:8080/documents/파일명.xlsx"
-```
-```json
-{"source": "파일명.xlsx", "chroma_deleted": 3, "file_deleted": true, "manifest_deleted": true}
-```
-
-```bash
-# 질의응답
-curl -X POST http://localhost:8080/chat \
-  -H "Content-Type: application/json" \
-  -d '{"question": "신입생 장학금 총액이 얼마야?", "sources": ["신입생 동문장학금 3월-480만원.xlsx"]}'
-```
-```json
-{
-  "answer": "장학금액 합계는 4,800,000원입니다.\n\n계산 근거:\n- 문서: 신입생 동문장학금 3월-480만원.xlsx\n- 계산 컬럼: 장학금액\n- 계산 방식: 합계\n- 조회 행: 24개\n- 계산 사용 행: 24개\n- 제외 행: 0개",
-  "source": "pandas",
-  "sources": ["신입생 동문장학금 3월-480만원.xlsx"]
-}
-```
-
----
-
-## 9. 환경변수
-
-| 변수 | 기본값 | 설명 |
+| Method | Path | 설명 |
 |---|---|---|
-| `POSTGRES_USER` | `admin` | PostgreSQL 사용자 |
-| `POSTGRES_PASSWORD` | **(필수 설정)** | PostgreSQL 비밀번호 |
-| `POSTGRES_DB` | `rag_database` | PostgreSQL DB명 |
-| `POSTGRES_HOST` | `localhost` | PostgreSQL 호스트 |
-| `POSTGRES_PORT` | `5433` | 로컬 백엔드에서 Docker PostgreSQL에 접속하는 호스트 포트 |
-| `CHROMA_HOST` | `localhost` | ChromaDB 호스트 |
-| `CHROMA_PORT` | `8000` | ChromaDB 포트 |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 서버 주소 |
-| `OLLAMA_MODEL` | `qwen2.5:3b` | 생성 LLM 모델 |
-| `EMBED_MODEL` | `bge-m3` | 임베딩 모델 |
-| `API_KEY` | *(비어있으면 인증 없음)* | 엔드포인트 보호용 API Key |
-| `INGEST_ALLOWED_BASE` | `backend/data/` 절대경로 | `/ingest` API 접근 가능 디렉토리 |
-| `COLLECTION_NAME` | `scholarship_rules` | ChromaDB 컬렉션명 |
+| `GET` | `/health` | API·Ollama·ChromaDB 상태 확인 |
+| `GET` | `/ui` | 문서 관리 및 채팅 화면 |
+| `POST` | `/chat` | 질문과 선택 문서를 받아 답변 반환 |
+| `POST` | `/chat/stream` | 텍스트 스트리밍 답변 |
+| `GET` | `/documents` | 적재 문서와 상태 목록 |
+| `GET` | `/status?source=...` | 파일별 적재 상태 |
+| `POST` | `/ingest/upload` | multipart 파일 업로드 및 비동기 적재 |
+| `POST` | `/ingest` | 허용된 서버 경로의 파일 적재 |
+| `POST` | `/ingest/all` | `backend/data` 문서 일괄 적재 |
+| `DELETE` | `/documents/{source}` | 원본·Parquet·Chroma·manifest 삭제 |
+| `GET` | `/summary` | 적재 문서 요약 정보 |
 
----
+### 문서 업로드
 
-## 10. 평가 결과
-
-모델: `qwen2.5:3b` (생성) + `bge-m3` (임베딩) · 평가 방식: 키워드 재현율 기반 pass/fail
-
-### 실제 데이터 기반 성능 개선 이력 (v1.x)
-
-초기 구축 단계에서 실제 업무 문서를 대상으로 측정한 결과입니다.
-
-| 버전 | 정확도 | 주요 변경 |
-|---|:---:|---|
-| v1.0 초기 | 43% | SQL 기반 단순 조회만 지원 |
-| v1.8 | **81%** | 하이브리드 RAG 도입 (pandas + vector), 명세서 기능 추가 |
-
-> commit `6ce9e6b` — "하이브리드 RAG 성능 개선 v1.8 + 명세서 기능 추가 (43%→81%)"
-
----
-
-### 데모 데이터 골드셋 — 기본 25케이스 (v2.0)
-
-표준화된 데모 데이터와 골드셋으로 재현 가능한 형태로 측정한 결과입니다.
-
-| 카테고리 | 통과 | 전체 | 정확도 |
-|---|:---:|:---:|:---:|
-| sql_명단 | 7 | 7 | 100% |
-| sql_인원 | 4 | 4 | 100% |
-| sql_금액 | 6 | 6 | 100% |
-| vector_문서 | 7 | 8 | 88% |
-| **전체** | **24** | **25** | **96%** |
-
-> 라우팅 정확도 100% · 평균 응답 시간 3.6s
-
----
-
-### 데모 데이터 골드셋 — 확장 84케이스 (과거 v2.4 측정)
-
-복합 집계·엣지 케이스 등 더 어려운 질의를 포함해 확장한 결과입니다.
-
-| 카테고리 | 통과 | 전체 | 정확도 |
-|---|:---:|:---:|:---:|
-| sql_명단 | 19 | 19 | 100% |
-| sql_인원 | 15 | 15 | 100% |
-| sql_금액 | 21 | 22 | 95% |
-| vector_문서 | 22 | 22 | 100% |
-| edge_case | 6 | 6 | 100% |
-| **전체** | **83** | **84** | **99%** |
-
-> 라우팅 정확도 100% · 평균 응답 시간 3.2s  
-> 알려진 한계: 크로스 도큐먼트 합산 미지원 / TC053 (등급 컬럼 부재로 1등급 필터 불가)
-
-> 위 골드셋 수치는 이전 구조에서 측정한 이력입니다. 현재 체크포인트는 단위·통합 테스트 63개를 통과했으며, 실제 `/chat` 기준 골드셋은 선택 문서와 계산 근거 형식에 맞춰 다시 측정할 예정입니다.
-
----
-
-## 11. 다음 개발 계획 — 시각화
-
-시각화는 PANDAS가 반환한 검증된 집계 결과만 사용하며, LLM이 숫자나 그래프 데이터를 임의 생성하지 않도록 설계합니다.
-
-1. 시각화 의도 감지: `그래프`, `차트`, `추이`, `분포`, `비교`
-2. 집계 결과를 공통 `ChartSpec` 구조로 변환
-3. 데이터 형태에 따라 막대·선·원형 그래프 선택
-4. 그래프와 함께 문서·컬럼·집계 방식·사용/제외 행 표시
-5. PNG 파일 또는 다운로드 URL로 응답
-6. 기수별·월별·학과별·연도별 대표 질문을 테스트로 고정
-
-초기 범위는 단일 선택 문서의 단일 집계 그래프로 제한하고, 여러 문서 비교 시각화는 후속 단계에서 추가합니다.
-
----
-
-## 12. 협업 규칙
-
-### Git 브랜치 전략
-```
-main ← develop ← feature/기능명
+```powershell
+curl.exe -X POST "http://localhost:8080/ingest/upload" `
+  -H "X-API-Key: change_me_api_key" `
+  -F "file=@C:\documents\test2025.png"
 ```
 
-### 커밋 메시지 규칙
-- `feat`: 새로운 기능 추가
-- `fix`: 버그 수정
-- `docs`: 문서 수정
-- `refactor`: 기능 변경 없는 코드 구조 개선
+업로드 API는 먼저 `accepted`를 반환합니다. 이후 `/status`에서 완료 여부를 확인합니다.
 
-### n8n 워크플로우
-수정 후 반드시 JSON으로 내보내어 `my_workflow.json`으로 커밋.
+### 선택 문서 질문
+
+```powershell
+$body = @{
+  question = "3~4월 출연금액 합계 알려줘"
+  sources  = @("test2025.png")
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8080/chat" `
+  -Headers @{ "X-API-Key" = "change_me_api_key" } `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+### 문서 삭제
+
+```powershell
+Invoke-RestMethod `
+  -Method Delete `
+  -Uri "http://localhost:8080/documents/test2025.png" `
+  -Headers @{ "X-API-Key" = "change_me_api_key" }
+```
 
 ---
 
-## 13. 팀원
+## 질문 예시
 
-| 역할 | 담당 |
-|---|---|
-| 팀장 | FastAPI 백엔드, 하이브리드 RAG 라우팅 설계, 인프라 통합 |
-| 팀원 A | 데이터 엔지니어링 (문서 전처리 및 DB 적재 파이프라인) |
-| 팀원 B | 자동화 파이프라인 (n8n · Slack 연동 워크플로우) |
-| 팀원 C | AI 성능 평가 및 논문 작성 (프롬프트 튜닝, 평가 질의셋, KCC 2026) |
+### 명단과 조건 검색
+
+```text
+선택한 문서의 전체 명단을 보여줘
+58기 기부자 명단을 알려줘
+발행번호 2025-061 기록을 찾아줘
+김*수와 일치하는 마스킹 이름을 찾아줘
+3~4월에 낸 사람 리스트 알려줘
+```
+
+### 금액 집계
+
+```text
+출연금액 총액은 얼마야?
+평균 지급액 알려줘
+중앙값과 최빈값 중 하나만 알려줘
+가장 많이 낸 사람은 누구야?
+개인별 누적 금액이 가장 적은 사람은?
+4월 출연금액 상위 5명을 보여줘
+```
+
+### 문서 내용 검색
+
+```text
+이 장학금의 지급 기준을 설명해줘
+문서에 적힌 신청 절차가 뭐야?
+지원 대상 조건을 근거와 함께 알려줘
+```
+
+---
+
+## 테스트
+
+백엔드 가상환경에서 실행합니다.
+
+```powershell
+cd backend
+venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
+```
+
+현재 기준 자동화 테스트 **77개가 모두 통과**합니다.
+
+현재 테스트는 다음 영역을 다룹니다.
+
+- 질문 분석, Guard, Router
+- 집계 표현과 금액 단위 처리
+- 평균·중앙값·최빈값·최대·최소·상하위 N개
+- 날짜 단일 월·범위·연도 모호성
+- 문서 범위 격리
+- 개인·기관·마스킹 이름·기수·발행번호 검색
+- 의미 스키마와 민감도
+- 표 정제
+- 동적 이미지 헤더·열 개수·OCR 보정 이력
+
+OCR 정확도는 문서 해상도와 표 형태에 따라 달라지므로 고정 백분율을 프로젝트 전체 성능으로 주장하지 않습니다. 실제 운영 전에는 사용할 문서 유형별 골드셋으로 셀 정확도, 금액 정확도, 구조 정확도를 각각 측정해야 합니다.
+
+---
+
+## 현재 제한 사항
+
+- 이미지 OCR은 격자선이 분명한 단일 표에서 가장 안정적입니다.
+- 공통 스키마는 의미를 보조하는 메타데이터이며 모든 컬럼을 강제로 표준화하지 않습니다.
+- 여러 문서에서 동일 인물임을 확정하는 전역 사람 ID는 아직 없습니다.
+- 기본 집계는 결정론적 함수로 처리하지만, 지원하지 않는 복잡한 질의는 제한된 LLM Pandas 경로를 사용할 수 있습니다.
+- `/summary`의 일부 문서 목적·기간 정보는 파일명 규칙에 의존하므로 범용 문서에서는 `미확정`일 수 있습니다.
+- API Key는 단일 키 방식입니다. 역할별 권한과 사용자별 문서 접근 제어는 구현 전입니다.
+- 개인정보 조회 감사 로그와 보존 정책은 구현 전입니다.
+
+---
+
+## 다음 개발 계획
+
+우선순위는 기능을 무작정 늘리는 것보다 실제 문서와 질문으로 신뢰성을 측정하는 것입니다.
+
+1. Router·Guard·집계·날짜 질의 골드셋 구축
+2. 표 유형별 OCR 정확도와 실패 기준 측정
+3. `query.py`, `formatter.py`, `table_parser.py` 책임 분리
+4. 역할 기반 권한, 문서별 접근 제어, 감사 로그
+5. 테두리 없는 표·복수 표 이미지 지원
+6. 검증된 집계 결과를 이용한 시각화
+7. 여러 문서의 동일 인물 통합이 실제로 필요한 경우에만 전역 ID 도입
+
+---
+
+## Git 작업 규칙
+
+```text
+feat: 새 기능
+fix: 오류 수정
+refactor: 동작 변화 없는 구조 개선
+test: 테스트 추가·수정
+docs: README와 문서 수정
+```
+
+`.env`, 원본 재정 문서, 생성된 Parquet, ChromaDB 데이터와 개인정보가 포함된 테스트 파일은 Git에 올리지 않습니다.
