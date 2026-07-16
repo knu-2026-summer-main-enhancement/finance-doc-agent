@@ -79,6 +79,26 @@ class DateQueryTest(unittest.TestCase):
         self.assertEqual(result["value"], 3_000_000)
         self.assertEqual(result["matched_rows"], 2)
 
+    def test_document_without_matching_month_is_not_reported_as_source(self):
+        other = _clean_dataframe(
+            pd.DataFrame([{
+                "출연일자": "2025-05-01",
+                "이름": "박다른",
+                "출연금액": "9,000,000",
+            }]),
+            source_file="other.xlsx",
+            context_prefix="sheet0",
+        )
+        self.assertIsNotNone(other)
+        _df_namespace["df1"] = other
+        _df_sources["df1"] = "other.xlsx"
+        _df_labels["df1"] = "다른 후원 내역"
+
+        _, (result, sources) = self._query("3월 출연금액 합계 알려줘")
+
+        self.assertEqual(result["value"], 8_000_000)
+        self.assertEqual(sources, ["donations.xlsx"])
+
 
 if __name__ == "__main__":
     unittest.main()

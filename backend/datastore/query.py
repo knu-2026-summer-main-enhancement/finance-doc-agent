@@ -59,11 +59,18 @@ _AMOUNT_IN_FILENAME_RE = re.compile(r"(\d[\d,]*)만원")
 _MONTH_IN_FILENAME_RE  = re.compile(r"(\d{1,2})월")
 
 _MASKED_NAME_TOKEN_RE = re.compile(r"[가-힣]\s*[*＊○●Oo0xX×]\s*[가-힣*＊○●Oo0xX×]{0,3}")
+_PERSON_LIST_RE = re.compile(r"사람|개인|학생|수혜자|기부자|후원자|출연자|납부자")
 _INTERNAL_COLS = {
     "성명_원문", "성명_검색키", "성명_마스킹패턴", "성명_마스킹여부",
     "row_uid", "person_candidate_key", "_row_index", "_row_context",
     "_매칭유형", "_질문이름",
 }
+_PERSON_IDENTITY_COLUMNS = (
+    "person_candidate_key", "성명_검색키", "표시명", "이름", "성명", "성명_원문",
+)
+_PERSON_LIST_COLUMNS = (
+    "source", "기수", "학과", "전공", "학년", "표시명", "이름", "성명",
+)
 
 
 def _is_internal_col(col: str) -> bool:
@@ -1042,6 +1049,72 @@ def _query_aggregation(question: str, intent: AggregationIntent) -> tuple[object
     return _aggregate_rows(rows, sources, intent, question)
 
 
+def _filter_known_people(rows: pd.DataFrame) -> pd.DataFrame:
+    """엔터티 분류 결과가 있는 경우에만 개인 행으로 제한한다."""
+    if "entity_type" not in rows.columns:
+        return rows
+    entity_types = rows["entity_type"].astype(str)
+    known = entity_types.str.contains(
+        r"^(?:person|organization|department)(?:_|$)",
+        case=False,
+        regex=True,
+        na=False,
+    )
+    if not known.any():
+        return rows
+    is_person = entity_types.str.contains(
+        r"^person(?:_|$)", case=False, regex=True, na=False
+    )
+    return rows[is_person].copy()
+
+
+def _apply_date_query_conditions(
+    rows: pd.DataFrame,
+    *,
+    alias: str,
+    question: str,
+    conditions: dict[str, list[tuple[str, str]]],
+    identifier_requested: bool,
+    cohort_requested: bool,
+    person_list_requested: bool,
+) -> pd.DataFrame | None:
+    """날짜로 거른 행에 기존 값·식별번호·기수 조건을 순서대로 적용한다."""
+    if conditions:
+        if alias not in conditions:
+            return None
+        for column, value in conditions[alias]:
+            rows = rows[rows[column].astype(str).str.contains(re.escape(value), na=False)]
+    if identifier_requested:
+        rows = _filter_rows_by_question_identifier(rows, question)
+    if cohort_requested:
+        rows = _filter_rows_by_question_cohort(rows, question)
+    if person_list_requested:
+        rows = _filter_known_people(rows)
+    return rows
+
+
+def _unique_person_list(rows: pd.DataFrame) -> pd.DataFrame:
+    """기간 명단에서 동일 인물의 반복 납부 행을 한 번만 표시한다."""
+    key_column = next(
+        (column for column in _PERSON_IDENTITY_COLUMNS if column in rows.columns),
+        None,
+    )
+    if not key_column:
+        return rows
+
+    keys = rows[key_column].astype(str).map(normalize_person_name)
+    keep = keys.str.strip().ne("") & ~keys.duplicated(keep="first")
+    result = rows[keep].copy()
+    display_columns = [column for column in _PERSON_LIST_COLUMNS if column in result.columns]
+    return result.loc[:, display_columns] if display_columns else result
+
+
+def _date_evidence(evidences: list[dict[str, object]]) -> dict[str, object]:
+    if len(evidences) == 1:
+        return evidences[0]
+    return {"items": evidences}
+
+
 def _query_date_filtered(
     question: str,
     date_filter: DateFilter,
@@ -1052,11 +1125,9 @@ def _query_date_filtered(
     evidences: list[dict[str, object]] = []
     messages: list[str] = []
     conditions = _find_filter_conditions(question)
-    identifier_targets = _question_identifier_targets(question)
+    identifier_requested = bool(_question_identifier_targets(question))
     cohort_requested = bool(_question_cohort(question))
-    person_list_requested = intent is None and bool(re.search(
-        r"사람|개인|학생|수혜자|기부자|후원자|출연자|납부자", question
-    ))
+    person_list_requested = intent is None and bool(_PERSON_LIST_RE.search(question))
 
     for alias, df in _scoped_dataframes().items():
         result = apply_date_filter(df, date_filter, question)
@@ -1065,26 +1136,17 @@ def _query_date_filtered(
                 messages.append(result.message)
             continue
         source = _df_sources.get(alias, alias)
-        rows = result.rows.copy()
-        if conditions:
-            if alias not in conditions:
-                continue
-            for column, value in conditions[alias]:
-                rows = rows[rows[column].astype(str).str.contains(re.escape(value), na=False)]
-        if identifier_targets:
-            rows = _filter_rows_by_question_identifier(rows, question)
-        if cohort_requested:
-            rows = _filter_rows_by_question_cohort(rows, question)
-        if person_list_requested:
-            if "entity_type" in rows.columns:
-                entity_types = rows["entity_type"].astype(str)
-                known = entity_types.str.contains(
-                    r"^(?:person|organization|department)(?:_|$)", case=False, regex=True, na=False
-                )
-                if known.any():
-                    rows = rows[entity_types.str.contains(
-                        r"^person(?:_|$)", case=False, regex=True, na=False
-                    )]
+        rows = _apply_date_query_conditions(
+            result.rows.copy(),
+            alias=alias,
+            question=question,
+            conditions=conditions,
+            identifier_requested=identifier_requested,
+            cohort_requested=cohort_requested,
+            person_list_requested=person_list_requested,
+        )
+        if rows is None or rows.empty:
+            continue
         if "source" not in rows.columns:
             rows.insert(0, "source", source)
         frames.append(rows)
@@ -1105,7 +1167,7 @@ def _query_date_filtered(
     rows = pd.concat(frames, ignore_index=True, sort=False)
     if "row_uid" in rows.columns:
         rows = rows.drop_duplicates(subset=["row_uid"])
-    rows.attrs["date_filter_evidence"] = evidences[0] if len(evidences) == 1 else {"items": evidences}
+    rows.attrs["date_filter_evidence"] = _date_evidence(evidences)
 
     if rows.empty:
         return _aggregation_notice("해당 날짜 조건과 일치하는 데이터가 없습니다."), sources
@@ -1115,19 +1177,8 @@ def _query_date_filtered(
             payload["date_filter"] = rows.attrs["date_filter_evidence"]
         return payload, payload_sources
     if person_list_requested:
-        key_column = next((column for column in (
-            "person_candidate_key", "성명_검색키", "표시명", "이름", "성명", "성명_원문"
-        ) if column in rows.columns), None)
-        if key_column:
-            keys = rows[key_column].astype(str).map(normalize_person_name)
-            valid = keys.str.strip().ne("")
-            rows = rows[valid & ~keys.duplicated(keep="first")].copy()
-            identity_columns = [column for column in (
-                "source", "기수", "학과", "전공", "학년", "표시명", "이름", "성명"
-            ) if column in rows.columns]
-            if identity_columns:
-                rows = rows.loc[:, identity_columns]
-            rows.attrs["date_filter_evidence"] = evidences[0] if len(evidences) == 1 else {"items": evidences}
+        rows = _unique_person_list(rows)
+        rows.attrs["date_filter_evidence"] = _date_evidence(evidences)
     return rows, sources
 
 

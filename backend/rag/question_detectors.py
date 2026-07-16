@@ -82,6 +82,16 @@ DOCUMENT_OPERATIONS = frozenset({
     "document_reason", "document_purpose", "document_criteria",
     "document_procedure", "document_explain",
 })
+_AGGREGATION_OPERATIONS = {
+    "count": "count_records",
+    "sum": "sum_amount",
+    "mean": "average_amount",
+    "per_capita": "average_amount",
+    "median": "median_amount",
+    "mode": "mode_amount",
+    "max": "max_amount",
+    "min": "min_amount",
+}
 
 
 @dataclass
@@ -124,16 +134,7 @@ def _operation_for_aggregation(intent: AggregationIntent) -> str:
         return "max_person_by_amount"
     if intent.operation == "min" and intent.target in {"person_total", "row"}:
         return "min_person_by_amount"
-    return {
-        "count": "count_records",
-        "sum": "sum_amount",
-        "mean": "average_amount",
-        "per_capita": "average_amount",
-        "median": "median_amount",
-        "mode": "mode_amount",
-        "max": "max_amount",
-        "min": "min_amount",
-    }[intent.operation]
+    return _AGGREGATION_OPERATIONS[intent.operation]
 
 
 def _detect_operations(question: str, intents: list[AggregationIntent]) -> list[str]:

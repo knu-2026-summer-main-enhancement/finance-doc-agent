@@ -56,13 +56,18 @@ class DateFilterResult:
     message: str = ""
 
 
+def _matched_int(matched: re.Match[str], group: str) -> int | None:
+    value = matched.group(group)
+    return int(value) if value else None
+
+
 def parse_date_filter(question: str) -> DateFilter | None:
     """질문에서 월 또는 월 범위를 구조화한다. 특정 문서 값은 사용하지 않는다."""
     text = str(question or "").strip()
     matched = _MONTH_RANGE_RE.search(text)
     if matched:
-        year = int(matched.group("year")) if matched.group("year") else None
-        end_year = int(matched.group("end_year")) if matched.group("end_year") else year
+        year = _matched_int(matched, "year")
+        end_year = _matched_int(matched, "end_year") or year
         start_month = int(matched.group("start"))
         end_month = int(matched.group("end"))
         error = ""
@@ -84,7 +89,7 @@ def parse_date_filter(question: str) -> DateFilter | None:
     if not matched:
         return None
     month = int(matched.group("month"))
-    year = int(matched.group("year")) if matched.group("year") else None
+    year = _matched_int(matched, "year")
     return DateFilter(
         start_month=month,
         end_month=month,
@@ -164,6 +169,34 @@ def _period_label(spec: DateFilter, years: list[int]) -> str:
     return f"모든 연도의 {month_label}" if spec.all_years else f"{years[0]}년 {month_label}"
 
 
+def _date_range_mask(parsed: pd.Series, spec: DateFilter) -> pd.Series:
+    if spec.year is None:
+        return parsed.dt.month.between(
+            spec.start_month,
+            spec.end_month,
+            inclusive="both",
+        )
+
+    start_key = spec.year * 100 + spec.start_month
+    end_key = (spec.end_year or spec.year) * 100 + spec.end_month
+    date_key = parsed.dt.year * 100 + parsed.dt.month
+    return date_key.between(start_key, end_key, inclusive="both")
+
+
+def _date_filter_evidence(
+    column: str,
+    period: str,
+    matched_rows: int,
+    invalid_rows: int,
+) -> dict[str, object]:
+    return {
+        "column": column,
+        "period": period,
+        "matched_rows": matched_rows,
+        "invalid_date_rows": invalid_rows,
+    }
+
+
 def apply_date_filter(df: pd.DataFrame, spec: DateFilter, question: str) -> DateFilterResult:
     if spec.error:
         return DateFilterResult(None, message=spec.error)
@@ -191,22 +224,10 @@ def apply_date_filter(df: pd.DataFrame, spec: DateFilter, question: str) -> Date
             message=f"이 문서에는 여러 연도의 날짜가 있습니다({years}). 연도를 지정하거나 '모든 연도'라고 질문해 주세요.",
         )
 
-    if spec.year is not None:
-        start_key = spec.year * 100 + spec.start_month
-        end_key = (spec.end_year or spec.year) * 100 + spec.end_month
-        date_key = parsed.dt.year * 100 + parsed.dt.month
-        mask = date_key.between(start_key, end_key, inclusive="both")
-    else:
-        mask = parsed.dt.month.between(spec.start_month, spec.end_month, inclusive="both")
-
+    mask = _date_range_mask(parsed, spec)
     rows = df[mask.fillna(False)].copy()
     period = _period_label(spec, available_years)
-    evidence = {
-        "column": column,
-        "period": period,
-        "matched_rows": int(len(rows)),
-        "invalid_date_rows": invalid_rows,
-    }
+    evidence = _date_filter_evidence(column, period, len(rows), invalid_rows)
     rows.attrs.update(df.attrs)
     rows.attrs["date_filter_evidence"] = evidence
     return DateFilterResult(

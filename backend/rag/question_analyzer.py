@@ -72,7 +72,8 @@ def analyze_question(question: str) -> QuestionAnalysis:
         signals.operations.append("filter_records")
     return QuestionAnalysis(
         question=normalized,
-        operations=signals.operations,
+        # 분석 결과와 원시 감지 신호가 같은 가변 리스트를 공유하지 않게 한다.
+        operations=list(signals.operations),
         aggregation_intents=aggregation_intents,
         date_filter=date_filter,
         domains=operation_domains(signals.operations),
