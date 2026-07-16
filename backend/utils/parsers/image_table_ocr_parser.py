@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import logging
 import os
-import re
-from datetime import datetime
 from typing import Any
 
 import pandas as pd
 
 from utils.chroma_store import save_to_chroma
 from utils.parquet_store import drop_dataframe_files, save_dataframe
-from utils.table_parser import _clean_dataframe, classify_name_entity, sanitize_table_name
+from utils.semantic_schema import infer_column_meaning
+from utils.table_parser import _clean_dataframe, sanitize_table_name
 from utils.text_utils import _make_doc_overview_chunk, _table_to_text_chunks
 from utils.parsers.image_table_extractor import (
-    EXPECTED_HEADERS,
     ImageTableExtractionError,
     detect_table_grid,
     extract_table_records,
@@ -24,9 +22,14 @@ from utils.parsers.image_table_extractor import (
 logger = logging.getLogger("ingest")
 
 IMAGE_EXTS = {"png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff"}
-_ISSUE_PATTERN = re.compile(r"^20\d{2}-\d{3}$")
-_COHORT_PATTERN = re.compile(r"^\d{1,3}$")
-_AMOUNT_PATTERN = re.compile(r"^\d{1,3}(?:,\d{3})*$")
+_OCR_METADATA_COLUMNS = {
+    "ocr_row_index",
+    "_ocr_confidence_min",
+    "_ocr_confidence_avg",
+    "_ocr_low_confidence_cells",
+    "_ocr_corrections",
+    "_ocr_validation_ok",
+}
 
 
 def detect_table_row_bands(file_path: str) -> list[tuple[int, int]]:
@@ -41,40 +44,40 @@ def detect_table_column_centers(file_path: str) -> list[float]:
     return [(left + right) / 2 for left, right in zip(grid.x_lines, grid.x_lines[1:])]
 
 
-def _valid_date(value: str) -> bool:
-    try:
-        datetime.strptime(value, "%Y-%m-%d")
-        return True
-    except (TypeError, ValueError):
-        return False
-
-
 def _validate_records(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """특정 장부 형식을 강제하지 않고 OCR 결과의 구조적 품질만 확인한다."""
     invalid_cells: list[str] = []
-    total = 0
     for index, record in enumerate(records):
         row_errors: list[str] = []
-        issue = str(record.get("발행번호", ""))
-        date = str(record.get("출연일자", ""))
-        cohort = str(record.get("기수", ""))
-        name = str(record.get("이름", ""))
-        amount = str(record.get("출연금액", ""))
-        if not _ISSUE_PATTERN.fullmatch(issue):
-            row_errors.append(f"row={index}:발행번호={issue}")
-        if not _valid_date(date):
-            row_errors.append(f"row={index}:출연일자={date}")
-        entity_type = classify_name_entity(name).get("entity_type", "unknown")
-        organization_like = entity_type.startswith("organization") or name.startswith(("(주", "㈜", "(유"))
-        cohort_is_valid = bool(_COHORT_PATTERN.fullmatch(cohort)) and 1 <= int(cohort) <= 120
-        # 단체·법인 행은 원본 표에서도 기수가 비어 있을 수 있다.
-        if not cohort_is_valid and not (not cohort and organization_like):
-            row_errors.append(f"row={index}:기수={cohort}")
-        if not _AMOUNT_PATTERN.fullmatch(amount):
-            row_errors.append(f"row={index}:출연금액={amount}")
-        else:
-            total += int(amount.replace(",", ""))
+        source_values = [
+            str(value or "").strip()
+            for key, value in record.items()
+            if key not in _OCR_METADATA_COLUMNS
+        ]
+        if not any(source_values):
+            row_errors.append(f"row={index}:빈 행")
+        low_confidence = str(record.get("_ocr_low_confidence_cells", "") or "").strip()
+        if low_confidence:
+            row_errors.append(f"row={index}:낮은 OCR 신뢰도={low_confidence}")
         record["_ocr_validation_ok"] = not row_errors
         invalid_cells.extend(row_errors)
+
+    total = 0
+    if records:
+        frame = pd.DataFrame(records)
+        for column in frame.columns:
+            if column in _OCR_METADATA_COLUMNS:
+                continue
+            meaning = infer_column_meaning(str(column), frame[column])
+            if meaning.concept != "measure" or meaning.role != "amount":
+                continue
+            numeric = pd.to_numeric(
+                frame[column]
+                .astype(str)
+                .str.replace(r"[^0-9.\-]", "", regex=True),
+                errors="coerce",
+            )
+            total += int(numeric.fillna(0).sum())
     return {"invalid_cells": invalid_cells, "calculated_total": total}
 
 
@@ -82,9 +85,6 @@ def _records_to_dataframe(records: list[dict[str, Any]], source_file: str) -> pd
     df = pd.DataFrame(records)
     if df.empty:
         raise ImageTableExtractionError("표에서 데이터 행을 추출하지 못했습니다.")
-    first = [header for header in EXPECTED_HEADERS if header in df.columns]
-    rest = [column for column in df.columns if column not in first]
-    df = df[first + rest]
     cleaned = _clean_dataframe(df, source_file=source_file, context_prefix="img_table0")
     if cleaned is None or cleaned.empty:
         raise ImageTableExtractionError("이미지 표 DataFrame 정제 결과가 비어 있습니다.")

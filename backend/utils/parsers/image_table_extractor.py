@@ -5,6 +5,7 @@ The module name is historical; ingestion no longer creates an Excel intermediate
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -24,8 +25,8 @@ os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 logger = logging.getLogger("ingest")
 _OCR_LOCK = threading.Lock()
 
-EXPECTED_HEADERS = ("발행번호", "출연일자", "기수", "이름", "출연금액")
 _NUMERIC_TRANSLATION = str.maketrans({"O": "0", "o": "0", "Q": "0", "I": "1", "l": "1", "|": "1"})
+_NUMERIC_LIKE_RE = re.compile(r"^[0-9OoQIil|,./:;_\-+()%₩￦원\s]+$")
 
 
 class ImageTableExtractionError(RuntimeError):
@@ -94,9 +95,9 @@ def detect_table_grid(image_path: str | Path) -> TableGrid:
         x_lines.append(width - 1)
 
     x_lines = tuple(x_lines)
-    if len(x_lines) != 6:
+    if len(x_lines) < 2:
         raise ImageTableExtractionError(
-            f"5열 표를 검출하지 못했습니다: column_boundaries={len(x_lines)} ({x_lines})"
+            f"표의 열 경계를 검출하지 못했습니다: column_boundaries={len(x_lines)} ({x_lines})"
         )
     if len(y_lines) < 3:
         raise ImageTableExtractionError(f"표 행을 검출하지 못했습니다: row_boundaries={len(y_lines)}")
@@ -137,23 +138,30 @@ def _clean_numeric(text: str) -> str:
     return re.sub(r"\s+", "", str(text or "")).translate(_NUMERIC_TRANSLATION)
 
 
-def normalize_cell(text: str, column: int) -> str:
+def normalize_cell(text: str, column: int | None = None) -> str:
+    """셀 원문을 보존하면서 명백한 OCR 숫자 혼동과 공백만 정리한다.
+
+    ``column``은 기존 진단 코드와의 호환성을 위해 받지만 값의 형식을
+    결정하는 데 사용하지 않는다. 컬럼 의미와 데이터 타입은 공통 스키마가
+    추출 이후에 판단한다.
+    """
     text = re.sub(r"\s+", " ", str(text or "")).strip()
     if not text:
         return ""
-    if column == 0:
-        digits = re.sub(r"[^0-9]", "", _clean_numeric(text))
-        return f"{digits[:4]}-{digits[4:7]}" if len(digits) == 7 else ""
-    if column == 1:
-        digits = re.sub(r"[^0-9]", "", _clean_numeric(text))
-        return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}" if len(digits) == 8 else ""
-    if column == 2:
-        digits = re.sub(r"[^0-9]", "", _clean_numeric(text))
-        return digits if 1 <= len(digits) <= 3 else ""
-    if column == 4:
-        digits = re.sub(r"[^0-9]", "", _clean_numeric(text))
-        return f"{int(digits):,}" if digits else ""
+    if any(character.isdigit() for character in text) and _NUMERIC_LIKE_RE.fullmatch(text):
+        return _clean_numeric(text)
     return text
+
+
+def _unique_headers(values: list[str]) -> list[str]:
+    """OCR 헤더를 순서대로 보존하고 빈 값과 중복만 안전하게 해소한다."""
+    headers: list[str] = []
+    counts: dict[str, int] = {}
+    for index, value in enumerate(values, start=1):
+        base = re.sub(r"\s+", " ", str(value or "")).strip() or f"column_{index}"
+        counts[base] = counts.get(base, 0) + 1
+        headers.append(base if counts[base] == 1 else f"{base}_{counts[base]}")
+    return headers
 
 
 def _line_crosses_column(grid: TableGrid, y: int, column: int) -> bool:
@@ -168,14 +176,18 @@ def _line_crosses_column(grid: TableGrid, y: int, column: int) -> bool:
     return float(np.max(per_scanline_coverage)) >= 0.55
 
 
-def _column_row_groups(grid: TableGrid, row_count: int, column: int) -> list[tuple[int, int]]:
+def _column_row_groups(
+    grid: TableGrid,
+    row_bands: list[tuple[int, int]],
+    column: int,
+) -> list[tuple[int, int]]:
     """Return half-open physical-row ranges for real cells in one column."""
-    if column not in {0, 2, 3}:
-        return [(index, index + 1) for index in range(row_count)]
+    row_count = len(row_bands)
     groups: list[tuple[int, int]] = []
     start = 0
     for boundary_index in range(1, row_count):
-        if _line_crosses_column(grid, grid.y_lines[boundary_index + 1], column):
+        boundary_y = row_bands[boundary_index][0]
+        if _line_crosses_column(grid, boundary_y, column):
             groups.append((start, boundary_index))
             start = boundary_index
     groups.append((start, row_count))
@@ -187,15 +199,17 @@ def extract_table_records(
     *,
     recognizer: Callable[[np.ndarray], tuple[str, float]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Extract a five-column table directly; no XLSX intermediate is created."""
+    """격자형 표의 실제 헤더와 모든 셀을 동적으로 추출한다."""
     grid = detect_table_grid(image_path)
-    row_bands = list(zip(grid.y_lines[1:-1], grid.y_lines[2:]))
+    row_bands = list(zip(grid.y_lines[:-1], grid.y_lines[1:]))
+    if len(row_bands) < 2:
+        raise ImageTableExtractionError("헤더와 데이터 행을 구분할 수 없는 표입니다.")
     # Each unit is one real cell. Merged columns use the full vertical span, so
     # text crossing a physical date/amount boundary is never sliced in half.
     cell_units: list[tuple[int, int, int, float]] = []
     cell_images: list[np.ndarray] = []
     for col, (left, right) in enumerate(zip(grid.x_lines, grid.x_lines[1:])):
-        for row_start, row_end in _column_row_groups(grid, len(row_bands), col):
+        for row_start, row_end in _column_row_groups(grid, row_bands, col):
             top = row_bands[row_start][0]
             bottom = row_bands[row_end - 1][1]
             cell = grid.image[top + 2:bottom - 1, left + 2:right - 1]
@@ -248,38 +262,54 @@ def extract_table_records(
                 f"OCR 결과 수가 셀 수와 다릅니다: cells={len(cell_images)} results={len(recognized)}"
             )
 
-    values: list[list[str]] = [["" for _ in EXPECTED_HEADERS] for _ in row_bands]
-    scores: list[list[float]] = [[0.0 for _ in EXPECTED_HEADERS] for _ in row_bands]
+    raw_values: list[list[str]] = [["" for _ in range(grid.column_count)] for _ in row_bands]
+    values: list[list[str]] = [["" for _ in range(grid.column_count)] for _ in row_bands]
+    scores: list[list[float]] = [[0.0 for _ in range(grid.column_count)] for _ in row_bands]
     for (row_start, row_end, col, ink), (value, score) in zip(cell_units, recognized):
         if ink < 5:
             value, score = "", 0.0
-        normalized = normalize_cell(value, col)
+        raw_value = re.sub(r"\s+", " ", str(value or "")).strip()
+        normalized = normalize_cell(value)
         for row_index in range(row_start, row_end):
+            raw_values[row_index][col] = raw_value
             values[row_index][col] = normalized
             scores[row_index][col] = score
 
+    headers = _unique_headers(raw_values[0])
     records: list[dict[str, Any]] = []
-    for row_index in range(len(row_bands)):
-        record: dict[str, Any] = {"ocr_row_index": row_index}
+    for row_index, value_row in enumerate(values[1:]):
+        score_row = scores[row_index + 1]
+        record: dict[str, Any] = {}
         confidence_values: list[float] = []
         low_cells: list[str] = []
-        for col, header in enumerate(EXPECTED_HEADERS):
-            value, score = values[row_index][col], scores[row_index][col]
+        corrections: list[dict[str, str]] = []
+        for col, header in enumerate(headers):
+            value, score = value_row[col], score_row[col]
+            raw_value = raw_values[row_index + 1][col]
             record[header] = value
+            if raw_value and raw_value != value:
+                corrections.append({
+                    "column": header,
+                    "raw": raw_value,
+                    "normalized": value,
+                })
             if value:
                 confidence_values.append(score)
             if value and score < 0.75:
                 low_cells.append(f"{header}:{value}({score:.3f})")
+        record["ocr_row_index"] = row_index
         record["_ocr_confidence_min"] = f"{min(confidence_values):.3f}" if confidence_values else ""
         record["_ocr_confidence_avg"] = (
             f"{sum(confidence_values) / len(confidence_values):.3f}" if confidence_values else ""
         )
         record["_ocr_low_confidence_cells"] = "; ".join(low_cells)
+        record["_ocr_corrections"] = json.dumps(corrections, ensure_ascii=False) if corrections else ""
         records.append(record)
 
     metadata = {
         "physical_rows": len(records),
         "columns": grid.column_count,
+        "headers": headers,
         "x_lines": list(grid.x_lines),
         "y_lines": list(grid.y_lines),
     }
