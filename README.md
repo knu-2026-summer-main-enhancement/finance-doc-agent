@@ -289,50 +289,66 @@ POST /ingest/upload  또는  POST /ingest  또는  POST /ingest/all
 
 ## 6. 폴더 구조
 
-```
-knu-2026-summer-rag/
+```text
+finance-doc-agent/
 ├── backend/
-│   ├── main.py              # FastAPI 진입점 (엔드포인트 + 스키마)
-│   ├── database.py          # PostgreSQL / ChromaDB 연결 설정
-│   ├── .env                 # [Git Ignored] 환경변수
-│   ├── data/                # [Git Ignored] 입력 문서 (hwp, pdf, xlsx)
-│   ├── dataframes/          # [Git Ignored] Parquet 캐시 + 메타데이터
+│   ├── main.py                         # FastAPI 엔드포인트와 앱 수명 주기
+│   ├── database.py                     # PostgreSQL·ChromaDB 연결
+│   ├── data/                           # [Git Ignored] 업로드 원본 문서
+│   ├── dataframes/                     # [Git Ignored] Parquet·메타·스키마 sidecar
 │   ├── core/
-│   │   ├── config.py        # 환경변수 로드
-│   │   ├── llm.py           # Ollama LLM · retriever 싱글턴
-│   │   └── security.py      # API Key 인증 · 경로 검증
+│   │   ├── config.py                   # 환경변수와 실행 설정
+│   │   ├── llm.py                      # Ollama LLM·임베딩·벡터 저장소
+│   │   └── security.py                 # API Key와 적재 경로 검증
 │   ├── datastore/
-│   │   ├── state.py         # 공유 DataFrame namespace 로드/보관
-│   │   ├── schema.py        # LLM용 스키마 문자열 생성
-│   │   └── query.py         # 이름 검색 · 키워드 필터 · 직접 조회
+│   │   ├── state.py                    # DataFrame과 스키마 로드·공유 상태
+│   │   ├── scope.py                    # 요청별 선택 문서 범위 격리
+│   │   ├── schema.py                   # PANDAS 코드 생성용 스키마 구성
+│   │   └── query.py                    # 이름·기관·기수·식별번호·집계 조회
 │   ├── pandas_engine/
-│   │   ├── executor.py      # 샌드박스 exec (금지 패턴 차단)
-│   │   └── formatter.py     # 결과 포맷팅
+│   │   ├── aggregation.py              # 고정 집계 감지와 계산
+│   │   ├── money.py                    # 공통 금액 파싱과 단위 처리
+│   │   ├── executor.py                 # 제한된 LLM Pandas 코드 실행
+│   │   └── formatter.py                # 답변·계산 근거 포맷팅
 │   ├── rag/
-│   │   ├── router.py        # 질의 라우팅 (PANDAS / VECTOR)
-│   │   ├── prompts.py       # 프롬프트 템플릿
-│   │   ├── vector.py        # 벡터 RAG (의미 검색 → LLM)
-│   │   └── pandas_rag.py    # pandas RAG (검색 → 집계 → 포맷)
+│   │   ├── question_detectors.py       # 질문 신호와 작업 감지
+│   │   ├── question_analyzer.py        # 질문 분석 결과 통합
+│   │   ├── guard.py                    # 처리 불가·복합 질문 판정
+│   │   ├── guide.py                    # 올바른 질문 예시 안내
+│   │   ├── router.py                   # PANDAS·VECTOR 실행 경로 선택
+│   │   ├── pandas_rag.py               # 구조화 데이터 답변 흐름
+│   │   ├── vector.py                   # 선택 문서 벡터 검색과 근거 답변
+│   │   └── prompts.py                  # LLM 프롬프트 템플릿
 │   ├── utils/
-│   │   ├── ingest.py        # 적재 진입점 (유형별 파서로 위임)
-│   │   ├── manifest.py      # PostgreSQL manifest CRUD · 상태 조회
-│   │   ├── parquet_store.py # Parquet 저장 / source 기반 삭제
-│   │   ├── chroma_store.py  # ChromaDB 저장 / 삭제
-│   │   ├── text_utils.py    # 텍스트 청킹 · 문서 개요 생성
-│   │   ├── table_parser.py  # 표 파싱 · 정제 · 이름 정규화
-│   │   ├── hwp_extract.py   # HWP 표 추출 헬퍼 (pyhwpx subprocess 격리)
+│   │   ├── ingest.py                   # 파일 유형별 적재 진입점
+│   │   ├── manifest.py                 # 적재 상태와 중복 관리
+│   │   ├── parquet_store.py            # Parquet·스키마 sidecar 저장
+│   │   ├── chroma_store.py             # ChromaDB 청크 저장·삭제
+│   │   ├── semantic_schema.py          # 공통 의미·민감도 스키마
+│   │   ├── table_parser.py             # 표 정제·엔티티·병합 셀 처리
+│   │   ├── text_utils.py               # 텍스트 청킹과 개요 생성
+│   │   ├── hwp_extract.py              # pyhwpx 별도 프로세스 추출
 │   │   └── parsers/
-│   │       ├── pdf_parser.py
-│   │       ├── xlsx_parser.py
-│   │       └── hwp_parser.py
+│   │       ├── xlsx_parser.py          # Excel 표 추출
+│   │       ├── pdf_parser.py           # PDF 표·텍스트 추출
+│   │       ├── hwp_parser.py           # HWP/HWPX 변환·표 추출
+│   │       ├── image_table_extractor.py # OpenCV 표·셀 구조 추출
+│   │       └── image_table_ocr_parser.py # 셀 단위 PaddleOCR 파싱
 │   └── tests/
-│       ├── eval.py                # 평가 스크립트 (키워드 기반 정답률 측정)
-│       ├── goldset.json           # 골드셋 (90케이스 — sql_명단/인원/금액/vector/edge_case)
-│       ├── generate_demo_data.py  # 데모 데이터 생성 (Excel/PDF)
-│       └── results/               # [Git Ignored] eval 결과 리포트 (마크다운)
-├── .env.example             # 환경변수 템플릿
-├── docker-compose.yml       # Ollama / PostgreSQL / ChromaDB / n8n 일괄 실행
-├── my_workflow.json         # n8n Slack 워크플로우
+│       ├── test_aggregation_query.py   # 집계·계산 근거 테스트
+│       ├── test_document_scope.py      # 선택 문서 범위 테스트
+│       ├── test_semantic_schema.py     # 공통 의미 스키마 테스트
+│       ├── test_structured_query.py    # 이름·기관·식별번호 조회 테스트
+│       ├── test_table_cleanup.py       # 표 정제 테스트
+│       ├── test_image_table_ocr_parser.py # 이미지 표 구조 테스트
+│       ├── test_money.py               # 금액 파서 테스트
+│       ├── test_guard_routing.py       # 분석·Guard·Router 테스트
+│       ├── make_goldset.py             # 골드셋 생성 도구
+│       └── eval.py                     # `/chat` 평가 도구
+├── .env.example                        # 환경변수 템플릿
+├── .gitignore
+├── docker-compose.yml                  # PostgreSQL·ChromaDB·n8n 실행
+├── my_workflow.json                    # n8n Slack 워크플로우
 ├── requirements.txt
 └── README.md
 ```
