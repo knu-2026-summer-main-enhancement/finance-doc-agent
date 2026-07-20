@@ -154,6 +154,16 @@ def check_question_decision(decision: QuestionDecision) -> GuardResult:
             suggestions=["각 요청을 별도 질문으로 나누어 주세요."],
         )
 
+    if decision.request_count > 1:
+        return GuardResult(
+            status="GUIDE",
+            reason_code="MULTI_REQUEST",
+            reason="서로 다른 답을 요구하는 요청이 한 질문에 함께 포함되어 있습니다.",
+            operations=operations,
+            domains=domains,
+            suggestions=["각 요청을 별도 질문으로 나누어 주세요."],
+        )
+
     if "compare" in operations:
         return GuardResult(
             status="GUIDE",

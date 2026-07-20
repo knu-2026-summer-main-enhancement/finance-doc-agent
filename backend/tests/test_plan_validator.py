@@ -42,9 +42,10 @@ class PlanValidatorTest(unittest.TestCase):
         payload.update(overrides)
         return QueryPlan.model_validate(payload)
 
-    def _validate(self, plan: QueryPlan):
+    def _validate(self, plan: QueryPlan, question: str | None = None):
         return validate_query_plan(
             plan,
+            question=question,
             dataframes=self.dataframes,
             source_by_alias=self.sources,
             explicit_dataframe_aliases=(
@@ -186,6 +187,118 @@ class PlanValidatorTest(unittest.TestCase):
 
         self.assertFalse(result.is_valid)
         self.assertEqual(result.issues[0].code, "incompatible_value")
+
+    def test_question_literals_and_comparison_operators_are_preserved(self):
+        result = self._validate(
+            self._plan(
+                filters=[
+                    {"column": "기수", "operator": "gte", "value": 49},
+                    {"column": "출연금액", "operator": "gte", "value": "200만원"},
+                ]
+            ),
+            "전체 중 49기 이상에서 200만원 이상 낸 사람 알려줘",
+        )
+
+        self.assertTrue(result.is_executable)
+
+    def test_wrong_money_conversion_is_safely_recovered(self):
+        result = self._validate(
+            self._plan(
+                filters=[
+                    {"column": "기수", "operator": "gte", "value": 49},
+                    {"column": "출연금액", "operator": "gte", "value": 200_000},
+                ]
+            ),
+            "전체 중 49기 이상에서 200만원 이상 낸 사람 알려줘",
+        )
+
+        self.assertTrue(result.is_executable)
+        self.assertEqual(result.plan.filters[1].value, "200만원")
+        self.assertEqual(result.plan.filters[1].source_text, "200만원 이상")
+
+    def test_wrong_comparison_operator_is_safely_recovered(self):
+        result = self._validate(
+            self._plan(
+                filters=[
+                    {"column": "기수", "operator": "gte", "value": 49},
+                    {"column": "출연금액", "operator": "gt", "value": "200만원"},
+                ]
+            ),
+            "전체 중 49기 이상에서 200만원 이상 낸 사람 알려줘",
+        )
+
+        self.assertTrue(result.is_executable)
+        self.assertEqual(result.plan.filters[1].operator, "gte")
+
+    def test_missing_question_condition_is_rejected(self):
+        result = self._validate(
+            self._plan(
+                filters=[
+                    {"column": "기수", "operator": "gte", "value": 49},
+                ]
+            ),
+            "전체 중 49기 이상에서 200만원 이상 낸 사람 알려줘",
+        )
+
+        self.assertFalse(result.is_valid)
+        self.assertIn("literal_mismatch", {issue.code for issue in result.issues})
+
+    def test_numeric_plan_filter_not_present_in_question_is_rejected(self):
+        result = self._validate(
+            self._plan(
+                filters=[
+                    {"column": "기수", "operator": "gte", "value": 49},
+                    {"column": "출연금액", "operator": "gte", "value": "200만원"},
+                    {"column": "출연금액", "operator": "lt", "value": "500만원"},
+                ]
+            ),
+            "전체 중 49기 이상에서 200만원 이상 낸 사람 알려줘",
+        )
+
+        self.assertFalse(result.is_valid)
+        self.assertIn(
+            "ungrounded_numeric_filter",
+            {issue.code for issue in result.issues},
+        )
+
+    def test_invalid_source_text_cannot_override_unique_question_evidence(self):
+        result = self._validate(
+            self._plan(
+                filters=[
+                    {
+                        "column": "출연금액",
+                        "operator": "gte",
+                        "value": "200만원",
+                        "source_text": "금액 200만원 이상",
+                    }
+                ]
+            ),
+            "200만원 이상 낸 사람 알려줘",
+        )
+
+        self.assertTrue(result.is_executable)
+        self.assertEqual(result.plan.filters[0].source_text, "200만원 이상")
+
+    def test_mixed_source_text_does_not_hide_a_missing_condition(self):
+        result = self._validate(
+            self._plan(
+                filters=[
+                    {
+                        "column": "출연금액",
+                        "operator": "gte",
+                        "value": "200만원",
+                        "source_text": "49기 이상에서 200만원 이상",
+                    }
+                ]
+            ),
+            "49기 이상에서 200만원 이상 낸 사람 알려줘",
+        )
+
+        self.assertFalse(result.is_valid)
+        self.assertIn(
+            "literal_mismatch",
+            {issue.code for issue in result.issues},
+        )
 
     def test_non_executable_statuses_pass_without_dataframe_lookup(self):
         for status in ("clarification", "not_applicable"):

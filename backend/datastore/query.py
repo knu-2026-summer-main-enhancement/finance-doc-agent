@@ -73,6 +73,11 @@ _PERSON_LIST_COLUMNS = (
 )
 
 
+def has_explicit_masked_name(question: str) -> bool:
+    """Return whether the user explicitly supplied a supported masked name."""
+    return bool(_MASKED_NAME_TOKEN_RE.search(str(question or "")))
+
+
 def _is_internal_col(col: str) -> bool:
     return col in _INTERNAL_COLS or str(col).startswith("_")
 

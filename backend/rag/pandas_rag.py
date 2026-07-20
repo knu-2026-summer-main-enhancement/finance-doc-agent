@@ -13,6 +13,7 @@ from datastore.query import (
     _query_pandas_direct,
     _query_all_records,
     _has_explicit_structured_filter,
+    has_explicit_masked_name,
 )
 from pandas_engine.query_executor import (
     QueryPlanExecutionError,
@@ -85,6 +86,16 @@ async def _answer_query_plan(
     if not validation.is_executable:
         issue_codes = ", ".join(issue.code for issue in validation.issues)
         logger.warning("[PANDAS] QueryPlan 검증 실패 | issues=%s", issue_codes)
+        if any(
+            issue.code in {"literal_mismatch", "ungrounded_numeric_filter"}
+            for issue in validation.issues
+        ):
+            return (
+                "질문의 숫자·단위·비교 조건이 조회 계획에서 달라져 "
+                "안전을 위해 실행을 중단했습니다. 같은 질문을 다시 시도해 주세요.",
+                [],
+                "pandas",
+            )
         return (
             "질문을 실제 표의 컬럼과 안전하게 연결하지 못했습니다. "
             "문서에 표시된 항목명과 조회 조건을 확인해 주세요.",
@@ -120,6 +131,35 @@ async def _answer_pandas(
         return message, [], "pandas"
 
     if strategy == "QUERY_PLAN":
+        # 마스킹 이름은 검증된 전용 검색기가 있다. LLM이 단순 이름 조회를
+        # structured_query로 오분류해도, 별도 숫자·범위 조건이 없는 경우에만
+        # QueryPlan보다 안전한 직접 검색 결과를 우선한다.
+        if (
+            has_explicit_masked_name(question)
+            and not _has_explicit_structured_filter(question)
+            and not _NUMERIC_COMPARISON_FILTER.search(question)
+        ):
+            name_df, name_sources, name_searched = _search_name_pandas(question)
+            if name_df is not None:
+                if not source_scope_active() and len(name_sources) > 1:
+                    names = ", ".join(name_sources[:5])
+                    return (
+                        "같은 이름의 기록이 여러 문서에서 발견되었습니다. "
+                        f"조회할 문서를 선택해주세요: {names}",
+                        name_sources,
+                        "pandas",
+                    )
+                logger.info(
+                    "[NAME_SEARCH] QueryPlan 오분류 복구 | rows=%d",
+                    len(name_df),
+                )
+                return (
+                    _format_dataframe_result_for_question(name_df, question),
+                    name_sources,
+                    "pandas",
+                )
+            if name_searched:
+                return "조회된 데이터가 없습니다.", [], "pandas"
         return await _answer_query_plan(
             question,
             allow_vector_fallback=allow_vector_fallback,

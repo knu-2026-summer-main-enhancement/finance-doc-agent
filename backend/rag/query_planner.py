@@ -14,6 +14,7 @@ from pandas_engine.plan_validator import (
     PlanValidationResult,
     validate_query_plan,
 )
+from pandas_engine.query_grounding import ground_query_plan_filters
 from pandas_engine.query_plan import QueryPlan
 from rag.prompts import _QUERY_PLAN_REPAIR_TEMPLATE, _QUERY_PLAN_TEMPLATE
 
@@ -132,6 +133,7 @@ def _remove_ungrounded_rank_filters(plan: QueryPlan, question: str) -> QueryPlan
 
 
 def _align_plan_with_question(plan: QueryPlan, question: str) -> QueryPlan:
+    plan = ground_query_plan_filters(plan, question)
     plan = _align_filter_logic_with_question(plan, question)
     return _remove_ungrounded_rank_filters(plan, question)
 
@@ -247,6 +249,7 @@ async def generate_validated_query_plan(
         explicit_dataframe_aliases = set(_find_dfs_by_source_label(question))
     return validate_query_plan(
         plan,
+        question=question,
         dataframes=dataframes,
         source_by_alias=source_by_alias,
         explicit_dataframe_aliases=explicit_dataframe_aliases,

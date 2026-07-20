@@ -5,7 +5,7 @@ from langchain_core.prompts import PromptTemplate
 
 _QUESTION_ENGINE_TEMPLATE = """\
 당신은 재정 문서 질의 시스템의 질문 분류기입니다.
-사용자 질문을 직접 답하거나 계산하지 말고, 필요한 operation만
+사용자 질문을 직접 답하거나 계산하지 말고, 독립 요청과 operation만
 하나의 JSON 객체로 반환하세요. Python, Markdown, 설명문은 출력하지 마세요.
 
 operation 정의:
@@ -30,6 +30,11 @@ operation 정의:
 - document_explain: 그 밖의 문서 본문 설명과 내용 검색
 
 판단 원칙:
+- 먼저 질문이 요구하는 독립된 답을 빠짐없이 나누세요.
+- requests의 각 source_text는 해당 요청을 나타내는 질문 원문을 글자 하나도
+  바꾸지 않고 그대로 복사하세요.
+- "A와 B", "A하고 B", "A 그리고 B"처럼 서로 다른 답을 요구하면
+  requests 항목을 각각 만드세요. 한쪽 요청을 생략하거나 합치지 마세요.
 - 질문 문장에 특정 키워드가 있다는 이유만으로 결정하지 말고 전체 의미를 판단하세요.
 - 여러 조건이 하나의 명단·값을 만들기 위한 것이면 operation 하나입니다.
 - 서로 다른 답을 두 개 이상 요구할 때만 operations에 여러 항목을 작성하세요.
@@ -51,7 +56,12 @@ operation 정의:
 ready JSON:
 {{
   "status": "ready",
-  "operations": ["위 목록에 있는 operation"],
+  "requests": [
+    {{
+      "source_text": "질문에서 그대로 복사한 독립 요청",
+      "operation": "위 목록에 있는 operation"
+    }}
+  ],
   "reason": "operation 선택 이유",
   "retrieval_query": "document operation이 있을 때만 검색 문장"
 }}
@@ -66,21 +76,23 @@ clarification 또는 unsupported JSON:
 
 분류 예시:
 - "금액 총액 알려줘"
-  → {{"status":"ready","operations":["sum_amount"],"reason":"금액 합계 요청"}}
+  → {{"status":"ready","requests":[{{"source_text":"금액 총액 알려줘","operation":"sum_amount"}}],"reason":"금액 합계 요청"}}
 - "3월 기록 알려줘"
-  → {{"status":"ready","operations":["filter_records"],"reason":"단일 날짜 조건 조회"}}
+  → {{"status":"ready","requests":[{{"source_text":"3월 기록 알려줘","operation":"filter_records"}}],"reason":"단일 날짜 조건 조회"}}
 - "발행번호 A-001의 금액"
-  → {{"status":"ready","operations":["lookup_amount"],"reason":"특정 항목 금액 조회"}}
+  → {{"status":"ready","requests":[{{"source_text":"발행번호 A-001의 금액","operation":"lookup_amount"}}],"reason":"특정 항목 금액 조회"}}
 - "기수가 50 이상이고 금액이 100만원 이상인 항목"
-  → {{"status":"ready","operations":["structured_query"],"reason":"복수 컬럼 조건 조회"}}
+  → {{"status":"ready","requests":[{{"source_text":"기수가 50 이상이고 금액이 100만원 이상인 항목","operation":"structured_query"}}],"reason":"복수 조건이 하나의 목록을 만드는 조회"}}
 - "금액이 큰 순서대로 5개"
-  → {{"status":"ready","operations":["structured_query"],"reason":"정렬과 개수 제한"}}
+  → {{"status":"ready","requests":[{{"source_text":"금액이 큰 순서대로 5개","operation":"structured_query"}}],"reason":"정렬과 개수 제한"}}
 - "지급 기준을 설명해줘"
-  → {{"status":"ready","operations":["document_criteria"],"reason":"문서 기준 검색","retrieval_query":"지급 기준"}}
+  → {{"status":"ready","requests":[{{"source_text":"지급 기준을 설명해줘","operation":"document_criteria"}}],"reason":"문서 기준 검색","retrieval_query":"지급 기준"}}
 - "금액 총액과 지급 기준을 같이 알려줘"
-  → {{"status":"ready","operations":["sum_amount","document_criteria"],"reason":"계산과 문서 검색의 혼합 요청","retrieval_query":"지급 기준"}}
+  → {{"status":"ready","requests":[{{"source_text":"금액 총액","operation":"sum_amount"}},{{"source_text":"지급 기준","operation":"document_criteria"}}],"reason":"서로 다른 두 답을 요구하는 혼합 요청","retrieval_query":"지급 기준"}}
+- "장학금 규정과 전체 목록 알려줘"
+  → {{"status":"ready","requests":[{{"source_text":"장학금 규정","operation":"document_explain"}},{{"source_text":"전체 목록","operation":"list_records"}}],"reason":"규정 검색과 표 전체 목록이라는 두 요청","retrieval_query":"장학금 규정"}}
 - "현재 적재된 문서 목록"
-  → {{"status":"ready","operations":["list_documents"],"reason":"적재 파일 목록 요청"}}
+  → {{"status":"ready","requests":[{{"source_text":"현재 적재된 문서 목록","operation":"list_documents"}}],"reason":"적재 파일 목록 요청"}}
 
 현재 조회 가능한 표:
 {schema}
@@ -97,7 +109,9 @@ _QUESTION_ENGINE_REPAIR_TEMPLATE = """\
 Python, Markdown, 설명문 없이 JSON 객체 하나만 반환하세요.
 
 허용 규칙:
-- status=ready이면 operations 배열이 필수
+- status=ready이면 requests 배열이 필수
+- requests의 각 항목에는 질문에서 그대로 복사한 source_text와 operation이 필수
+- 서로 다른 답을 요구하는 요청을 하나로 합치거나 생략하지 않음
 - 허용 operation:
   list_documents, filter_records, compare, max_person_by_amount,
   min_person_by_amount, list_records, count_records, sum_amount,
@@ -107,7 +121,7 @@ Python, Markdown, 설명문 없이 JSON 객체 하나만 반환하세요.
 - 위 목록에 없는 operation을 새로 만들지 않음
 - document operation이 있으면 retrieval_query 필수
 - document operation이 없으면 retrieval_query를 넣지 않음
-- route, intent, query, filters, Python 코드를 넣지 않음
+- operations, route, intent, query, filters, Python 코드를 넣지 않음
 - status=clarification 또는 unsupported이면 operations 없이 message 필수
 
 질문:
@@ -197,7 +211,8 @@ JSON 규격:
       "column": "실제 컬럼명",
       "operator": "eq|ne|gt|gte|lt|lte|contains|in|between|is_null|not_null",
       "value": "연산자에 맞는 값",
-      "case_sensitive": false
+      "case_sensitive": false,
+      "source_text": "이 필터를 뒷받침하는 질문의 가장 짧은 원문 구절"
     }}
   ],
   "filter_logic": "all|any"
@@ -249,6 +264,10 @@ JSON 규격:
 - contains는 문자열 컬럼에만 사용하며 value에는 정규식이 아닌 실제 검색 문자열을 넣으세요.
 - 숫자와 금액 컬럼에는 eq, ne, gt, gte, lt, lte, in, between만 사용하세요.
 - 질문에 나온 숫자와 단위 표현은 직접 환산하거나 자릿수를 바꾸지 말고 그대로 value에 보존하세요.
+- 모든 필터의 source_text는 질문에서 글자 하나도 바꾸지 않고 그대로 복사하세요.
+- 숫자 비교 필터의 source_text는 "200만원 이상", "49기 이상"처럼
+  해당 숫자·단위·비교 표현 하나만 포함하는 가장 짧은 원문 구절이어야 합니다.
+- 질문에 그대로 존재하는 source_text를 제시할 수 없다면 해당 필터를 만들지 마세요.
 - "이상"은 gte, "초과"는 gt, "이하"는 lte, "미만"은 lt를 사용하세요.
 - 날짜 컬럼에는 eq, ne, gt, gte, lt, lte, in, between만 사용하고 값은 YYYY-MM-DD 형식으로 작성하세요.
 - 날짜의 월 범위는 해당 월의 시작일과 마지막 날을 between의 두 값으로 표현하세요.
@@ -275,6 +294,8 @@ Python 코드, Markdown, 설명문 없이 수정된 JSON 객체 하나만 반환
 - sum, mean, median, mode, min, max는 target 필수
 - min, max에서 행 반환이 필요할 때만 result_mode=records 사용
 - 이전 응답에 없던 dataframe, 컬럼, 필터 값은 새로 만들지 않음
+- 각 필터의 source_text는 사용자 질문에서 그대로 복사한 가장 짧은 근거 구절
+- 숫자·단위·비교 표현은 source_text에서 환산하거나 변경하지 않음
 
 사용자 질문:
 {question}

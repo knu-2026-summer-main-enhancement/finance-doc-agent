@@ -54,6 +54,12 @@ class FilterCondition(_PlanModel):
     operator: FilterOperator
     value: FilterValue = None
     case_sensitive: bool = False
+    source_text: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="Exact, smallest question span supporting this filter.",
+    )
 
     @model_validator(mode="after")
     def validate_operator_value(self) -> Self:

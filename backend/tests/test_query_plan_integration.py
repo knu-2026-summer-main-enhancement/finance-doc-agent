@@ -155,6 +155,71 @@ class QueryPlanPandasIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sources, ["업무목록.xlsx"])
         self.assertIn("총 2건", answer)
 
+    async def test_masked_name_lookup_recovers_from_query_plan_misclassification(self):
+        matched = pd.DataFrame(
+            {
+                "이름": ["이*규", "이*규"],
+                "출연금액": ["1,000,000", "9,000,000"],
+                "_매칭유형": ["masked_direct_match", "masked_direct_match"],
+            }
+        )
+        planner = AsyncMock(
+            side_effect=AssertionError("검증된 마스킹 이름 조회가 QueryPlan으로 넘어감")
+        )
+
+        with patch(
+            "rag.pandas_rag._search_name_pandas",
+            return_value=(matched, ["test.png"], True),
+        ), patch(
+            "rag.pandas_rag.generate_validated_query_plan",
+            new=planner,
+        ):
+            answer, sources, route = await _answer_pandas(
+                "이*규 얼마야",
+                strategy="QUERY_PLAN",
+                allow_vector_fallback=False,
+            )
+
+        self.assertEqual(route, "pandas")
+        self.assertEqual(sources, ["test.png"])
+        self.assertIn("10,000,000원", answer)
+        self.assertIn("총 2회", answer)
+        planner.assert_not_awaited()
+
+    async def test_masked_name_with_numeric_condition_still_uses_query_plan(self):
+        validation = self._validation(
+            {
+                "status": "ready",
+                "dataframe": "df0",
+                "operation": "list",
+                "filters": [
+                    {"column": "점수", "operator": "gte", "value": 20}
+                ],
+                "select": ["항목", "점수"],
+            }
+        )
+        name_search = Mock(
+            side_effect=AssertionError("복합 조건에서 이름 직접 검색이 호출됨")
+        )
+
+        with patch(
+            "rag.pandas_rag._search_name_pandas",
+            new=name_search,
+        ), patch(
+            "rag.pandas_rag.generate_validated_query_plan",
+            new=AsyncMock(return_value=validation),
+        ):
+            answer, sources, route = await _answer_pandas(
+                "이*규 점수가 20점 이상인 항목",
+                strategy="QUERY_PLAN",
+                allow_vector_fallback=False,
+            )
+
+        self.assertEqual(route, "pandas")
+        self.assertEqual(sources, ["업무목록.xlsx"])
+        self.assertIn("총 2건", answer)
+        name_search.assert_not_called()
+
     async def test_valid_empty_result_does_not_fall_back_to_vector(self):
         validation = self._validation(
             {

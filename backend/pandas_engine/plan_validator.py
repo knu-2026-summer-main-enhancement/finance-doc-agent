@@ -7,7 +7,11 @@ import pandas as pd
 
 from datastore.scope import scoped_mapping
 from datastore.state import _df_namespace, _df_sources
-from pandas_engine.money import parse_money_value
+from pandas_engine.money import money_unit_for_column, parse_money_value
+from pandas_engine.query_grounding import (
+    ground_query_plan_filters_by_type,
+    parse_grounded_comparisons,
+)
 from pandas_engine.query_plan import FilterCondition, QueryPlan
 from utils.semantic_schema import SYSTEM_COLUMNS, infer_data_type
 from utils.table_parser import IDENTITY_INTERNAL_COLS
@@ -24,6 +28,15 @@ _INTERNAL_COLUMNS = set(SYSTEM_COLUMNS) | set(IDENTITY_INTERNAL_COLS)
 _NUMERIC_TYPES = {"number", "money"}
 _ORDERABLE_TYPES = _NUMERIC_TYPES | {"date", "year_month"}
 _STRING_TYPES = {"string"}
+_PLAN_COMPARISON_OPERATORS = {"gt", "gte", "lt", "lte", "between"}
+
+
+@dataclass(frozen=True)
+class _GroundedNumericCondition:
+    operator: str
+    value: float
+    value_kind: Literal["money", "number", "unspecified"]
+    original: str
 
 
 @dataclass(frozen=True)
@@ -164,9 +177,190 @@ def _validate_filter_type(
     return issues
 
 
+def _question_numeric_conditions(question: str) -> list[_GroundedNumericCondition]:
+    conditions: list[_GroundedNumericCondition] = []
+    for comparison in parse_grounded_comparisons(question):
+        if comparison.value_kind == "money":
+            parsed = parse_money_value(comparison.value)
+            if parsed is None:
+                continue
+            value = parsed
+        else:
+            value = float(comparison.value)
+        conditions.append(
+            _GroundedNumericCondition(
+                operator=comparison.operator,
+                value=value,
+                value_kind=comparison.value_kind,
+                original=comparison.source_text,
+            )
+        )
+    return conditions
+
+
+def _validate_filter_source_text(
+    plan: QueryPlan,
+    question: str,
+) -> list[PlanValidationIssue]:
+    issues: list[PlanValidationIssue] = []
+    for condition in plan.filters:
+        source_text = str(condition.source_text or "").strip()
+        if not source_text:
+            continue
+        if source_text not in question:
+            issues.append(
+                _issue(
+                    "invalid_filter_evidence",
+                    (
+                        "필터의 원문 근거가 실제 질문에 존재하지 않습니다: "
+                        f"{source_text}"
+                    ),
+                    field="filters",
+                    column=condition.column,
+                )
+            )
+            continue
+        if (
+            condition.operator in _PLAN_COMPARISON_OPERATORS
+            and len(parse_grounded_comparisons(source_text)) != 1
+        ):
+            issues.append(
+                _issue(
+                    "ambiguous_filter_evidence",
+                    (
+                        "숫자 필터의 원문 근거가 하나의 명확한 비교 조건이 "
+                        f"아닙니다: {source_text}"
+                    ),
+                    field="filters",
+                    column=condition.column,
+                )
+            )
+    return issues
+
+
+def _condition_numeric_parts(
+    condition: FilterCondition,
+    *,
+    df: pd.DataFrame,
+    column: Hashable,
+    data_type: str,
+) -> list[tuple[str, float]] | None:
+    if condition.operator not in _PLAN_COMPARISON_OPERATORS:
+        return []
+
+    raw_values = _condition_values(condition)
+    parsed: list[float] = []
+    for value in raw_values:
+        if data_type == "money":
+            numeric = parse_money_value(
+                value,
+                money_unit_for_column(df, str(column)),
+            )
+        elif data_type == "number":
+            converted = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+            numeric = None if pd.isna(converted) else float(converted)
+        else:
+            return []
+        if numeric is None:
+            return None
+        parsed.append(float(numeric))
+
+    if condition.operator == "between":
+        if len(parsed) != 2:
+            return None
+        return [("gte", parsed[0]), ("lte", parsed[1])]
+    if len(parsed) != 1:
+        return None
+    return [(condition.operator, parsed[0])]
+
+
+def _numeric_values_equal(left: float, right: float) -> bool:
+    tolerance = max(abs(left), abs(right), 1.0) * 1e-12
+    return abs(left - right) <= tolerance
+
+
+def _validate_numeric_filter_grounding(
+    plan: QueryPlan,
+    question: str,
+    df: pd.DataFrame,
+    actual_columns: Mapping[str, Hashable],
+) -> list[PlanValidationIssue]:
+    """Reject numeric comparison filters that alter literals from the question."""
+
+    expected = _question_numeric_conditions(question)
+    if not expected:
+        return []
+
+    actual: list[tuple[str, float, str, str]] = []
+    for condition in plan.filters:
+        column = actual_columns.get(condition.column)
+        if column is None:
+            continue
+        data_type = column_data_type(df, column)
+        parts = _condition_numeric_parts(
+            condition,
+            df=df,
+            column=column,
+            data_type=data_type,
+        )
+        if parts is None:
+            continue
+        actual.extend(
+            (operator, value, data_type, condition.column)
+            for operator, value in parts
+        )
+
+    unmatched_actual = set(range(len(actual)))
+    issues: list[PlanValidationIssue] = []
+    for condition in expected:
+        matched_index: int | None = None
+        for index in unmatched_actual:
+            operator, value, data_type, _ = actual[index]
+            kind_matches = (
+                condition.value_kind == "unspecified"
+                or condition.value_kind == data_type
+            )
+            if (
+                kind_matches
+                and operator == condition.operator
+                and _numeric_values_equal(value, condition.value)
+            ):
+                matched_index = index
+                break
+        if matched_index is None:
+            issues.append(
+                _issue(
+                    "literal_mismatch",
+                    (
+                        "질문의 숫자·단위·비교 조건이 조회 계획에 정확히 "
+                        f"보존되지 않았습니다: {condition.original}"
+                    ),
+                    field="filters",
+                )
+            )
+        else:
+            unmatched_actual.remove(matched_index)
+
+    for index in sorted(unmatched_actual):
+        operator, value, _, column = actual[index]
+        issues.append(
+            _issue(
+                "ungrounded_numeric_filter",
+                (
+                    "질문 원문에서 확인되지 않은 숫자 비교 조건이 "
+                    f"조회 계획에 포함됐습니다: {column} {operator} {value:g}"
+                ),
+                field="filters",
+                column=column,
+            )
+        )
+    return issues
+
+
 def validate_query_plan(
     plan: QueryPlan,
     *,
+    question: str | None = None,
     dataframes: Mapping[str, pd.DataFrame] | None = None,
     source_by_alias: Mapping[str, str] | None = None,
     explicit_dataframe_aliases: set[str] | frozenset[str] | None = None,
@@ -262,6 +456,16 @@ def validate_query_plan(
             source_file=source_file,
         )
 
+    if question:
+        plan = ground_query_plan_filters_by_type(
+            plan,
+            question,
+            {
+                column: column_data_type(df, actual_column)
+                for column, actual_column in valid_references.items()
+            },
+        )
+
     if plan.operation in {"sum", "mean", "median"} and plan.target:
         target_type = column_data_type(df, valid_references[plan.target])
         if target_type not in _NUMERIC_TYPES:
@@ -289,6 +493,17 @@ def validate_query_plan(
     for condition in plan.filters:
         data_type = column_data_type(df, valid_references[condition.column])
         issues.extend(_validate_filter_type(condition, data_type))
+
+    if question:
+        issues.extend(_validate_filter_source_text(plan, question))
+        issues.extend(
+            _validate_numeric_filter_grounding(
+                plan,
+                question,
+                df,
+                actual_columns,
+            )
+        )
 
     if issues:
         return PlanValidationResult(

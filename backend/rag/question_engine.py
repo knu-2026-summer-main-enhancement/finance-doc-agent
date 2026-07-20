@@ -100,6 +100,16 @@ def parse_question_decision(
         payload["operations"] = [operations]
     elif operations is None and isinstance(payload.get("operation"), str):
         payload["operations"] = [payload.pop("operation")]
+    requests = payload.get("requests")
+    if isinstance(requests, dict):
+        payload["requests"] = [requests]
+        requests = payload["requests"]
+    if requests and not payload.get("operations"):
+        payload["operations"] = list(dict.fromkeys(
+            request.get("operation")
+            for request in requests
+            if isinstance(request, dict) and request.get("operation")
+        ))
     # Previous route/intent fields and volunteered expressions are never
     # executed. Removing them makes the operation contract migration tolerant
     # without guessing a missing operation from a broad engine label.
@@ -119,6 +129,19 @@ def parse_question_decision(
         elif not has_document_operation:
             payload.pop("retrieval_query", None)
     return QuestionDecision.model_validate(payload)
+
+
+def _validate_request_evidence(
+    decision: QuestionDecision,
+    question: str,
+) -> QuestionDecision:
+    for request in decision.requests:
+        if request.source_text not in question:
+            raise ValueError(
+                "독립 요청의 source_text가 실제 질문에 존재하지 않습니다: "
+                f"{request.source_text}"
+            )
+    return decision
 
 
 def _validation_message(error: Exception) -> str:
@@ -154,9 +177,12 @@ async def decide_question(
     raw = await model.ainvoke(prompt)
     responses.append(_response_text(raw))
     try:
-        return parse_question_decision(
-            raw,
-            fallback_retrieval_query=clean_question,
+        return _validate_request_evidence(
+            parse_question_decision(
+                raw,
+                fallback_retrieval_query=clean_question,
+            ),
+            clean_question,
         )
     except (ValueError, TypeError, ValidationError) as first_error:
         error_message = _validation_message(first_error)
@@ -173,9 +199,12 @@ async def decide_question(
     repaired = await model.ainvoke(repair_prompt)
     responses.append(_response_text(repaired))
     try:
-        return parse_question_decision(
-            repaired,
-            fallback_retrieval_query=clean_question,
+        return _validate_request_evidence(
+            parse_question_decision(
+                repaired,
+                fallback_retrieval_query=clean_question,
+            ),
+            clean_question,
         )
     except (ValueError, TypeError, ValidationError) as second_error:
         raise QuestionEngineError(

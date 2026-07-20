@@ -39,6 +39,34 @@ def _ready_payload(operation: str = "structured_query") -> dict:
 
 
 class QuestionEngineParsingTest(unittest.TestCase):
+    def test_requests_are_parsed_and_operations_are_derived(self):
+        decision = parse_question_decision(
+            json.dumps(
+                {
+                    "status": "ready",
+                    "requests": [
+                        {
+                            "source_text": "장학금 규정",
+                            "operation": "document_explain",
+                        },
+                        {
+                            "source_text": "전체 목록",
+                            "operation": "list_records",
+                        },
+                    ],
+                    "reason": "규정과 전체 목록의 복합 요청",
+                    "retrieval_query": "장학금 규정",
+                },
+                ensure_ascii=False,
+            )
+        )
+
+        self.assertEqual(len(decision.requests), 2)
+        self.assertEqual(
+            decision.operations,
+            ("document_explain", "list_records"),
+        )
+
     def test_compact_schema_keeps_headers_and_drops_samples(self):
         compact = compact_question_schema(
             "파일: 명단.xlsx\n"
@@ -122,7 +150,45 @@ class QuestionEngineAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"취득학점"', llm.prompts[0])
         self.assertIn("structured_query", llm.prompts[0])
         self.assertIn("document_criteria", llm.prompts[0])
+        self.assertIn('"requests"', llm.prompts[0])
+        self.assertIn("source_text", llm.prompts[0])
         self.assertNotIn('"route":', llm.prompts[0])
+
+    async def test_request_source_text_must_exist_in_original_question(self):
+        invalid = {
+            "status": "ready",
+            "requests": [
+                {
+                    "source_text": "질문에 없는 요청",
+                    "operation": "list_records",
+                }
+            ],
+            "reason": "잘못된 원문 근거",
+        }
+        repaired = {
+            "status": "ready",
+            "requests": [
+                {
+                    "source_text": "전체 목록",
+                    "operation": "list_records",
+                }
+            ],
+            "reason": "전체 목록 요청",
+        }
+        llm = FakeLLM(
+            json.dumps(invalid, ensure_ascii=False),
+            json.dumps(repaired, ensure_ascii=False),
+        )
+
+        decision = await decide_question(
+            "전체 목록 알려줘",
+            schema="표 스키마",
+            llm=llm,
+        )
+
+        self.assertEqual(decision.operations, ("list_records",))
+        self.assertEqual(decision.requests[0].source_text, "전체 목록")
+        self.assertEqual(len(llm.prompts), 2)
 
     async def test_invalid_first_response_is_repaired_once(self):
         repaired = json.dumps(

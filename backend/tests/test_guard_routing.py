@@ -109,6 +109,50 @@ class GuardRoutingTest(unittest.TestCase):
             ["structured_data", "document_evidence"],
         )
 
+    def test_request_level_guard_blocks_rules_and_full_list(self):
+        decision = QuestionDecision(
+            status="ready",
+            requests=[
+                {
+                    "source_text": "장학금 규정",
+                    "operation": "document_explain",
+                },
+                {
+                    "source_text": "전체 목록",
+                    "operation": "list_records",
+                },
+            ],
+            reason="규정 검색과 전체 목록 조회",
+            retrieval_query="장학금 규정",
+        )
+
+        result = check_question_decision(decision)
+
+        self.assertEqual(result.status, "GUIDE")
+        self.assertEqual(result.reason_code, "CROSS_ENGINE_QUERY")
+
+    def test_two_independent_requests_using_same_engine_are_guided(self):
+        decision = QuestionDecision(
+            status="ready",
+            requests=[
+                {
+                    "source_text": "지급 기준",
+                    "operation": "document_criteria",
+                },
+                {
+                    "source_text": "신청 절차",
+                    "operation": "document_procedure",
+                },
+            ],
+            reason="서로 다른 두 문서 검색 요청",
+            retrieval_query="지급 기준 신청 절차",
+        )
+
+        result = check_question_decision(decision)
+
+        self.assertEqual(result.status, "GUIDE")
+        self.assertEqual(result.reason_code, "MULTI_REQUEST")
+
     def test_llm_structured_query_passes_guard(self):
         decision = QuestionDecision(
             status="ready",

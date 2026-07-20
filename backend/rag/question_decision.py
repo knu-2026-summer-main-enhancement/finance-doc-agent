@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -38,6 +38,19 @@ _VECTOR_OPERATIONS = {
 }
 
 
+class ClassifiedRequest(BaseModel):
+    """One independently answerable request copied from the user question."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        str_strip_whitespace=True,
+    )
+
+    source_text: str = Field(min_length=1, max_length=300)
+    operation: QuestionOperation
+
+
 class QuestionDecision(BaseModel):
     """Strict operation contract emitted by the LLM question engine."""
 
@@ -48,6 +61,10 @@ class QuestionDecision(BaseModel):
     )
 
     status: DecisionStatus
+    requests: tuple[ClassifiedRequest, ...] = Field(
+        default_factory=tuple,
+        max_length=5,
+    )
     operations: tuple[QuestionOperation, ...] = Field(
         default_factory=tuple,
         max_length=5,
@@ -57,6 +74,26 @@ class QuestionDecision(BaseModel):
     message: str | None = Field(default=None, max_length=500)
     candidates: tuple[str, ...] = Field(default_factory=tuple, max_length=10)
 
+    @model_validator(mode="before")
+    @classmethod
+    def derive_operations_from_requests(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        requests = value.get("requests") or []
+        if requests and not value.get("operations"):
+            derived: list[str] = []
+            for request in requests:
+                operation = (
+                    request.get("operation")
+                    if isinstance(request, dict)
+                    else getattr(request, "operation", None)
+                )
+                if operation and operation not in derived:
+                    derived.append(operation)
+            value = dict(value)
+            value["operations"] = derived
+        return value
+
     @model_validator(mode="after")
     def validate_status_contract(self) -> Self:
         if self.status == "ready":
@@ -64,6 +101,14 @@ class QuestionDecision(BaseModel):
                 raise ValueError("ready requires at least one operation")
             if len(set(self.operations)) != len(self.operations):
                 raise ValueError("operations must not contain duplicates")
+            if self.requests:
+                request_operations = tuple(dict.fromkeys(
+                    request.operation for request in self.requests
+                ))
+                if request_operations != self.operations:
+                    raise ValueError(
+                        "operations must match the operations derived from requests"
+                    )
             has_vector_operation = any(
                 operation in _VECTOR_OPERATIONS
                 for operation in self.operations
@@ -82,9 +127,9 @@ class QuestionDecision(BaseModel):
                 )
             return self
 
-        if self.operations:
+        if self.operations or self.requests:
             raise ValueError(
-                f"{self.status} must not include operations"
+                f"{self.status} must not include requests or operations"
             )
         if self.retrieval_query is not None:
             raise ValueError(
@@ -93,3 +138,8 @@ class QuestionDecision(BaseModel):
         if not self.message:
             raise ValueError(f"{self.status} requires message")
         return self
+
+    @property
+    def request_count(self) -> int:
+        """Return independent request count while preserving legacy decisions."""
+        return len(self.requests) if self.requests else len(self.operations)

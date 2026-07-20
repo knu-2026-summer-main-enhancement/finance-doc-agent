@@ -11,9 +11,10 @@ import pandas as pd
 _MONEY_RE = re.compile(
     r"^\s*(?P<sign>[+-]?)\s*(?P<prefix>₩|KRW)?\s*"
     r"(?P<number>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*"
-    r"(?P<unit>원|천원|만원)?\s*$",
+    r"(?P<unit>원|천원|만원|억원)?\s*$",
     re.IGNORECASE,
 )
+MONEY_TEXT_UNITS = ("억원", "만원", "천원", "원")
 _UNIT_MULTIPLIERS = {
     "KRW": 1.0,
     "KRW_1000": 1_000.0,
@@ -21,7 +22,15 @@ _UNIT_MULTIPLIERS = {
     "원": 1.0,
     "천원": 1_000.0,
     "만원": 10_000.0,
+    "억원": 100_000_000.0,
 }
+
+
+def money_multiplier_for_unit(unit: str | None) -> float | None:
+    """Return the explicit multiplier for one supported textual money unit."""
+    if not unit:
+        return None
+    return _UNIT_MULTIPLIERS.get(str(unit).strip())
 
 
 def parse_money_value(value: Any, unit_hint: str | None = None) -> float | None:

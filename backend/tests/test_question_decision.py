@@ -8,6 +8,43 @@ from rag.question_decision import QuestionDecision
 
 
 class QuestionDecisionTest(unittest.TestCase):
+    def test_requests_derive_unique_operations_and_preserve_request_count(self):
+        decision = QuestionDecision(
+            status="ready",
+            requests=[
+                {
+                    "source_text": "장학금 규정",
+                    "operation": "document_explain",
+                },
+                {
+                    "source_text": "전체 목록",
+                    "operation": "list_records",
+                },
+            ],
+            reason="서로 다른 두 요청",
+            retrieval_query="장학금 규정",
+        )
+
+        self.assertEqual(
+            decision.operations,
+            ("document_explain", "list_records"),
+        )
+        self.assertEqual(decision.request_count, 2)
+
+    def test_repeated_operation_requests_remain_independent(self):
+        decision = QuestionDecision(
+            status="ready",
+            requests=[
+                {"source_text": "지급 기준", "operation": "document_criteria"},
+                {"source_text": "신청 기준", "operation": "document_criteria"},
+            ],
+            reason="두 기준에 대한 별도 요청",
+            retrieval_query="지급 기준 신청 기준",
+        )
+
+        self.assertEqual(decision.operations, ("document_criteria",))
+        self.assertEqual(decision.request_count, 2)
+
     def test_ready_accepts_one_or_more_known_operations(self):
         decision = QuestionDecision(
             status="ready",
@@ -66,6 +103,7 @@ class QuestionDecisionTest(unittest.TestCase):
             candidates=["문서명", "컬럼명"],
         )
         self.assertEqual(decision.operations, ())
+        self.assertEqual(decision.requests, ())
         self.assertEqual(decision.candidates, ("문서명", "컬럼명"))
 
     def test_unknown_fields_are_rejected(self):

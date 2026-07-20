@@ -155,6 +155,67 @@ class QueryPlannerAsyncTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(plan.filter_logic, "all")
 
+    async def test_numeric_filter_is_corrected_only_from_exact_source_text(self):
+        llm = FakeLLM(
+            json.dumps(
+                _ready_payload(
+                    filters=[
+                        {
+                            "column": "기수",
+                            "operator": "gte",
+                            "value": 49,
+                            "source_text": "49기 이상",
+                        },
+                        {
+                            "column": "출연금액",
+                            "operator": "gt",
+                            "value": 200_000,
+                            "source_text": "200만원 이상",
+                        },
+                    ],
+                ),
+                ensure_ascii=False,
+            )
+        )
+
+        plan = await generate_query_plan(
+            "전체 중 49기 이상에서 200만원 이상 낸 사람 알려줘",
+            schema='데이터프레임: df0\n컬럼: "기수", "출연금액"',
+            llm=llm,
+        )
+
+        self.assertEqual(plan.filters[0].operator, "gte")
+        self.assertEqual(plan.filters[0].value, 49)
+        self.assertEqual(plan.filters[1].operator, "gte")
+        self.assertEqual(plan.filters[1].value, "200만원")
+        self.assertEqual(plan.filters[1].source_text, "200만원 이상")
+
+    async def test_filter_is_not_corrected_from_text_absent_in_question(self):
+        llm = FakeLLM(
+            json.dumps(
+                _ready_payload(
+                    filters=[
+                        {
+                            "column": "출연금액",
+                            "operator": "gt",
+                            "value": 200_000,
+                            "source_text": "20만원 초과",
+                        }
+                    ],
+                ),
+                ensure_ascii=False,
+            )
+        )
+
+        plan = await generate_query_plan(
+            "200만원 이상 낸 사람 알려줘",
+            schema='데이터프레임: df0\n컬럼: "출연금액"',
+            llm=llm,
+        )
+
+        self.assertEqual(plan.filters[0].operator, "gt")
+        self.assertEqual(plan.filters[0].value, 200_000)
+
     async def test_explicit_or_preserves_any_filter_logic(self):
         llm = FakeLLM(
             json.dumps(
@@ -194,6 +255,8 @@ class QueryPlannerAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("필요한 필드만 추가", llm.prompts[0])
         self.assertIn("contains는 문자열 컬럼에만", llm.prompts[0])
         self.assertIn("직접 환산하거나 자릿수를 바꾸지 말고", llm.prompts[0])
+        self.assertIn("모든 필터의 source_text", llm.prompts[0])
+        self.assertIn("가장 짧은 원문 구절", llm.prompts[0])
         self.assertIn('"이상"은 gte', llm.prompts[0])
         self.assertIn("임의로 연도를 만들지 말고 clarification", llm.prompts[0])
         self.assertNotIn('"confidence"', llm.prompts[0])
