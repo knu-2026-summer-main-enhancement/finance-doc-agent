@@ -1,0 +1,242 @@
+from __future__ import annotations
+
+import unittest
+from unittest.mock import AsyncMock, Mock, patch
+
+import pandas as pd
+
+from datastore.state import _df_namespace, _df_sources
+from pandas_engine.plan_validator import validate_query_plan
+from pandas_engine.query_plan import QueryPlan
+from rag.pandas_rag import _answer_pandas
+from rag.query_planner import QueryPlannerError
+from rag.question_analyzer import QuestionAnalysis
+
+
+class QueryPlanPandasIntegrationTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        _df_namespace.clear()
+        _df_sources.clear()
+        self.df = pd.DataFrame(
+            {
+                "항목": ["A", "B", "C"],
+                "상태": ["완료", "대기", "완료"],
+                "점수": [10, 20, 30],
+            }
+        )
+        self.df.attrs["semantic_schema"] = {
+            "columns": {
+                "항목": {"data_type": "string"},
+                "상태": {"data_type": "string"},
+                "점수": {"data_type": "number"},
+            }
+        }
+        _df_namespace["df0"] = self.df
+        _df_sources["df0"] = "업무목록.xlsx"
+        self.analysis = QuestionAnalysis(question="복합 조건 조회")
+
+    def tearDown(self):
+        _df_namespace.clear()
+        _df_sources.clear()
+
+    def _validation(self, payload: dict):
+        plan = QueryPlan.model_validate(payload)
+        return validate_query_plan(plan)
+
+    def _direct_misses(self):
+        return patch.multiple(
+            "rag.pandas_rag",
+            _search_name_pandas=lambda question: (None, [], False),
+            _query_pandas_direct=lambda *args, **kwargs: (None, []),
+            _has_explicit_structured_filter=lambda question: False,
+        )
+
+    async def test_ready_plan_executes_and_formats_evidence(self):
+        validation = self._validation(
+            {
+                "status": "ready",
+                "dataframe": "df0",
+                "operation": "list",
+                "filters": [
+                    {"column": "상태", "operator": "eq", "value": "완료"}
+                ],
+                "select": ["항목", "상태"],
+            }
+        )
+
+        with self._direct_misses(), patch(
+            "rag.pandas_rag.generate_validated_query_plan",
+            new=AsyncMock(return_value=validation),
+        ):
+            answer, sources, route = await _answer_pandas(
+                "복합 조건 조회",
+                analysis=self.analysis,
+            )
+
+        self.assertEqual(route, "pandas")
+        self.assertEqual(sources, ["업무목록.xlsx"])
+        self.assertIn("총 2건", answer)
+        self.assertIn("조회 근거:", answer)
+        self.assertIn("상태 = 완료", answer)
+        self.assertIn("원본 3개", answer)
+
+    async def test_numeric_comparison_skips_masked_name_guessing(self):
+        validation = self._validation(
+            {
+                "status": "ready",
+                "dataframe": "df0",
+                "operation": "list",
+                "filters": [
+                    {"column": "점수", "operator": "gte", "value": 20}
+                ],
+                "select": ["항목", "점수"],
+            }
+        )
+        name_search = Mock(
+            side_effect=AssertionError("숫자 비교 질문에서 이름 유사 검색이 호출됨")
+        )
+
+        with patch(
+            "rag.pandas_rag._search_name_pandas",
+            new=name_search,
+        ), patch(
+            "rag.pandas_rag._query_pandas_direct",
+            new=lambda *args, **kwargs: (None, []),
+        ), patch(
+            "rag.pandas_rag._has_explicit_structured_filter",
+            new=lambda question: False,
+        ), patch(
+            "rag.pandas_rag.generate_validated_query_plan",
+            new=AsyncMock(return_value=validation),
+        ):
+            answer, sources, route = await _answer_pandas(
+                "점수가 20점 이상인 항목",
+                analysis=self.analysis,
+            )
+
+        self.assertEqual(route, "pandas")
+        self.assertEqual(sources, ["업무목록.xlsx"])
+        self.assertIn("총 2건", answer)
+        name_search.assert_not_called()
+
+    async def test_valid_empty_result_does_not_fall_back_to_vector(self):
+        validation = self._validation(
+            {
+                "status": "ready",
+                "dataframe": "df0",
+                "operation": "list",
+                "filters": [
+                    {"column": "상태", "operator": "eq", "value": "없음"}
+                ],
+                "select": ["항목"],
+            }
+        )
+        vector = AsyncMock(return_value=("잘못된 폴백", [], "vector"))
+
+        with self._direct_misses(), patch(
+            "rag.pandas_rag.generate_validated_query_plan",
+            new=AsyncMock(return_value=validation),
+        ), patch("rag.vector._answer_vector", new=vector):
+            answer, sources, route = await _answer_pandas(
+                "복합 조건 조회",
+                analysis=self.analysis,
+            )
+
+        self.assertEqual(route, "pandas")
+        self.assertEqual(sources, ["업무목록.xlsx"])
+        self.assertIn("조회된 데이터가 없습니다.", answer)
+        vector.assert_not_awaited()
+
+    async def test_invalid_plan_fails_closed_without_vector(self):
+        plan = QueryPlan.model_validate(
+            {
+                "status": "ready",
+                "dataframe": "df0",
+                "operation": "list",
+                "select": ["없는컬럼"],
+            }
+        )
+        validation = validate_query_plan(plan)
+        vector = AsyncMock(return_value=("잘못된 폴백", [], "vector"))
+
+        with self._direct_misses(), patch(
+            "rag.pandas_rag.generate_validated_query_plan",
+            new=AsyncMock(return_value=validation),
+        ), patch("rag.vector._answer_vector", new=vector):
+            answer, sources, route = await _answer_pandas(
+                "복합 조건 조회",
+                analysis=self.analysis,
+            )
+
+        self.assertEqual(route, "pandas")
+        self.assertEqual(sources, [])
+        self.assertIn("안전하게 연결하지 못했습니다", answer)
+        vector.assert_not_awaited()
+
+    async def test_clarification_returns_guide_message_without_execution(self):
+        validation = self._validation(
+            {
+                "status": "clarification",
+                "message": "조회할 상태를 선택해 주세요.",
+                "candidates": ["완료", "대기"],
+            }
+        )
+
+        with self._direct_misses(), patch(
+            "rag.pandas_rag.generate_validated_query_plan",
+            new=AsyncMock(return_value=validation),
+        ):
+            answer, sources, route = await _answer_pandas(
+                "복합 조건 조회",
+                analysis=self.analysis,
+            )
+
+        self.assertEqual(route, "pandas")
+        self.assertEqual(sources, [])
+        self.assertIn("조회할 상태를 선택", answer)
+        self.assertIn("완료, 대기", answer)
+
+    async def test_not_applicable_is_the_only_plan_status_using_vector(self):
+        validation = self._validation(
+            {
+                "status": "not_applicable",
+                "message": "문서 본문의 설명 검색이 필요합니다.",
+            }
+        )
+        vector = AsyncMock(return_value=("문서 근거 답변", ["업무목록.xlsx"], "vector"))
+
+        with self._direct_misses(), patch(
+            "rag.pandas_rag.generate_validated_query_plan",
+            new=AsyncMock(return_value=validation),
+        ), patch("rag.vector._answer_vector", new=vector):
+            answer, sources, route = await _answer_pandas(
+                "복합 조건 조회",
+                analysis=self.analysis,
+            )
+
+        self.assertEqual((answer, sources, route), (
+            "문서 근거 답변",
+            ["업무목록.xlsx"],
+            "vector",
+        ))
+        vector.assert_awaited_once()
+
+    async def test_planner_failure_returns_safe_message(self):
+        planner = AsyncMock(side_effect=QueryPlannerError("잘못된 JSON"))
+
+        with self._direct_misses(), patch(
+            "rag.pandas_rag.generate_validated_query_plan",
+            new=planner,
+        ):
+            answer, sources, route = await _answer_pandas(
+                "복합 조건 조회",
+                analysis=self.analysis,
+            )
+
+        self.assertEqual(route, "pandas")
+        self.assertEqual(sources, [])
+        self.assertIn("안전한 표 조회 계획으로 변환하지 못했습니다", answer)
+
+
+if __name__ == "__main__":
+    unittest.main()

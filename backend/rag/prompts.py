@@ -47,33 +47,126 @@ _DOC_EXPLAIN_RAG_TEMPLATE = """\
 질문: {question}
 답변:"""
 
-_PANDAS_GEN_TEMPLATE = """\
-당신은 pandas 전문가입니다. 아래 스키마와 힌트를 보고 질문에 답하는 Python 코드를 작성하세요.
-import 없이 변수명(df0, df1 ...)을 바로 사용하세요. 최종 결과는 반드시 result 변수에 저장하세요.
-마크다운 코드 블록 없이 순수 Python 코드만 출력하세요.
+_QUERY_PLAN_TEMPLATE = """\
+당신은 DataFrame 조회 계획을 만드는 JSON Planner입니다.
+사용자의 질문과 아래 실제 DataFrame 스키마를 분석해 JSON 객체 하나만 반환하세요.
+Python 코드, Markdown 코드 블록, 설명문은 절대 출력하지 마세요.
 
-★ 핵심 규칙:
-- "데이터 위치 힌트"에 여러 옵션이 있으면 파일명을 보고 질문과 가장 관련 있는 DataFrame을 선택하세요.
-- 힌트가 없을 때는 스키마의 파일명을 참고해 질문에 맞는 DataFrame을 직접 선택하세요.
-- 컬럼명은 반드시 스키마의 "컬럼(이 이름만 사용):" 줄에서 가져오세요. 없는 컬럼명은 만들지 마세요.
-- "실제값:" 줄은 데이터 값이지 컬럼명이 아닙니다.
+핵심 규칙:
+- 데이터 조회나 계산은 직접 수행하지 말고 계획만 작성하세요.
+- dataframe과 모든 컬럼명은 아래 스키마에 실제로 표시된 이름만 정확히 사용하세요.
+- 스키마에 없는 컬럼, 값, 조건을 추측하거나 만들어내지 마세요.
+- 질문의 조건을 완화하거나 비슷한 조건으로 바꾸지 마세요.
+- 한 문서로 정할 수 없거나 대상 컬럼이 여러 개라면 status를 clarification으로 지정하세요.
+- 표 데이터로 답할 수 없는 설명·이유·절차 질문은 status를 not_applicable로 지정하세요.
+- 개인정보용 내부 컬럼과 이름이 밑줄로 시작하는 컬럼은 사용하지 마세요.
 
-코딩 규칙:
-1. 텍스트 검색: df['컬럼명'].str.contains('값', na=False)
-2. 인원수: result = int(len(filtered_df))
-3. 금액 계산: amount = pd.to_numeric(df['컬럼명'].astype(str).str.replace(',', '', regex=False), errors='coerce')
-   합계 예시: result = float(amount.sum())
-4. 명단 조회: result = filtered_df.to_dict('records')
-5. 여러 DataFrame 합치기: pd.concat([df0, df1], ignore_index=True)
-6. 대소문자 무시: str.contains('값', case=False, na=False)
-7. 숫자 비교: pd.to_numeric(df['컬럼명'].astype(str).str.replace(',', '', regex=False), errors='coerce') >= 값
+연산 선택:
+- 일치하는 행, 대상, 명단 또는 각 항목의 내용을 요청하면 list를 사용하세요.
+- 오직 개수나 몇 개인지를 요청할 때만 count를 사용하세요.
+- 합계, 평균, 중앙값, 최빈값은 각각 sum, mean, median, mode를 사용하세요.
+- 가장 크거나 작은 값 또는 해당 행을 요청하면 max, min을 사용하세요.
 
-데이터프레임 스키마:
+JSON 규격:
+1. 실행 가능한 경우의 공통 필드:
+{{
+  "status": "ready",
+  "dataframe": "실제 DataFrame 별칭",
+  "operation": "list|count|sum|mean|median|mode|min|max",
+  "filters": [
+    {{
+      "column": "실제 컬럼명",
+      "operator": "eq|ne|gt|gte|lt|lte|contains|in|between|is_null|not_null",
+      "value": "연산자에 맞는 값",
+      "case_sensitive": false
+    }}
+  ],
+  "filter_logic": "all|any"
+}}
+
+공통 필드 외에는 선택한 연산에 필요한 필드만 추가하세요:
+- list: select, 필요한 경우에만 sort, distinct_by, limit
+- count: 필요한 경우에만 target 또는 distinct_by. result_mode와 select는 넣지 않음
+- sum, mean, median, mode: target만 추가. result_mode와 select는 넣지 않음
+- min, max 값 반환: target만 추가
+- min, max 행 반환: target, "result_mode": "records", select, 필요한 경우 top_n과 sort
+- 사용하지 않는 선택 필드를 null이나 빈 배열로 채우지 말고 생략하세요.
+
+2. 추가 확인이 필요한 경우:
+{{
+  "status": "clarification",
+  "message": "사용자에게 확인할 내용",
+  "candidates": ["실제 스키마에서 확인된 후보"]
+}}
+
+3. 표 조회로 처리할 수 없는 경우:
+{{
+  "status": "not_applicable",
+  "message": "표 계산이 아닌 문서 내용 검색이 필요한 이유",
+  "candidates": []
+}}
+
+연산 규칙:
+- list는 target 없이 행을 반환합니다.
+- count는 target 없이 전체 행 수를 세거나, target을 지정해 값이 있는 행을 셉니다.
+- sum, mean, median, mode는 target이 필수이며 단일 값을 반환합니다.
+- min, max는 값만 필요하면 result_mode를 생략하고, 해당 행이 필요하면 result_mode=records를 사용하세요.
+- "가장 큰/작은 항목"처럼 극값 자체를 물을 때 min 또는 max를 사용하세요.
+- "큰/작은 순서대로 N개", "금액순 N개"처럼 정렬된 목록을 요구하면
+  list에 sort와 limit=N을 사용하세요.
+- 정렬 목록 질문에 별도의 비교 조건이 없다면 filters는 비워 두세요.
+  질문의 N은 반환 개수인 limit이며 임의의 금액·숫자 필터로 바꾸지 마세요.
+- sort는 반드시 [{{"column": "실제 컬럼명", "direction": "asc|desc"}}] 형태의
+  JSON 배열로 작성하세요.
+- min, max의 top_n은 명시적인 극값 순위 행을 반환할 때만 사용하세요.
+- 일반 목록 제한은 limit을 사용하세요.
+- between의 value는 정확히 두 값의 배열, in의 value는 하나 이상의 값 배열입니다.
+- is_null과 not_null에는 value를 넣지 마세요.
+- 여러 필터는 기본적으로 filter_logic=all입니다.
+- 질문에 "또는", "혹은", "이거나"처럼 하나만 만족해도 된다는 표현이
+  명시된 경우에만 filter_logic=any를 사용하세요.
+
+자료형별 필터 규칙:
+- contains는 문자열 컬럼에만 사용하며 value에는 정규식이 아닌 실제 검색 문자열을 넣으세요.
+- 숫자와 금액 컬럼에는 eq, ne, gt, gte, lt, lte, in, between만 사용하세요.
+- 질문에 나온 숫자와 단위 표현은 직접 환산하거나 자릿수를 바꾸지 말고 그대로 value에 보존하세요.
+- "이상"은 gte, "초과"는 gt, "이하"는 lte, "미만"은 lt를 사용하세요.
+- 날짜 컬럼에는 eq, ne, gt, gte, lt, lte, in, between만 사용하고 값은 YYYY-MM-DD 형식으로 작성하세요.
+- 날짜의 월 범위는 해당 월의 시작일과 마지막 날을 between의 두 값으로 표현하세요.
+- 질문이나 스키마에서 연도를 확정할 수 없다면 임의로 연도를 만들지 말고 clarification을 반환하세요.
+
+실제 DataFrame 스키마:
 {schema}
 
-{hints}
-질문: {question}
-코드:"""
+사용자 질문:
+{question}
+
+JSON:"""
+
+_QUERY_PLAN_REPAIR_TEMPLATE = """\
+이전 응답은 QueryPlan JSON 규격을 통과하지 못했습니다.
+질문을 다시 해석하거나 조회 조건을 추가·삭제·완화하지 말고 JSON 문법과 규격만 수정하세요.
+Python 코드, Markdown, 설명문 없이 수정된 JSON 객체 하나만 반환하세요.
+
+최소 수정 규칙:
+- 허용 상태: ready, clarification, not_applicable
+- 허용 연산: list, count, sum, mean, median, mode, min, max
+- list는 target 없이 행 반환
+- count, sum, mean, median, mode는 result_mode와 select를 사용하지 않음
+- sum, mean, median, mode, min, max는 target 필수
+- min, max에서 행 반환이 필요할 때만 result_mode=records 사용
+- 이전 응답에 없던 dataframe, 컬럼, 필터 값은 새로 만들지 않음
+
+사용자 질문:
+{question}
+
+검증 오류:
+{error}
+
+이전 응답:
+{response}
+
+수정된 JSON:"""
 
 RAG_PROMPT = PromptTemplate.from_template(_RAG_TEMPLATE)
 DOC_EXPLAIN_RAG_PROMPT = PromptTemplate.from_template(_DOC_EXPLAIN_RAG_TEMPLATE)

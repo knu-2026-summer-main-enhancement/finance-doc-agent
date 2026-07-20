@@ -13,6 +13,7 @@ from pandas_engine.aggregation import (
     resolve_amount_column,
 )
 from pandas_engine.money import money_values
+from pandas_engine.query_executor import QueryExecutionResult
 from utils.table_parser import IDENTITY_INTERNAL_COLS
 
 _INTERNAL_COLS = set(IDENTITY_INTERNAL_COLS)
@@ -272,6 +273,108 @@ def _format_scalar_result(result: object, question: str) -> str:
             return f"금액은 {result}입니다."
         return result
     return str(result)
+
+
+_PLAN_OPERATOR_LABELS = {
+    "eq": "=",
+    "ne": "≠",
+    "gt": ">",
+    "gte": "≥",
+    "lt": "<",
+    "lte": "≤",
+    "contains": "포함",
+    "in": "목록 포함",
+    "between": "범위",
+    "is_null": "값 없음",
+    "not_null": "값 있음",
+}
+
+
+def _format_plan_value(value: object) -> str:
+    if isinstance(value, tuple):
+        return " ~ ".join(str(item) for item in value)
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _format_query_plan_evidence(result: QueryExecutionResult) -> str:
+    evidence = result.evidence
+    lines = ["조회 근거:", f"- 문서: {evidence.source_file}"]
+    if evidence.filters:
+        conditions = []
+        for condition in evidence.filters:
+            operator = _PLAN_OPERATOR_LABELS.get(condition.operator, condition.operator)
+            value = _format_plan_value(condition.value)
+            conditions.append(
+                f"{condition.column} {operator}" + (f" {value}" if value else "")
+            )
+        connector = " AND " if evidence.filter_logic == "all" else " OR "
+        lines.append(f"- 적용 조건: {connector.join(conditions)}")
+    else:
+        lines.append("- 적용 조건: 없음")
+    if evidence.sort:
+        sort_text = ", ".join(
+            f"{condition.column} {'오름차순' if condition.direction == 'asc' else '내림차순'}"
+            for condition in evidence.sort
+        )
+        lines.append(f"- 정렬: {sort_text}")
+    if evidence.distinct_by:
+        lines.append(f"- 중복 제거 기준: {', '.join(evidence.distinct_by)}")
+    if evidence.limit is not None:
+        lines.append(f"- 반환 제한: {evidence.limit:,}개")
+    elif evidence.top_n is not None:
+        lines.append(f"- 순위 제한: 상위 {evidence.top_n:,}개")
+    lines.append(
+        f"- 행 수: 원본 {evidence.source_rows:,}개 → "
+        f"조건 통과 {evidence.filtered_rows:,}개 → 계산 대상 {result.matched_rows:,}개"
+    )
+    if result.target:
+        lines.append(f"- 대상 컬럼: {result.target}")
+    if result.excluded_rows:
+        lines.append(f"- 형식 오류·빈 값 제외: {result.excluded_rows:,}개")
+    return "\n".join(lines)
+
+
+def _format_query_execution_result(
+    result: QueryExecutionResult,
+    question: str,
+) -> str:
+    """Format deterministic QueryPlan output without another LLM call."""
+
+    if isinstance(result.value, pd.DataFrame):
+        answer = _format_dataframe_result_for_question(result.value, question)
+    elif result.operation == "count":
+        answer = f"총 {int(result.value or 0):,}건입니다."
+    elif result.operation == "mode":
+        values = result.value if isinstance(result.value, list) else []
+        if not values:
+            answer = "조회된 데이터가 없습니다."
+        else:
+            suffix = "원" if result.target_data_type == "money" else ""
+            joined = ", ".join(f"{_format_number(value)}{suffix}" for value in values)
+            answer = f"{result.target or '대상 컬럼'} 최빈값은 {joined}입니다."
+    elif result.value is None:
+        answer = "조회된 데이터가 없습니다."
+    else:
+        operation_label = {
+            "sum": "합계",
+            "mean": "평균",
+            "median": "중앙값",
+            "min": "최솟값",
+            "max": "최댓값",
+        }.get(result.operation, result.operation)
+        value = result.value
+        if isinstance(value, pd.Timestamp):
+            formatted_value = value.strftime("%Y-%m-%d")
+        else:
+            formatted_value = _format_number(value)
+        suffix = "원" if result.target_data_type == "money" else ""
+        answer = (
+            f"{result.target or '대상 컬럼'} {operation_label}은 "
+            f"{formatted_value}{suffix}입니다."
+        )
+    return answer + "\n\n" + _format_query_plan_evidence(result)
 
 # ---------------------------------------------------------------------------
 # 구조적 보강: 금액/기관/마스킹 답변 템플릿 일반화
