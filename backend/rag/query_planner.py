@@ -47,6 +47,94 @@ class QueryPlannerError(RuntimeError):
         self.responses = responses
 
 
+def _schema_column_names(schema: str) -> tuple[str, ...]:
+    columns: list[str] = []
+    for line in schema.splitlines():
+        if "컬럼(이 이름만 사용)" not in line and not line.strip().startswith("컬럼:"):
+            continue
+        for column in re.findall(r'"([^"]+)"', line):
+            if column not in columns:
+                columns.append(column)
+    return tuple(columns)
+
+
+def _lookup_field_candidates(question: str, schema: str) -> tuple[str, ...]:
+    return tuple(
+        column
+        for column in _schema_column_names(schema)
+        if column in question and not column.startswith("_")
+    )
+
+
+def _operation_hint_text(
+    operation_hint: str | None,
+    *,
+    question: str = "",
+    schema: str = "",
+) -> str:
+    if operation_hint == "lookup_field":
+        text = (
+            "lookup_field: 특정 대상의 금액이 아닌 컬럼값 조회. "
+            "list 연산으로 대상을 필터링하고 요청 컬럼을 선택"
+        )
+        candidates = _lookup_field_candidates(question, schema)
+        if candidates:
+            text += ". 질문과 실제 스키마에 함께 존재하는 조회 컬럼: " + ", ".join(candidates)
+        return text
+    if operation_hint == "structured_query":
+        return "structured_query: 범용 표 조건·정렬·선택 조회"
+    return "없음: 질문과 스키마만으로 계획 결정"
+
+
+def _validate_operation_hint_contract(
+    plan: QueryPlan,
+    operation_hint: str | None,
+) -> QueryPlan:
+    """Ensure a specialized classifier decision survives plan generation."""
+
+    if operation_hint != "lookup_field":
+        return plan
+    if plan.status != "ready":
+        raise ValueError("lookup_field requires an executable ready plan")
+    if plan.operation != "list":
+        raise ValueError("lookup_field requires operation=list")
+    if not plan.filters:
+        raise ValueError("lookup_field requires a target-identifying filter")
+    if not plan.select:
+        raise ValueError("lookup_field requires at least one selected field")
+    return plan
+
+
+def _align_plan_with_operation_hint(
+    plan: QueryPlan,
+    operation_hint: str | None,
+    question: str,
+    schema: str,
+) -> QueryPlan:
+    """Fill only an unambiguous field selection grounded in question/schema."""
+
+    if (
+        operation_hint == "lookup_field"
+        and plan.status == "ready"
+        and plan.operation == "list"
+        and plan.filters
+        and not plan.select
+    ):
+        filter_columns = {condition.column for condition in plan.filters}
+        candidates = tuple(
+            column
+            for column in _lookup_field_candidates(question, schema)
+            if column not in filter_columns
+        )
+        if len(candidates) == 1:
+            logger.info(
+                "[QUERY_PLAN] lookup_field 조회 컬럼 안전 보완 | column=%s",
+                candidates[0],
+            )
+            plan = plan.model_copy(update={"select": candidates})
+    return _validate_operation_hint_contract(plan, operation_hint)
+
+
 def _response_text(response: Any) -> str:
     if isinstance(response, str):
         return response.strip()
@@ -154,6 +242,7 @@ async def generate_query_plan(
     *,
     schema: str | None = None,
     llm: Any | None = None,
+    operation_hint: str | None = None,
 ) -> QueryPlan:
     """Generate a QueryPlan and retry once for JSON/schema repair only."""
 
@@ -169,6 +258,11 @@ async def generate_query_plan(
     original_prompt = _QUERY_PLAN_TEMPLATE.format(
         schema=resolved_schema or "(조회 가능한 DataFrame 없음)",
         question=clean_question,
+        operation_hint=_operation_hint_text(
+            operation_hint,
+            question=clean_question,
+            schema=resolved_schema,
+        ),
     )
     model = llm or get_llm_code()
     responses: list[str] = []
@@ -177,9 +271,14 @@ async def generate_query_plan(
     raw = await model.ainvoke(original_prompt)
     responses.append(_response_text(raw))
     try:
-        plan = _align_plan_with_question(
-            parse_query_plan_response(raw),
+        plan = _align_plan_with_operation_hint(
+            _align_plan_with_question(
+                parse_query_plan_response(raw),
+                clean_question,
+            ),
+            operation_hint,
             clean_question,
+            resolved_schema,
         )
         logger.info(
             "[QUERY_PLAN] 생성 성공 | status=%s operation=%s dataframe=%s",
@@ -199,13 +298,23 @@ async def generate_query_plan(
         error=first_error_message,
         response=responses[0][:3000],
         question=clean_question,
+        operation_hint=_operation_hint_text(
+            operation_hint,
+            question=clean_question,
+            schema=resolved_schema,
+        ),
     )
     repaired = await model.ainvoke(repair_prompt)
     responses.append(_response_text(repaired))
     try:
-        plan = _align_plan_with_question(
-            parse_query_plan_response(repaired),
+        plan = _align_plan_with_operation_hint(
+            _align_plan_with_question(
+                parse_query_plan_response(repaired),
+                clean_question,
+            ),
+            operation_hint,
             clean_question,
+            resolved_schema,
         )
         logger.info(
             "[QUERY_PLAN] 형식 수정 성공 | status=%s operation=%s dataframe=%s",
@@ -233,6 +342,7 @@ async def generate_validated_query_plan(
     dataframes: Mapping[str, pd.DataFrame] | None = None,
     source_by_alias: Mapping[str, str] | None = None,
     explicit_dataframe_aliases: set[str] | frozenset[str] | None = None,
+    operation_hint: str | None = None,
 ) -> PlanValidationResult:
     """Generate a plan and immediately enforce runtime DataFrame validation."""
 
@@ -240,6 +350,7 @@ async def generate_validated_query_plan(
         question,
         schema=schema,
         llm=llm,
+        operation_hint=operation_hint,
     )
     if explicit_dataframe_aliases is None and dataframes is None:
         # 파일명·표시 레이블이 질문에 직접 나타난 경우에만 여러 문서 중 하나를

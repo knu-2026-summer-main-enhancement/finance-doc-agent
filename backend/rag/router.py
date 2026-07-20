@@ -20,6 +20,7 @@ _ENGINE_BY_OPERATION = {
     "max_amount": "PANDAS",
     "min_amount": "PANDAS",
     "lookup_amount": "PANDAS",
+    "lookup_field": "PANDAS",
     "structured_query": "PANDAS",
     "document_reason": "VECTOR",
     "document_purpose": "VECTOR",
@@ -61,7 +62,11 @@ def pandas_strategy_for_operations(
 
     if route_operations(operations) != "PANDAS":
         return None
-    return "QUERY_PLAN" if operations[0] == "structured_query" else "DIRECT"
+    return (
+        "QUERY_PLAN"
+        if operations[0] in {"lookup_field", "structured_query"}
+        else "DIRECT"
+    )
 
 
 def required_engines(analysis: QuestionAnalysis) -> list[str]:

@@ -88,6 +88,69 @@ class QueryPlannerParsingTest(unittest.TestCase):
 
 
 class QueryPlannerAsyncTest(unittest.IsolatedAsyncioTestCase):
+    async def test_lookup_field_completes_one_exact_schema_column(self):
+        llm = FakeLLM(
+            json.dumps(
+                _ready_payload(
+                    filters=[
+                        {
+                            "column": "성명",
+                            "operator": "eq",
+                            "value": "백서연",
+                            "source_text": "백서연",
+                        }
+                    ],
+                    select=[],
+                ),
+                ensure_ascii=False,
+            )
+        )
+
+        plan = await generate_query_plan(
+            "백서연 학과 알려줘",
+            schema='데이터프레임: df0\n컬럼: "성명", "학과", "학년"',
+            llm=llm,
+            operation_hint="lookup_field",
+        )
+
+        self.assertEqual(plan.select, ("학과",))
+        self.assertEqual(len(llm.prompts), 1)
+
+    async def test_lookup_field_hint_is_preserved_and_validated(self):
+        invalid = json.dumps(
+            _ready_payload(operation="count", select=[]),
+            ensure_ascii=False,
+        )
+        repaired = json.dumps(
+            _ready_payload(
+                filters=[
+                    {
+                        "column": "성명",
+                        "operator": "eq",
+                        "value": "정유진",
+                        "source_text": "정유진",
+                    }
+                ],
+                select=["성명", "학년"],
+            ),
+            ensure_ascii=False,
+        )
+        llm = FakeLLM(invalid, repaired)
+
+        plan = await generate_query_plan(
+            "정유진 몇학년",
+            schema='데이터프레임: df0\n컬럼: "성명", "학년"',
+            llm=llm,
+            operation_hint="lookup_field",
+        )
+
+        self.assertEqual(plan.operation, "list")
+        self.assertEqual(plan.select, ("성명", "학년"))
+        self.assertEqual(plan.filters[0].value, "정유진")
+        self.assertEqual(len(llm.prompts), 2)
+        self.assertIn("lookup_field", llm.prompts[0])
+        self.assertIn("lookup_field", llm.prompts[1])
+
     async def test_ranked_list_drops_filter_not_requested_by_user(self):
         llm = FakeLLM(
             json.dumps(
@@ -252,6 +315,7 @@ class QueryPlannerAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"항목명", "상태"', llm.prompts[0])
         self.assertIn("Python 코드", llm.prompts[0])
         self.assertIn("오직 개수나 몇 개인지를 요청할 때만 count", llm.prompts[0])
+        self.assertIn("특정 대상의 특정 컬럼값", llm.prompts[0])
         self.assertIn("필요한 필드만 추가", llm.prompts[0])
         self.assertIn("contains는 문자열 컬럼에만", llm.prompts[0])
         self.assertIn("직접 환산하거나 자릿수를 바꾸지 말고", llm.prompts[0])

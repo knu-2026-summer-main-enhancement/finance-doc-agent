@@ -64,6 +64,13 @@ class QuestionDecisionTest(unittest.TestCase):
             ("sum_amount", "document_criteria"),
         )
 
+        lookup = QuestionDecision(
+            status="ready",
+            operations=["lookup_field"],
+            reason="특정 대상의 일반 컬럼값 조회",
+        )
+        self.assertEqual(lookup.operations, ("lookup_field",))
+
     def test_document_operation_requires_retrieval_query(self):
         with self.assertRaises(ValidationError):
             QuestionDecision(

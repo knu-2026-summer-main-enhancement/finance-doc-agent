@@ -45,12 +45,20 @@ async def _answer_query_plan(
     *,
     allow_vector_fallback: bool,
     analysis: QuestionAnalysis | None = None,
+    operation_hint: str | None = None,
 ) -> tuple[str, list[str], str]:
     """Generate, validate, and execute the generic structured-query plan."""
 
-    logger.info("[PANDAS] QueryPlan 생성 중 | question=%s", question[:50])
+    logger.info(
+        "[PANDAS] QueryPlan 생성 중 | hint=%s question=%s",
+        operation_hint or "none",
+        question[:50],
+    )
     try:
-        validation = await generate_validated_query_plan(question)
+        validation = await generate_validated_query_plan(
+            question,
+            operation_hint=operation_hint,
+        )
     except QueryPlannerError as exc:
         logger.error("[PANDAS] QueryPlan 생성 실패 | err=%s", exc)
         return (
@@ -124,6 +132,7 @@ async def _answer_pandas(
     allow_vector_fallback: bool = True,
     analysis: QuestionAnalysis | None = None,
     strategy: Literal["AUTO", "DIRECT", "QUERY_PLAN"] = "AUTO",
+    operation_hint: str | None = None,
 ) -> tuple[str, list[str], str]:
     scoped_dataframes = scoped_mapping(_df_namespace, _df_sources)
     if not scoped_dataframes:
@@ -164,6 +173,7 @@ async def _answer_pandas(
             question,
             allow_vector_fallback=allow_vector_fallback,
             analysis=analysis,
+            operation_hint=operation_hint,
         )
 
     analysis = analysis or analyze_question(question)
@@ -249,4 +259,5 @@ async def _answer_pandas(
         question,
         allow_vector_fallback=allow_vector_fallback,
         analysis=analysis,
+        operation_hint=operation_hint,
     )

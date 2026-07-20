@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +21,13 @@ from rag.router import (
 
 
 logger = logging.getLogger("uvicorn.error")
+
+_EXPLICIT_DOCUMENT_INVENTORY = re.compile(
+    r"(?:파일\s*(?:목록|리스트)|"
+    r"(?:적재|업로드|등록|저장)(?:된|한)?\s*(?:문서|파일|목록)|"
+    r"(?:문서|파일)\s*(?:목록|리스트)|"
+    r"(?:무슨|어떤)\s*(?:문서|파일))",
+)
 
 
 class QuestionEngineError(RuntimeError):
@@ -144,6 +152,50 @@ def _validate_request_evidence(
     return decision
 
 
+def _align_document_inventory_operation(
+    decision: QuestionDecision,
+    question: str,
+) -> QuestionDecision:
+    """Reserve list_documents for explicit file/document inventory requests."""
+
+    if decision.status != "ready" or not decision.requests:
+        return decision
+
+    explicit_inventory = bool(_EXPLICIT_DOCUMENT_INVENTORY.search(question))
+    normalized_requests: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    changed = False
+
+    for request in decision.requests:
+        operation = request.operation
+        if operation == "list_documents" and not explicit_inventory:
+            operation = "list_records"
+            changed = True
+        key = (request.source_text, operation)
+        if key in seen:
+            changed = True
+            continue
+        seen.add(key)
+        normalized_requests.append(
+            {
+                "source_text": request.source_text,
+                "operation": operation,
+            }
+        )
+
+    if not changed:
+        return decision
+
+    payload = decision.model_dump(mode="python")
+    payload["requests"] = normalized_requests
+    payload.pop("operations", None)
+    logger.warning(
+        "[QUESTION_ENGINE] 문서 목록 operation 계약 보정 | question=%s",
+        question[:80],
+    )
+    return QuestionDecision.model_validate(payload)
+
+
 def _validation_message(error: Exception) -> str:
     if isinstance(error, ValidationError):
         parts = []
@@ -177,10 +229,13 @@ async def decide_question(
     raw = await model.ainvoke(prompt)
     responses.append(_response_text(raw))
     try:
-        return _validate_request_evidence(
-            parse_question_decision(
-                raw,
-                fallback_retrieval_query=clean_question,
+        return _align_document_inventory_operation(
+            _validate_request_evidence(
+                parse_question_decision(
+                    raw,
+                    fallback_retrieval_query=clean_question,
+                ),
+                clean_question,
             ),
             clean_question,
         )
@@ -199,10 +254,13 @@ async def decide_question(
     repaired = await model.ainvoke(repair_prompt)
     responses.append(_response_text(repaired))
     try:
-        return _validate_request_evidence(
-            parse_question_decision(
-                repaired,
-                fallback_retrieval_query=clean_question,
+        return _align_document_inventory_operation(
+            _validate_request_evidence(
+                parse_question_decision(
+                    repaired,
+                    fallback_retrieval_query=clean_question,
+                ),
+                clean_question,
             ),
             clean_question,
         )

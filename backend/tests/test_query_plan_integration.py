@@ -80,6 +80,36 @@ class QueryPlanPandasIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("상태 = 완료", answer)
         self.assertIn("원본 3개", answer)
 
+    async def test_lookup_field_hint_reaches_query_planner(self):
+        validation = self._validation(
+            {
+                "status": "ready",
+                "dataframe": "df0",
+                "operation": "list",
+                "filters": [
+                    {"column": "항목", "operator": "eq", "value": "A"}
+                ],
+                "select": ["항목", "점수"],
+            }
+        )
+        planner = AsyncMock(return_value=validation)
+
+        with self._direct_misses(), patch(
+            "rag.pandas_rag.generate_validated_query_plan",
+            new=planner,
+        ):
+            answer, _, _ = await _answer_pandas(
+                "A 점수",
+                strategy="QUERY_PLAN",
+                operation_hint="lookup_field",
+            )
+
+        planner.assert_awaited_once_with(
+            "A 점수",
+            operation_hint="lookup_field",
+        )
+        self.assertIn("10", answer)
+
     async def test_numeric_comparison_skips_masked_name_guessing(self):
         validation = self._validation(
             {

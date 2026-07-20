@@ -21,6 +21,7 @@ QuestionOperation = Literal[
     "max_amount",
     "min_amount",
     "lookup_amount",
+    "lookup_field",
     "structured_query",
     "document_reason",
     "document_purpose",

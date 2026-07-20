@@ -74,6 +74,11 @@ class GuardRoutingTest(unittest.TestCase):
             pandas_strategy_for_operations(["structured_query"]),
             "QUERY_PLAN",
         )
+        self.assertEqual(route_operations(["lookup_field"]), "PANDAS")
+        self.assertEqual(
+            pandas_strategy_for_operations(["lookup_field"]),
+            "QUERY_PLAN",
+        )
         self.assertEqual(
             route_operations(["document_criteria"]),
             "VECTOR",

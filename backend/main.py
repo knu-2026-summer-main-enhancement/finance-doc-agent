@@ -377,6 +377,11 @@ async def chat(
                     allow_vector_fallback=not use_llm_engine,
                     analysis=guard_result.analysis,
                     strategy=pandas_strategy or "AUTO",
+                    operation_hint=(
+                        guard_result.operations[0]
+                        if use_llm_engine and len(guard_result.operations) == 1
+                        else None
+                    ),
                 )
             else:
                 answer, sources, actual_route = await _answer_vector(
@@ -441,6 +446,11 @@ async def chat_stream(req: ChatRequest, _: None = Depends(_verify_api_key)):
                         allow_vector_fallback=not use_llm_engine,
                         analysis=guard_result.analysis,
                         strategy=pandas_strategy or "AUTO",
+                        operation_hint=(
+                            guard_result.operations[0]
+                            if use_llm_engine and len(guard_result.operations) == 1
+                            else None
+                        ),
                     )
                     yield answer
                 else:

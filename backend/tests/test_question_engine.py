@@ -136,6 +136,75 @@ class QuestionEngineParsingTest(unittest.TestCase):
 
 
 class QuestionEngineAsyncTest(unittest.IsolatedAsyncioTestCase):
+    async def test_table_list_phrases_cannot_become_document_inventory(self):
+        for question in (
+            "전체목록",
+            "전체 리스트",
+            "표의 전체 목록 보여줘",
+        ):
+            with self.subTest(question=question):
+                payload = {
+                    "status": "ready",
+                    "requests": [
+                        {
+                            "source_text": question,
+                            "operation": "list_documents",
+                        }
+                    ],
+                    "reason": "LLM의 잘못된 문서 목록 분류",
+                }
+                decision = await decide_question(
+                    question,
+                    schema="표 스키마",
+                    llm=FakeLLM(json.dumps(payload, ensure_ascii=False)),
+                )
+
+                self.assertEqual(decision.operations, ("list_records",))
+                self.assertEqual(decision.request_count, 1)
+
+    async def test_duplicate_list_interpretations_collapse_to_table_records(self):
+        payload = {
+            "status": "ready",
+            "requests": [
+                {
+                    "source_text": "전체목록",
+                    "operation": "list_documents",
+                },
+                {
+                    "source_text": "전체목록",
+                    "operation": "list_records",
+                },
+            ],
+            "reason": "두 목록 의미를 중복 생성",
+        }
+        decision = await decide_question(
+            "전체목록",
+            schema="표 스키마",
+            llm=FakeLLM(json.dumps(payload, ensure_ascii=False)),
+        )
+
+        self.assertEqual(decision.operations, ("list_records",))
+        self.assertEqual(decision.request_count, 1)
+
+    async def test_explicit_file_inventory_remains_list_documents(self):
+        payload = {
+            "status": "ready",
+            "requests": [
+                {
+                    "source_text": "현재 적재된 파일 목록",
+                    "operation": "list_documents",
+                }
+            ],
+            "reason": "명시적인 파일 보관 목록",
+        }
+        decision = await decide_question(
+            "현재 적재된 파일 목록",
+            schema="표 스키마",
+            llm=FakeLLM(json.dumps(payload, ensure_ascii=False)),
+        )
+
+        self.assertEqual(decision.operations, ("list_documents",))
+
     async def test_prompt_contains_question_schema_and_operation_meanings(self):
         llm = FakeLLM(json.dumps(_ready_payload(), ensure_ascii=False))
         decision = await decide_question(
@@ -149,10 +218,30 @@ class QuestionEngineAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("학점이 144점인 사람", llm.prompts[0])
         self.assertIn('"취득학점"', llm.prompts[0])
         self.assertIn("structured_query", llm.prompts[0])
+        self.assertIn("lookup_field", llm.prompts[0])
         self.assertIn("document_criteria", llm.prompts[0])
         self.assertIn('"requests"', llm.prompts[0])
         self.assertIn("source_text", llm.prompts[0])
         self.assertNotIn('"route":', llm.prompts[0])
+
+    async def test_lookup_field_decision_uses_query_plan_strategy(self):
+        payload = {
+            "status": "ready",
+            "requests": [
+                {
+                    "source_text": "홍길동 취득학점",
+                    "operation": "lookup_field",
+                }
+            ],
+            "reason": "특정 대상의 일반 컬럼값 조회",
+        }
+        decision = await decide_question(
+            "홍길동 취득학점",
+            schema='컬럼: "이름", "취득학점"',
+            llm=FakeLLM(json.dumps(payload, ensure_ascii=False)),
+        )
+
+        self.assertEqual(decision.operations, ("lookup_field",))
 
     async def test_request_source_text_must_exist_in_original_question(self):
         invalid = {
