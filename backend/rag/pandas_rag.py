@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Literal
 
 import pandas as pd
 
@@ -38,15 +39,92 @@ _NUMERIC_COMPARISON_FILTER = re.compile(
 )
 
 
+async def _answer_query_plan(
+    question: str,
+    *,
+    allow_vector_fallback: bool,
+    analysis: QuestionAnalysis | None = None,
+) -> tuple[str, list[str], str]:
+    """Generate, validate, and execute the generic structured-query plan."""
+
+    logger.info("[PANDAS] QueryPlan 생성 중 | question=%s", question[:50])
+    try:
+        validation = await generate_validated_query_plan(question)
+    except QueryPlannerError as exc:
+        logger.error("[PANDAS] QueryPlan 생성 실패 | err=%s", exc)
+        return (
+            "질문을 안전한 표 조회 계획으로 변환하지 못했습니다. "
+            "조회할 항목과 조건을 조금 더 명확하게 입력해 주세요.",
+            [],
+            "pandas",
+        )
+
+    if validation.status == "clarification":
+        message = validation.plan.message or next(
+            (issue.message for issue in validation.issues if issue.message),
+            "조회할 문서나 항목을 하나로 지정해 주세요.",
+        )
+        if validation.plan.candidates:
+            message += " 후보: " + ", ".join(validation.plan.candidates)
+        logger.info("[PANDAS] QueryPlan 추가 확인 필요 | message=%s", message[:200])
+        return message, [], "pandas"
+
+    if validation.status == "not_applicable":
+        if not allow_vector_fallback:
+            return validation.plan.message or "표 조회로 처리할 수 없는 질문입니다.", [], "pandas"
+        logger.info("[PANDAS→VECTOR] QueryPlan이 문서 내용 검색으로 판정")
+        from rag.vector import _answer_vector
+
+        v_answer, v_sources, _ = await _answer_vector(
+            question,
+            allow_pandas_fallback=False,
+            analysis=analysis,
+        )
+        return v_answer, v_sources, "vector"
+
+    if not validation.is_executable:
+        issue_codes = ", ".join(issue.code for issue in validation.issues)
+        logger.warning("[PANDAS] QueryPlan 검증 실패 | issues=%s", issue_codes)
+        return (
+            "질문을 실제 표의 컬럼과 안전하게 연결하지 못했습니다. "
+            "문서에 표시된 항목명과 조회 조건을 확인해 주세요.",
+            [],
+            "pandas",
+        )
+
+    try:
+        execution = execute_query_plan(validation)
+    except QueryPlanExecutionError as exc:
+        logger.error("[PANDAS] QueryPlan 실행 차단 | err=%s", exc)
+        return "검증된 표 조회 계획을 실행하지 못했습니다.", [], "pandas"
+
+    logger.info(
+        "[PANDAS] QueryPlan 실행 완료 | operation=%s matched=%d source=%s",
+        execution.operation,
+        execution.matched_rows,
+        execution.source_file,
+    )
+    answer = _format_query_execution_result(execution, question)
+    return answer, [execution.source_file], "pandas"
+
+
 async def _answer_pandas(
     question: str,
     allow_vector_fallback: bool = True,
     analysis: QuestionAnalysis | None = None,
+    strategy: Literal["AUTO", "DIRECT", "QUERY_PLAN"] = "AUTO",
 ) -> tuple[str, list[str], str]:
     scoped_dataframes = scoped_mapping(_df_namespace, _df_sources)
     if not scoped_dataframes:
         message = "선택한 문서에서 조회 가능한 표 데이터를 찾을 수 없습니다." if source_scope_active() else "현재 로드된 데이터프레임이 없습니다."
         return message, [], "pandas"
+
+    if strategy == "QUERY_PLAN":
+        return await _answer_query_plan(
+            question,
+            allow_vector_fallback=allow_vector_fallback,
+            analysis=analysis,
+        )
 
     analysis = analysis or analyze_question(question)
 
@@ -127,62 +205,8 @@ async def _answer_pandas(
 
     # 3단계: 검증된 직접 조회로 처리하지 못한 구조화 질문은 Python 코드를
     # 생성하지 않고 제한된 QueryPlan으로 변환한다.
-    logger.info("[PANDAS] QueryPlan 생성 중 | question=%s", question[:50])
-    try:
-        validation = await generate_validated_query_plan(question)
-    except QueryPlannerError as exc:
-        logger.error("[PANDAS] QueryPlan 생성 실패 | err=%s", exc)
-        return (
-            "질문을 안전한 표 조회 계획으로 변환하지 못했습니다. "
-            "조회할 항목과 조건을 조금 더 명확하게 입력해 주세요.",
-            [],
-            "pandas",
-        )
-
-    if validation.status == "clarification":
-        message = validation.plan.message or next(
-            (issue.message for issue in validation.issues if issue.message),
-            "조회할 문서나 항목을 하나로 지정해 주세요.",
-        )
-        if validation.plan.candidates:
-            message += " 후보: " + ", ".join(validation.plan.candidates)
-        logger.info("[PANDAS] QueryPlan 추가 확인 필요 | message=%s", message[:200])
-        return message, [], "pandas"
-
-    if validation.status == "not_applicable":
-        if not allow_vector_fallback:
-            return validation.plan.message or "표 조회로 처리할 수 없는 질문입니다.", [], "pandas"
-        logger.info("[PANDAS→VECTOR] QueryPlan이 문서 내용 검색으로 판정")
-        from rag.vector import _answer_vector
-
-        v_answer, v_sources, _ = await _answer_vector(
-            question,
-            allow_pandas_fallback=False,
-            analysis=analysis,
-        )
-        return v_answer, v_sources, "vector"
-
-    if not validation.is_executable:
-        issue_codes = ", ".join(issue.code for issue in validation.issues)
-        logger.warning("[PANDAS] QueryPlan 검증 실패 | issues=%s", issue_codes)
-        return (
-            "질문을 실제 표의 컬럼과 안전하게 연결하지 못했습니다. "
-            "문서에 표시된 항목명과 조회 조건을 확인해 주세요.",
-            [],
-            "pandas",
-        )
-
-    try:
-        execution = execute_query_plan(validation)
-    except QueryPlanExecutionError as exc:
-        logger.error("[PANDAS] QueryPlan 실행 차단 | err=%s", exc)
-        return "검증된 표 조회 계획을 실행하지 못했습니다.", [], "pandas"
-
-    logger.info(
-        "[PANDAS] QueryPlan 실행 완료 | operation=%s matched=%d source=%s",
-        execution.operation,
-        execution.matched_rows,
-        execution.source_file,
+    return await _answer_query_plan(
+        question,
+        allow_vector_fallback=allow_vector_fallback,
+        analysis=analysis,
     )
-    answer = _format_query_execution_result(execution, question)
-    return answer, [execution.source_file], "pandas"

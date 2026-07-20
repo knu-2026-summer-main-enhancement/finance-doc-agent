@@ -39,10 +39,12 @@ from utils.manifest import get_manifest_status, get_all_manifest_entries, delete
 from core.config import (
     OLLAMA_BASE_URL, OLLAMA_MODEL, EMBED_MODEL,
     CHROMA_HOST, CHROMA_PORT, DATA_FOLDER,
+    QUESTION_ENGINE_MODE,
 )
 from core.security import _verify_api_key, _validate_ingest_path
 from core.llm import get_llm_rag
 from datastore.state import _df_namespace, _df_sources, _load_dataframes
+from datastore.schema import _get_df_schema
 from datastore.scope import document_scope
 from datastore.query import (
     _count_valid_name_rows,
@@ -50,11 +52,20 @@ from datastore.query import (
     _extract_recipient_from_dfs,
     _extract_month_from_source,
 )
-from rag.router import _route
-from rag.guard import check_question
+from rag.router import (
+    _route,
+    pandas_strategy_for_operations,
+    route_operations,
+)
+from rag.guard import check_question, check_question_decision
 from rag.guide import build_guide_response
 from rag.vector import _answer_vector, _stream_vector
 from rag.pandas_rag import _answer_pandas
+from rag.question_engine import (
+    QuestionEngineError,
+    compare_shadow_decision,
+    decide_question,
+)
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -67,6 +78,42 @@ def _route_with_guard(
     if mode == "natural":
         return "VECTOR"
     return _route(question, analysis=guard_result.analysis)
+
+
+def _schedule_shadow_question_engine(
+    background_tasks: BackgroundTasks,
+    question: str,
+    legacy_route: str,
+    legacy_operations: list[str] | tuple[str, ...],
+) -> bool:
+    """Queue an observation-only LLM decision while document scope is active."""
+
+    if QUESTION_ENGINE_MODE != "shadow":
+        return False
+    schema = _get_df_schema()
+    background_tasks.add_task(
+        compare_shadow_decision,
+        question,
+        legacy_route,
+        tuple(legacy_operations),
+        schema,
+    )
+    return True
+
+
+async def _resolve_llm_question(question: str):
+    """Return validated LLM operations, engine, and optional PANDAS strategy."""
+
+    decision = await decide_question(
+        question,
+        schema=_get_df_schema(),
+    )
+    guard_result = check_question_decision(decision)
+    if guard_result.status == "GUIDE":
+        return guard_result, "GUIDE", None
+    route = route_operations(decision.operations)
+    strategy = pandas_strategy_for_operations(decision.operations)
+    return guard_result, route, strategy
 
 
 def _document_list_answer(entries: list[dict]) -> tuple[str, list[str]]:
@@ -177,6 +224,7 @@ def health():
         "llm_model":   OLLAMA_MODEL,
         "embed_model": EMBED_MODEL,
         "dataframes":  len(_df_namespace),
+        "question_engine": QUESTION_ENGINE_MODE,
     }
     try:
         urlopen(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
@@ -257,22 +305,68 @@ def summary(_: None = Depends(_verify_api_key)):
 
 
 @app.post("/chat", response_model=ChatResponse) #답변 하기
-async def chat(req: ChatRequest, _: None = Depends(_verify_api_key)):
+async def chat(
+    req: ChatRequest,
+    background_tasks: BackgroundTasks,
+    _: None = Depends(_verify_api_key),
+):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="question이 비어있습니다.")
     try:
         with document_scope(req.sources) as selected:
             if selected:
                 logger.info("[SCOPE] 선택 문서 | sources=%s", list(selected))
-            guard_result = check_question(req.question)
+            use_llm_engine = (
+                QUESTION_ENGINE_MODE == "llm"
+                and req.mode == "auto"
+            )
+            if use_llm_engine:
+                try:
+                    guard_result, route, pandas_strategy = (
+                        await _resolve_llm_question(req.question)
+                    )
+                except QuestionEngineError as exc:
+                    logger.warning(
+                        "[QUESTION_ENGINE] 실제 분류 실패 | err=%s",
+                        exc,
+                    )
+                    return ChatResponse(
+                        answer=(
+                            "질문의 처리 유형을 안전하게 결정하지 못했습니다. "
+                            "질문을 조금 더 명확하게 입력해 주세요."
+                        ),
+                        source="guide",
+                        sources=[],
+                    )
+            else:
+                guard_result = check_question(req.question)
+                route = _route_with_guard(
+                    req.question,
+                    guard_result,
+                    req.mode,
+                )
+                pandas_strategy = None
+
             if guard_result.status == "GUIDE":
+                _schedule_shadow_question_engine(
+                    background_tasks,
+                    req.question,
+                    "GUIDE",
+                    guard_result.operations,
+                )
                 logger.info("[GUARD] GUIDE | reason=%s", guard_result.reason_code)
                 return ChatResponse(
                     answer=build_guide_response(guard_result),
                     source="guide",
                     sources=[],
                 )
-            route = _route_with_guard(req.question, guard_result, req.mode)
+            if not use_llm_engine:
+                _schedule_shadow_question_engine(
+                    background_tasks,
+                    req.question,
+                    route,
+                    guard_result.operations,
+                )
             logger.info("[ROUTE] %s | mode=%s question=%s", route, req.mode, req.question[:50])
             if route == "DOCUMENTS":
                 answer, sources = _document_list_answer(get_all_manifest_entries())
@@ -280,12 +374,17 @@ async def chat(req: ChatRequest, _: None = Depends(_verify_api_key)):
             elif route == "PANDAS":
                 answer, sources, actual_route = await _answer_pandas(
                     req.question,
+                    allow_vector_fallback=not use_llm_engine,
                     analysis=guard_result.analysis,
+                    strategy=pandas_strategy or "AUTO",
                 )
             else:
                 answer, sources, actual_route = await _answer_vector(
                     req.question,
-                    allow_pandas_fallback=req.mode != "natural",
+                    allow_pandas_fallback=(
+                        req.mode != "natural"
+                        and not use_llm_engine
+                    ),
                     analysis=guard_result.analysis,
                 )
             return ChatResponse(answer=answer, source=actual_route, sources=sources)
@@ -303,16 +402,45 @@ async def chat_stream(req: ChatRequest, _: None = Depends(_verify_api_key)):
     async def generate() -> AsyncIterator[str]:
         try:
             with document_scope(req.sources):
-                guard_result = check_question(req.question)
+                use_llm_engine = (
+                    QUESTION_ENGINE_MODE == "llm"
+                    and req.mode == "auto"
+                )
+                if use_llm_engine:
+                    try:
+                        guard_result, route, pandas_strategy = (
+                            await _resolve_llm_question(req.question)
+                        )
+                    except QuestionEngineError:
+                        yield (
+                            "질문의 처리 유형을 안전하게 결정하지 못했습니다. "
+                            "질문을 조금 더 명확하게 입력해 주세요."
+                        )
+                        return
+                else:
+                    guard_result = check_question(req.question)
+                    route = _route_with_guard(
+                        req.question,
+                        guard_result,
+                        req.mode,
+                    )
+                    pandas_strategy = None
+
                 if guard_result.status == "GUIDE":
                     logger.info("[GUARD] GUIDE(stream) | reason=%s", guard_result.reason_code)
                     yield build_guide_response(guard_result)
                     return
-                route = _route_with_guard(req.question, guard_result, req.mode)
-                if route == "PANDAS":
+                if route == "DOCUMENTS":
+                    answer, _ = _document_list_answer(
+                        get_all_manifest_entries()
+                    )
+                    yield answer
+                elif route == "PANDAS":
                     answer, _, _ = await _answer_pandas(
                         req.question,
+                        allow_vector_fallback=not use_llm_engine,
                         analysis=guard_result.analysis,
+                        strategy=pandas_strategy or "AUTO",
                     )
                     yield answer
                 else:

@@ -2,6 +2,125 @@ from __future__ import annotations
 
 from langchain_core.prompts import PromptTemplate
 
+
+_QUESTION_ENGINE_TEMPLATE = """\
+당신은 재정 문서 질의 시스템의 질문 분류기입니다.
+사용자 질문을 직접 답하거나 계산하지 말고, 필요한 operation만
+하나의 JSON 객체로 반환하세요. Python, Markdown, 설명문은 출력하지 마세요.
+
+operation 정의:
+- list_documents: 현재 적재된 문서 또는 파일 목록
+- list_records: 표의 전체 명단·전체 행 목록
+- filter_records: 이름·날짜·기수·발행번호·기관 등 하나의 검증된 직접 조건 조회
+- lookup_amount: 특정 사람·기관·발행 항목의 금액 조회
+- count_records: 인원 또는 행 개수
+- sum_amount: 금액 합계
+- average_amount: 금액 평균 또는 인당 금액
+- median_amount: 금액 중앙값
+- mode_amount: 금액 최빈값
+- max_amount, min_amount: 금액 최댓값 또는 최솟값
+- max_person_by_amount, min_person_by_amount: 금액 기준 사람·기관의 최고 또는 최저 순위
+- compare: 둘 이상의 범위·집단·결과 비교
+- structured_query: 여러 컬럼 조건, 임의 컬럼 비교, 범위와 정렬의 결합,
+  상위 N개, 기존 직접 조회로 표현하기 어려운 범용 표 조회
+- document_reason: 문서에 기록된 이유 검색
+- document_purpose: 문서의 목적 검색
+- document_criteria: 선정·지급·적용 기준 검색
+- document_procedure: 신청·지급·처리 절차 검색
+- document_explain: 그 밖의 문서 본문 설명과 내용 검색
+
+판단 원칙:
+- 질문 문장에 특정 키워드가 있다는 이유만으로 결정하지 말고 전체 의미를 판단하세요.
+- 여러 조건이 하나의 명단·값을 만들기 위한 것이면 operation 하나입니다.
+- 서로 다른 답을 두 개 이상 요구할 때만 operations에 여러 항목을 작성하세요.
+- 표의 복수 조건·정렬·상위 N개·낯선 컬럼 조회는 structured_query입니다.
+- 복수 컬럼 조건을 filter_records와 lookup_amount로 분해하지 말고 structured_query
+  하나만 반환하세요.
+- 정렬된 상위·하위 N개 목록은 structured_query 하나만 반환하세요.
+- 단일 합계·평균·중앙값·최댓값 등 검증된 집계는 각각의 전용 operation입니다.
+- 숫자가 포함되어도 문서의 설명·이유·기준·절차를 묻는다면 document operation입니다.
+- 표 조회와 문서 검색이 섞이면 양쪽 operation을 모두 반환하세요.
+- list_documents는 업로드·적재된 파일 이름 목록에만 사용하며 표의 행 목록이나
+  상위 N개에는 절대 사용하지 마세요.
+- 조회 대상이 실제로 부족하거나 질문 자체가 불명확할 때만 clarification입니다.
+- 시스템이 지원할 수 없는 요청이면 unsupported입니다.
+- Python 코드, DataFrame 코드, 필터식 또는 QueryPlan은 생성하지 마세요.
+- document operation이 하나라도 있으면 retrieval_query에 원래 의미를 유지한
+  문서 검색 문장을 작성하세요.
+
+ready JSON:
+{{
+  "status": "ready",
+  "operations": ["위 목록에 있는 operation"],
+  "reason": "operation 선택 이유",
+  "retrieval_query": "document operation이 있을 때만 검색 문장"
+}}
+
+clarification 또는 unsupported JSON:
+{{
+  "status": "clarification|unsupported",
+  "reason": "판단 이유",
+  "message": "사용자 안내",
+  "candidates": ["필요한 경우에만 선택지"]
+}}
+
+분류 예시:
+- "금액 총액 알려줘"
+  → {{"status":"ready","operations":["sum_amount"],"reason":"금액 합계 요청"}}
+- "3월 기록 알려줘"
+  → {{"status":"ready","operations":["filter_records"],"reason":"단일 날짜 조건 조회"}}
+- "발행번호 A-001의 금액"
+  → {{"status":"ready","operations":["lookup_amount"],"reason":"특정 항목 금액 조회"}}
+- "기수가 50 이상이고 금액이 100만원 이상인 항목"
+  → {{"status":"ready","operations":["structured_query"],"reason":"복수 컬럼 조건 조회"}}
+- "금액이 큰 순서대로 5개"
+  → {{"status":"ready","operations":["structured_query"],"reason":"정렬과 개수 제한"}}
+- "지급 기준을 설명해줘"
+  → {{"status":"ready","operations":["document_criteria"],"reason":"문서 기준 검색","retrieval_query":"지급 기준"}}
+- "금액 총액과 지급 기준을 같이 알려줘"
+  → {{"status":"ready","operations":["sum_amount","document_criteria"],"reason":"계산과 문서 검색의 혼합 요청","retrieval_query":"지급 기준"}}
+- "현재 적재된 문서 목록"
+  → {{"status":"ready","operations":["list_documents"],"reason":"적재 파일 목록 요청"}}
+
+현재 조회 가능한 표:
+{schema}
+
+사용자 질문:
+{question}
+
+JSON:"""
+
+
+_QUESTION_ENGINE_REPAIR_TEMPLATE = """\
+이전 응답이 질문 결정 JSON 규격을 통과하지 못했습니다.
+질문의 의미를 바꾸지 말고 JSON 문법과 필드 규격만 수정하세요.
+Python, Markdown, 설명문 없이 JSON 객체 하나만 반환하세요.
+
+허용 규칙:
+- status=ready이면 operations 배열이 필수
+- 허용 operation:
+  list_documents, filter_records, compare, max_person_by_amount,
+  min_person_by_amount, list_records, count_records, sum_amount,
+  average_amount, median_amount, mode_amount, max_amount, min_amount,
+  lookup_amount, structured_query, document_reason, document_purpose,
+  document_criteria, document_procedure, document_explain
+- 위 목록에 없는 operation을 새로 만들지 않음
+- document operation이 있으면 retrieval_query 필수
+- document operation이 없으면 retrieval_query를 넣지 않음
+- route, intent, query, filters, Python 코드를 넣지 않음
+- status=clarification 또는 unsupported이면 operations 없이 message 필수
+
+질문:
+{question}
+
+검증 오류:
+{error}
+
+이전 응답:
+{response}
+
+수정된 JSON:"""
+
 MULTI_QUERY_PROMPT = PromptTemplate(
     input_variables=["question"],
     template="""\

@@ -1,14 +1,125 @@
 from __future__ import annotations
 
 import unittest
+from typing import get_args
+from unittest.mock import patch
 
-from main import ChatRequest, ChatResponse, _route_with_guard
-from rag.guard import check_question
+from fastapi import BackgroundTasks
+
+from main import (
+    ChatRequest,
+    ChatResponse,
+    _route_with_guard,
+    _schedule_shadow_question_engine,
+)
+from rag.guard import check_question, check_question_decision
 from rag.question_analyzer import analyze_question
-from rag.router import _route, required_engines, route_analysis
+from rag.question_decision import QuestionDecision, QuestionOperation
+from rag.router import (
+    _ENGINE_BY_OPERATION,
+    _route,
+    engines_for_operations,
+    pandas_strategy_for_operations,
+    required_engines,
+    route_analysis,
+    route_operations,
+)
 
 
 class GuardRoutingTest(unittest.TestCase):
+    def test_shadow_engine_is_opt_in_and_queued_without_changing_route(self):
+        tasks = BackgroundTasks()
+        with patch("main.QUESTION_ENGINE_MODE", "legacy"):
+            self.assertFalse(
+                _schedule_shadow_question_engine(
+                    tasks,
+                    "질문",
+                    "PANDAS",
+                    ["structured_query"],
+                )
+            )
+        self.assertEqual(len(tasks.tasks), 0)
+
+        with patch("main.QUESTION_ENGINE_MODE", "shadow"), patch(
+            "main._get_df_schema",
+            return_value='컬럼: "금액"',
+        ):
+            self.assertTrue(
+                _schedule_shadow_question_engine(
+                    tasks,
+                    "질문",
+                    "PANDAS",
+                    ["structured_query"],
+                )
+            )
+        self.assertEqual(len(tasks.tasks), 1)
+
+    def test_every_llm_operation_has_an_engine_mapping(self):
+        self.assertEqual(
+            set(get_args(QuestionOperation)),
+            set(_ENGINE_BY_OPERATION),
+        )
+
+    def test_operation_route_and_pandas_strategy_are_deterministic(self):
+        self.assertEqual(route_operations(["sum_amount"]), "PANDAS")
+        self.assertEqual(
+            pandas_strategy_for_operations(["sum_amount"]),
+            "DIRECT",
+        )
+        self.assertEqual(
+            route_operations(["structured_query"]),
+            "PANDAS",
+        )
+        self.assertEqual(
+            pandas_strategy_for_operations(["structured_query"]),
+            "QUERY_PLAN",
+        )
+        self.assertEqual(
+            route_operations(["document_criteria"]),
+            "VECTOR",
+        )
+        self.assertIsNone(
+            pandas_strategy_for_operations(["document_criteria"])
+        )
+
+    def test_mixed_or_multiple_operations_require_guide(self):
+        operations = ["sum_amount", "document_criteria"]
+        self.assertEqual(
+            engines_for_operations(operations),
+            ["PANDAS", "VECTOR"],
+        )
+        self.assertEqual(route_operations(operations), "GUIDE")
+        self.assertEqual(
+            route_operations(["sum_amount", "average_amount"]),
+            "GUIDE",
+        )
+
+    def test_llm_operation_guard_blocks_mixed_engines(self):
+        decision = QuestionDecision(
+            status="ready",
+            operations=["sum_amount", "document_criteria"],
+            reason="계산과 기준 검색의 혼합 요청",
+            retrieval_query="지급 기준",
+        )
+        result = check_question_decision(decision)
+        self.assertEqual(result.status, "GUIDE")
+        self.assertEqual(result.reason_code, "CROSS_ENGINE_QUERY")
+        self.assertEqual(
+            result.domains,
+            ["structured_data", "document_evidence"],
+        )
+
+    def test_llm_structured_query_passes_guard(self):
+        decision = QuestionDecision(
+            status="ready",
+            operations=["structured_query"],
+            reason="범용 표 조회",
+        )
+        result = check_question_decision(decision)
+        self.assertEqual(result.status, "PASS")
+        self.assertEqual(result.operations, ["structured_query"])
+        self.assertEqual(result.domains, ["structured_data"])
+
     def test_spaced_and_unspaced_vague_references_are_guided(self):
         for question in ("그 사람 금액 알려줘", "그사람 금액 알려줘", "아까 그 사람 알려줘"):
             with self.subTest(question=question):

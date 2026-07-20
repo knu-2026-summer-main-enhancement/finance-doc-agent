@@ -119,6 +119,42 @@ class QueryPlanPandasIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("총 2건", answer)
         name_search.assert_not_called()
 
+    async def test_query_plan_strategy_skips_every_direct_handler(self):
+        validation = self._validation(
+            {
+                "status": "ready",
+                "dataframe": "df0",
+                "operation": "list",
+                "filters": [
+                    {"column": "점수", "operator": "gte", "value": 20}
+                ],
+                "select": ["항목", "점수"],
+            }
+        )
+
+        with patch(
+            "rag.pandas_rag._search_name_pandas",
+            side_effect=AssertionError("이름 직접 검색이 호출되면 안 됩니다."),
+        ), patch(
+            "rag.pandas_rag._query_pandas_direct",
+            side_effect=AssertionError("직접 조회가 호출되면 안 됩니다."),
+        ), patch(
+            "rag.pandas_rag._query_all_records",
+            side_effect=AssertionError("전체 목록 조회가 호출되면 안 됩니다."),
+        ), patch(
+            "rag.pandas_rag.generate_validated_query_plan",
+            new=AsyncMock(return_value=validation),
+        ):
+            answer, sources, route = await _answer_pandas(
+                "점수가 20 이상인 항목",
+                strategy="QUERY_PLAN",
+                allow_vector_fallback=False,
+            )
+
+        self.assertEqual(route, "pandas")
+        self.assertEqual(sources, ["업무목록.xlsx"])
+        self.assertIn("총 2건", answer)
+
     async def test_valid_empty_result_does_not_fall_back_to_vector(self):
         validation = self._validation(
             {
