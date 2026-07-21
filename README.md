@@ -153,6 +153,58 @@ Guard와 Router의 중복 판정 대신 하나의 분석 결과를 공유하는 
 | `VECTOR` | 본문 내용·절차·목적 검색 | `이 장학금의 지급 기준이 뭐야?` |
 | `GUIDE` | 모호하거나 복합적인 질문 재작성 안내 | `금액이랑 규정 전부 비교해줘` |
 
+#### LLM 질문 분류 방식
+
+`QUESTION_ENGINE_MODE=llm`이고 채팅 요청이 `auto` 모드일 때 Question Engine이 기존 정규식 분석 대신 질문 유형을 분류하는 구조. LLM이 `PANDAS`나 `VECTOR` 같은 실행 경로를 자유문장으로 직접 선택하는 방식이 아니라, 허용된 operation 중 하나를 엄격한 JSON 계약으로 반환하는 방식
+
+```text
+사용자 질문 + 행 샘플을 제외한 압축 스키마
+→ LLM QuestionDecision JSON 생성
+→ Pydantic 계약 검증
+→ 질문 원문과 source_text 일치 검증
+→ Guard에서 복합·모호·미지원 요청 확인
+→ Router에서 operation을 실행 엔진으로 변환
+→ PANDAS인 경우 DIRECT 또는 QUERY_PLAN 전략 결정
+```
+
+QuestionDecision의 핵심 필드:
+
+```json
+{
+  "status": "ready",
+  "requests": [
+    {
+      "source_text": "홍길동 학과 알려줘",
+      "operation": "lookup_field"
+    }
+  ],
+  "operations": ["lookup_field"],
+  "reason": "특정 인물의 일반 표 컬럼 조회",
+  "retrieval_query": null
+}
+```
+
+operation별 실행 방식:
+
+| operation 범주 | 실행 경로 | 처리 방식 |
+|---|---|---|
+| `list_documents` | `DOCUMENTS` | manifest 기반 적재 문서 목록 |
+| 금액·인원·최대·최소·명단 집계 | `PANDAS / DIRECT` | 검증된 전용 함수 실행 |
+| `lookup_field`, `structured_query` | `PANDAS / QUERY_PLAN` | LLM이 제한된 조회 JSON 생성 후 검증·실행 |
+| `document_reason`, `document_purpose`, `document_criteria`, `document_procedure`, `document_explain` | `VECTOR` | ChromaDB 근거 검색 후 답변 |
+| `clarification`·`unsupported` 상태 또는 충돌 operation | `GUIDE` | 실행 없이 질문 수정 안내 |
+
+안전장치:
+
+- LLM 분류 단계에서 데이터 조회나 계산을 실행하지 않는 구조
+- 질문에 실제로 존재하지 않는 `source_text` 거부
+- 허용되지 않은 operation과 추가 JSON 필드 거부
+- 문서 내용 검색 operation에만 `retrieval_query` 허용
+- JSON 형식 오류 시 규격 수정 목적의 재시도 1회
+- 재시도 후에도 검증 실패 시 임의 라우팅 없이 GUIDE 응답
+- `shadow` 모드에서 기존 분석 결과와 LLM 결과만 비교하고 실제 실행에는 미반영
+- 사용자가 선택한 자연어 검색 모드는 Question Engine 분류 대신 VECTOR 경로 사용
+
 ### 5. LLM 대신 검증된 함수로 처리하는 기본 집계
 
 LLM의 즉석 Pandas 코드가 `1,000,000` 같은 문자열 금액을 연결하거나 사전순으로 비교하는 오류를 막기 위한 전용 집계 엔진
