@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Hashable, Literal, Mapping
+import unicodedata
 
 import pandas as pd
 
@@ -230,6 +232,54 @@ def _validate_filter_source_text(
                     (
                         "숫자 필터의 원문 근거가 하나의 명확한 비교 조건이 "
                         f"아닙니다: {source_text}"
+                    ),
+                    field="filters",
+                    column=condition.column,
+                )
+            )
+    return issues
+
+
+def _normalized_string_evidence(value: object) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return re.sub(r"\s+", "", text)
+
+
+def _validate_string_filter_grounding(
+    plan: QueryPlan,
+    question: str,
+    df: pd.DataFrame,
+    actual_columns: Mapping[str, Hashable],
+) -> list[PlanValidationIssue]:
+    """Reject LLM-created string literals absent from their question evidence."""
+
+    issues: list[PlanValidationIssue] = []
+    grounded_operators = {"eq", "ne", "contains", "in"}
+    for condition in plan.filters:
+        column = actual_columns.get(condition.column)
+        if (
+            column is None
+            or column_data_type(df, column) != "string"
+            or condition.operator not in grounded_operators
+        ):
+            continue
+
+        source_text = str(condition.source_text or "").strip()
+        evidence = source_text if source_text and source_text in question else question
+        normalized_evidence = _normalized_string_evidence(evidence)
+        values = _condition_values(condition)
+        missing = [
+            str(value)
+            for value in values
+            if _normalized_string_evidence(value) not in normalized_evidence
+        ]
+        if missing:
+            issues.append(
+                _issue(
+                    "ungrounded_string_filter",
+                    (
+                        "질문 원문에서 확인되지 않은 문자열 조건이 "
+                        f"조회 계획에 포함됐습니다: {condition.column}={missing}"
                     ),
                     field="filters",
                     column=condition.column,
@@ -496,6 +546,14 @@ def validate_query_plan(
 
     if question:
         issues.extend(_validate_filter_source_text(plan, question))
+        issues.extend(
+            _validate_string_filter_grounding(
+                plan,
+                question,
+                df,
+                actual_columns,
+            )
+        )
         issues.extend(
             _validate_numeric_filter_grounding(
                 plan,

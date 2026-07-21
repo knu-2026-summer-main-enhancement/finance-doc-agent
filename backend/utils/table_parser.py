@@ -471,48 +471,6 @@ def _drop_non_data_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _ffill_merged_like_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """실제 데이터가 있는 연속 행에서 그룹 식별 컬럼만 제한적으로 채운다."""
-    if df.empty:
-        return df
-
-    meanings = {
-        column: infer_column_meaning(str(column), df[column])
-        for column in df.columns
-    }
-    signal_cols = [
-        column for column, meaning in meanings.items()
-        if meaning.concept in {"measure", "temporal"}
-    ]
-    fill_cols = [
-        column for column, meaning in meanings.items()
-        if (
-            # 사람·단체 이름은 실제 표에서 세로 병합되는 대표적인 그룹 값이다.
-            # 컬럼의 민감도 표시는 유지하되 병합 복원까지 막지는 않는다.
-            (meaning.concept == "entity" and meaning.role == "entity_name")
-            # 전화번호·학번 같은 직접 식별자는 잘못 전파되면 위험하므로 제외한다.
-            or (
-                meaning.concept in {"identifier", "category"}
-                and meaning.sensitivity == "none"
-            )
-        )
-    ]
-    if not signal_cols or not fill_cols:
-        return df
-
-    result = df.copy()
-    previous: dict[Any, Any] = {}
-    for index in result.index:
-        row_has_signal = any(_as_text(result.at[index, column]).strip() for column in signal_cols)
-        for column in fill_cols:
-            current = _as_text(result.at[index, column]).strip()
-            if current:
-                previous[column] = result.at[index, column]
-            elif row_has_signal and column in previous:
-                result.at[index, column] = previous[column]
-    return result
-
-
 def _clean_dataframe(
     df: pd.DataFrame,
     source_file: str = "",
@@ -641,7 +599,6 @@ def _parse_table(
     df = pd.DataFrame(data_rows, columns=headers)
     df = df.replace("", None).dropna(how="all").reset_index(drop=True)
     df = _drop_non_data_rows(df)
-    df = _ffill_merged_like_columns(df)
     df = df.replace("\n", " ", regex=True)
     if df.empty:
         return None

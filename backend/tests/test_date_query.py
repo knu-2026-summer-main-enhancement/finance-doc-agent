@@ -43,6 +43,20 @@ class DateQueryTest(unittest.TestCase):
             date_filter=analysis.date_filter,
         )
 
+    def _replace_dataframe(self, raw: pd.DataFrame) -> None:
+        df = _clean_dataframe(
+            raw,
+            source_file="payments.xlsx",
+            context_prefix="sheet0",
+        )
+        self.assertIsNotNone(df)
+        _df_namespace.clear()
+        _df_sources.clear()
+        _df_labels.clear()
+        _df_namespace["df0"] = df
+        _df_sources["df0"] = "payments.xlsx"
+        _df_labels["df0"] = "지급 내역"
+
     def test_month_range_list_filters_rows_without_llm(self):
         analysis, (result, sources) = self._query("3~4월에 낸 사람 리스트 알려줘")
         self.assertEqual(route_analysis(analysis), "PANDAS")
@@ -98,6 +112,74 @@ class DateQueryTest(unittest.TestCase):
 
         self.assertEqual(result["value"], 8_000_000)
         self.assertEqual(sources, ["donations.xlsx"])
+
+    def test_month_only_column_is_a_valid_date_filter(self):
+        self._replace_dataframe(pd.DataFrame([
+            {"지급월": "11월", "이름": "김하나", "장학금액": "1,000,000"},
+            {"지급월": "12월", "이름": "이두리", "장학금액": "2,000,000"},
+        ]))
+
+        _, (result, _) = self._query("지급월이 12월인 사람 알려줘")
+
+        self.assertEqual(result["이름"].tolist(), ["이두리"])
+        self.assertEqual(result.attrs["date_filter_evidence"]["column"], "지급월")
+        self.assertEqual(result.attrs["date_filter_evidence"]["period"], "12월")
+
+    def test_separate_year_and_month_columns_are_combined(self):
+        self._replace_dataframe(pd.DataFrame([
+            {"년": 2024, "월": 12, "이름": "김하나"},
+            {"년": 2025, "월": 12, "이름": "이두리"},
+        ]))
+
+        _, (result, _) = self._query("2025년 12월인 사람 알려줘")
+
+        self.assertEqual(result["이름"].tolist(), ["이두리"])
+        evidence = result.attrs["date_filter_evidence"]
+        self.assertEqual(evidence["column"], "월")
+        self.assertEqual(evidence["year_column"], "년")
+
+    def test_separate_year_and_month_support_cross_year_ranges(self):
+        self._replace_dataframe(pd.DataFrame([
+            {"년": 2024, "월": 12, "이름": "김하나"},
+            {"년": 2025, "월": 1, "이름": "이두리"},
+            {"년": 2025, "월": 3, "이름": "박세나"},
+        ]))
+
+        _, (result, _) = self._query("2024년 12월부터 2025년 2월까지인 사람 알려줘")
+
+        self.assertEqual(result["이름"].tolist(), ["김하나", "이두리"])
+
+    def test_year_condition_is_rejected_when_only_month_exists(self):
+        self._replace_dataframe(pd.DataFrame([
+            {"지급월": 12, "이름": "김하나"},
+        ]))
+
+        _, (result, _) = self._query("2025년 12월 지급자 알려줘")
+
+        self.assertEqual(result["type"], "aggregation_notice")
+        self.assertIn("월 정보만", result["message"])
+
+    def test_explicit_month_column_wins_over_an_unrelated_full_date(self):
+        self._replace_dataframe(pd.DataFrame([
+            {"신청일자": "2025-12-01", "지급월": 1, "이름": "김하나"},
+            {"신청일자": "2025-01-01", "지급월": 12, "이름": "이두리"},
+        ]))
+
+        _, (result, _) = self._query("지급월이 12월인 사람 알려줘")
+
+        self.assertEqual(result["이름"].tolist(), ["이두리"])
+        self.assertEqual(result.attrs["date_filter_evidence"]["column"], "지급월")
+
+    def test_ambiguous_temporal_columns_require_a_specific_basis(self):
+        self._replace_dataframe(pd.DataFrame([
+            {"신청일자": "2025-12-01", "지급월": 1, "이름": "김하나"},
+            {"신청일자": "2025-01-01", "지급월": 12, "이름": "이두리"},
+        ]))
+
+        _, (result, _) = self._query("12월인 사람 알려줘")
+
+        self.assertEqual(result["type"], "aggregation_notice")
+        self.assertIn("날짜 기준을 하나로 결정할 수 없습니다", result["message"])
 
 
 if __name__ == "__main__":

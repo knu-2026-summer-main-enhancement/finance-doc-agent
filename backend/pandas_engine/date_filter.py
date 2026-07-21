@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from utils.semantic_schema import infer_data_type, semantic_columns
+from utils.semantic_schema import infer_column_meaning, infer_data_type, semantic_columns
 
 
 _YEAR = r"(?:19|20)\d{2}"
@@ -101,14 +101,43 @@ def parse_date_filter(question: str) -> DateFilter | None:
 
 
 def date_column_candidates(df: pd.DataFrame) -> list[str]:
-    candidates = semantic_columns(df, roles={"temporal"}, data_type="date")
+    candidates = semantic_columns(
+        df,
+        concept="temporal",
+        roles={"date", "year_month", "month"},
+    )
     for column in df.columns:
         if str(column).startswith("_") or column in candidates:
             continue
         header = re.sub(r"\s+", "", str(column))
-        if any(hint in header for hint in _DATE_HEADER_HINTS) or infer_data_type(df[column]) == "date":
+        meaning = infer_column_meaning(str(column), df[column])
+        if (
+            (meaning.concept == "temporal" and meaning.role in {"date", "year_month", "month"})
+            or any(hint in header for hint in _DATE_HEADER_HINTS)
+            or infer_data_type(df[column]) == "date"
+        ):
             candidates.append(str(column))
     return candidates
+
+
+def _temporal_role(df: pd.DataFrame, column: str) -> str:
+    schema = df.attrs.get("semantic_schema")
+    if isinstance(schema, dict):
+        columns = schema.get("columns")
+        mapping = columns.get(column) if isinstance(columns, dict) else None
+        if isinstance(mapping, dict) and mapping.get("concept") == "temporal":
+            return str(mapping.get("role") or "")
+    return str(infer_column_meaning(column, df[column]).role or "")
+
+
+def _component_column(df: pd.DataFrame, role: str) -> str | None:
+    matches: list[str] = []
+    for column in df.columns:
+        if str(column).startswith("_"):
+            continue
+        if _temporal_role(df, str(column)) == role:
+            matches.append(str(column))
+    return matches[0] if len(matches) == 1 else None
 
 
 def resolve_date_column(df: pd.DataFrame, question: str) -> tuple[str | None, list[str]]:
@@ -117,7 +146,16 @@ def resolve_date_column(df: pd.DataFrame, question: str) -> tuple[str | None, li
         return (candidates[0] if candidates else None), candidates
 
     question_text = str(question or "")
+    # More detailed data is not automatically more relevant. When a document
+    # has both 신청일자 and 지급월, silently preferring the full date would
+    # change the user's intended business meaning. Only question evidence may
+    # break a tie between multiple temporal columns.
     scores = {column: 0 for column in candidates}
+    normalized_question = re.sub(r"\s+", "", question_text)
+    for column in candidates:
+        normalized_column = re.sub(r"\s+", "", column)
+        if len(normalized_column) >= 2 and normalized_column in normalized_question:
+            scores[column] += 10
     for question_words, column_words in _QUESTION_ROLE_HINTS:
         if not any(word in question_text for word in question_words):
             continue
@@ -126,8 +164,24 @@ def resolve_date_column(df: pd.DataFrame, question: str) -> tuple[str | None, li
             scores[column] += sum(1 for word in column_words if word in normalized)
 
     best_score = max(scores.values(), default=0)
-    selected = [column for column, score in scores.items() if score == best_score and score > 0]
+    selected = [
+        column for column, score in scores.items()
+        if score == best_score and score > 0
+    ]
     return (selected[0] if len(selected) == 1 else None), candidates
+
+
+def _to_integer_component(series: pd.Series) -> pd.Series:
+    text = series.astype("string").str.strip()
+    numeric = pd.to_numeric(text, errors="coerce")
+    missing = numeric.isna()
+    if missing.any():
+        extracted = text.loc[missing].str.extract(
+            r"^\s*([+-]?\d+(?:\.\d+)?)\s*(?:년|월|일)?\s*$",
+            expand=False,
+        )
+        numeric.loc[missing] = pd.to_numeric(extracted, errors="coerce")
+    return numeric
 
 
 def _to_datetime(series: pd.Series) -> pd.Series:
@@ -166,7 +220,9 @@ def _period_label(spec: DateFilter, years: list[int]) -> str:
             return f"{spec.year}년 {spec.start_month}월"
         return f"{spec.year}년 {spec.start_month}월~{end_year}년 {spec.end_month}월"
     month_label = f"{spec.start_month}월" if spec.start_month == spec.end_month else f"{spec.start_month}~{spec.end_month}월"
-    return f"모든 연도의 {month_label}" if spec.all_years else f"{years[0]}년 {month_label}"
+    if spec.all_years:
+        return f"모든 연도의 {month_label}"
+    return f"{years[0]}년 {month_label}" if years else month_label
 
 
 def _date_range_mask(parsed: pd.Series, spec: DateFilter) -> pd.Series:
@@ -188,13 +244,89 @@ def _date_filter_evidence(
     period: str,
     matched_rows: int,
     invalid_rows: int,
+    year_column: str | None = None,
 ) -> dict[str, object]:
-    return {
+    evidence = {
         "column": column,
         "period": period,
         "matched_rows": matched_rows,
         "invalid_date_rows": invalid_rows,
     }
+    if year_column:
+        evidence["year_column"] = year_column
+    return evidence
+
+
+def _apply_month_component_filter(
+    df: pd.DataFrame,
+    column: str,
+    spec: DateFilter,
+) -> DateFilterResult:
+    months = _to_integer_component(df[column])
+    valid_months = months.between(1, 12, inclusive="both")
+    invalid_rows = int((~valid_months).sum())
+    year_column = _component_column(df, "year")
+    years = _to_integer_component(df[year_column]) if year_column else None
+    available_years = (
+        sorted({int(value) for value in years.dropna().unique()})
+        if years is not None
+        else []
+    )
+
+    if spec.year is not None and years is None:
+        return DateFilterResult(
+            None,
+            column=column,
+            invalid_rows=invalid_rows,
+            message=(
+                f"{column} 컬럼에는 월 정보만 있어 {spec.year}년을 구분할 수 없습니다. "
+                "연도 컬럼이 포함된 문서를 사용하거나 연도를 제외해 주세요."
+            ),
+        )
+    if spec.year is None and years is not None and not spec.all_years and len(available_years) > 1:
+        year_text = ", ".join(str(year) for year in available_years)
+        return DateFilterResult(
+            None,
+            column=column,
+            invalid_rows=invalid_rows,
+            message=f"이 문서에는 여러 연도가 있습니다({year_text}). 연도를 지정하거나 '모든 연도'라고 질문해 주세요.",
+        )
+
+    if spec.year is not None and years is not None:
+        start_key = spec.year * 100 + spec.start_month
+        end_key = (spec.end_year or spec.year) * 100 + spec.end_month
+        valid_years = years.between(1900, 2100, inclusive="both")
+        invalid_rows = int((~(valid_months & valid_years)).sum())
+        mask = valid_months & valid_years & (years * 100 + months).between(
+            start_key,
+            end_key,
+            inclusive="both",
+        )
+    else:
+        mask = valid_months & months.between(
+            spec.start_month,
+            spec.end_month,
+            inclusive="both",
+        )
+
+    rows = df[mask.fillna(False)].copy()
+    period = _period_label(spec, available_years)
+    evidence = _date_filter_evidence(
+        column,
+        period,
+        len(rows),
+        invalid_rows,
+        year_column,
+    )
+    rows.attrs.update(df.attrs)
+    rows.attrs["date_filter_evidence"] = evidence
+    return DateFilterResult(
+        rows,
+        column=column,
+        matched_rows=len(rows),
+        invalid_rows=invalid_rows,
+        evidence=evidence,
+    )
 
 
 def apply_date_filter(df: pd.DataFrame, spec: DateFilter, question: str) -> DateFilterResult:
@@ -209,6 +341,9 @@ def apply_date_filter(df: pd.DataFrame, spec: DateFilter, question: str) -> Date
             None,
             message=f"날짜 기준을 하나로 결정할 수 없습니다. 사용할 날짜 컬럼을 지정해 주세요: {', '.join(candidates)}",
         )
+
+    if _temporal_role(df, column) == "month":
+        return _apply_month_component_filter(df, column, spec)
 
     parsed = _to_datetime(df[column])
     invalid_rows = int(parsed.isna().sum())

@@ -118,7 +118,6 @@ def _align_plan_with_operation_hint(
         and plan.status == "ready"
         and plan.operation == "list"
         and plan.filters
-        and not plan.select
     ):
         filter_columns = {condition.column for condition in plan.filters}
         candidates = tuple(
@@ -126,12 +125,20 @@ def _align_plan_with_operation_hint(
             for column in _lookup_field_candidates(question, schema)
             if column not in filter_columns
         )
-        if len(candidates) == 1:
-            logger.info(
-                "[QUERY_PLAN] lookup_field 조회 컬럼 안전 보완 | column=%s",
-                candidates[0],
+        if candidates:
+            selected_filter_columns = tuple(
+                column for column in plan.select if column in filter_columns
             )
-            plan = plan.model_copy(update={"select": candidates})
+            grounded_select = tuple(dict.fromkeys(
+                (*selected_filter_columns, *candidates)
+            ))
+            if plan.select == grounded_select:
+                return _validate_operation_hint_contract(plan, operation_hint)
+            logger.info(
+                "[QUERY_PLAN] lookup_field 조회 컬럼 안전 교정 | columns=%s",
+                list(candidates),
+            )
+            plan = plan.model_copy(update={"select": grounded_select})
     return _validate_operation_hint_contract(plan, operation_hint)
 
 

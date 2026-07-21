@@ -11,7 +11,7 @@ from typing import Any
 import pandas as pd
 
 
-SCHEMA_VERSION = "2.2"
+SCHEMA_VERSION = "2.3"
 SYSTEM_COLUMNS = (
     "__schema_version",
     "__document_id",
@@ -106,6 +106,23 @@ def _value_match_ratio(values: list[str], pattern: re.Pattern[str]) -> float:
     if not values:
         return 0.0
     return sum(bool(pattern.fullmatch(value)) for value in values) / len(values)
+
+
+def _integer_range_ratio(values: list[str], minimum: int, maximum: int) -> float:
+    """Return the ratio of values representing integers in the given range."""
+
+    if not values:
+        return 0.0
+    matched = 0
+    for value in values:
+        normalized = re.sub(r"\s*(?:년|월|일)\s*$", "", value).strip()
+        try:
+            number = float(normalized)
+        except (TypeError, ValueError):
+            continue
+        if number.is_integer() and minimum <= int(number) <= maximum:
+            matched += 1
+    return matched / len(values)
 
 
 def _is_row_sequence(values: list[str]) -> bool:
@@ -237,15 +254,31 @@ def _deterministic_meaning(column: str, series: pd.Series, is_derived: bool) -> 
     if header.endswith("번호"):
         return meaning("identifier", "identifier_value", "string")
 
+    if values and _value_match_ratio(values, _YEAR_MONTH_VALUE_RE) >= 0.8:
+        return meaning("temporal", "year_month", "year_month", qualifier="year_month")
+
+    # A component is classified only when both its header and actual values
+    # agree. This prevents columns such as 학년 or 영업일 from becoming dates.
+    if (
+        (header == "년" or header.endswith(("연도", "년도")))
+        and _integer_range_ratio(values, 1900, 2100) >= 0.8
+    ):
+        return meaning("temporal", "year", "number", qualifier="year")
+    if (
+        (header == "월" or (header.endswith("월") and not header.endswith("연월")))
+        and _integer_range_ratio(values, 1, 12) >= 0.8
+    ):
+        return meaning("temporal", "month", "number", qualifier="month")
+    if header == "일" and _integer_range_ratio(values, 1, 31) >= 0.8:
+        return meaning("temporal", "day", "number", qualifier="day")
+
     if (
         inferred_type == "date"
         or any(token in header for token in ("일자", "날짜", "지급일", "출연일", "후원일", "입금일", "납입일", "등록일"))
     ):
-        return meaning("temporal", "date", "date")
-    if values and _value_match_ratio(values, _YEAR_MONTH_VALUE_RE) >= 0.8:
-        return meaning("temporal", "period", "year_month")
-    if header.endswith(("기간", "시기", "연월", "월", "연도", "년도")):
-        return meaning("temporal", "period")
+        return meaning("temporal", "date", "date", qualifier="date")
+    if header.endswith(("기간", "시기", "연월")):
+        return meaning("temporal", "period", inferred_type, qualifier="period")
 
     if header == "기수" or header.endswith("회차"):
         return meaning("category", "category", qualifier="cohort")

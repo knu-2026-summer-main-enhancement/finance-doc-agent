@@ -1158,7 +1158,13 @@ def _query_date_filtered(
     sources: list[str] = []
     evidences: list[dict[str, object]] = []
     messages: list[str] = []
-    conditions = _find_filter_conditions(question)
+    # The date expression has already been converted into a verified temporal
+    # filter. Excluding it here prevents years such as 2024 from being applied
+    # a second time as an unrelated generic cell-value condition.
+    residual_question = question
+    if date_filter.expression:
+        residual_question = residual_question.replace(date_filter.expression, " ", 1)
+    conditions = _find_filter_conditions(residual_question)
     identifier_requested = bool(_question_identifier_targets(question))
     cohort_requested = bool(_question_cohort(question))
     person_list_requested = intent is None and bool(_PERSON_LIST_RE.search(question))

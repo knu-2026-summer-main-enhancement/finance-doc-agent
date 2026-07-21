@@ -38,7 +38,7 @@ class TableCleanupTest(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result.iloc[0]["이름"], "김하늘")
 
-    def test_installment_row_keeps_amount_and_inherits_group_identity(self):
+    def test_unconfirmed_vertical_blanks_are_not_inherited(self):
         raw = [
             ["접수코드", "후원일", "기부자명", "후원금"],
             ["RC-001", "2026-03-01", "김*수", "500,000"],
@@ -49,10 +49,12 @@ class TableCleanupTest(unittest.TestCase):
 
         self.assertIsNotNone(result)
         self.assertEqual(len(result), 2)
-        self.assertEqual(result["접수코드"].tolist(), ["RC-001", "RC-001"])
-        self.assertEqual(result["기부자명"].tolist(), ["김*수", "김*수"])
+        self.assertEqual(result.iloc[0]["접수코드"], "RC-001")
+        self.assertTrue(pd.isna(result.iloc[1]["접수코드"]))
+        self.assertEqual(result.iloc[0]["기부자명"], "김*수")
+        self.assertTrue(pd.isna(result.iloc[1]["기부자명"]))
         self.assertEqual(result["후원금"].tolist(), ["500,000", "1,000,000"])
-        self.assertEqual(result["entity_type"].tolist(), ["person_masked", "person_masked"])
+        self.assertEqual(result["entity_type"].tolist(), ["person_masked", "unknown"])
 
     def test_descriptive_total_row_is_removed_from_amount_records(self):
         raw = [

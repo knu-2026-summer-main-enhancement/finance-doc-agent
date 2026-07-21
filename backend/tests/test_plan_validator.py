@@ -188,6 +188,44 @@ class PlanValidatorTest(unittest.TestCase):
         self.assertFalse(result.is_valid)
         self.assertEqual(result.issues[0].code, "incompatible_value")
 
+    def test_string_filter_value_must_be_grounded_in_question(self):
+        result = self._validate(
+            self._plan(
+                filters=[
+                    {
+                        "column": "이름",
+                        "operator": "eq",
+                        "value": "김철진",
+                        "source_text": "김철수",
+                    }
+                ]
+            ),
+            "김철수 출연금액 알려줘",
+        )
+
+        self.assertFalse(result.is_valid)
+        self.assertIn(
+            "ungrounded_string_filter",
+            {issue.code for issue in result.issues},
+        )
+
+    def test_grounded_string_filter_value_is_accepted(self):
+        result = self._validate(
+            self._plan(
+                filters=[
+                    {
+                        "column": "이름",
+                        "operator": "eq",
+                        "value": "김철수",
+                        "source_text": "김철수",
+                    }
+                ]
+            ),
+            "김철수 출연금액 알려줘",
+        )
+
+        self.assertTrue(result.is_executable)
+
     def test_question_literals_and_comparison_operators_are_preserved(self):
         result = self._validate(
             self._plan(

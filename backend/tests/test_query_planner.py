@@ -116,6 +116,33 @@ class QueryPlannerAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan.select, ("학과",))
         self.assertEqual(len(llm.prompts), 1)
 
+    async def test_lookup_field_corrects_wrong_selected_column(self):
+        llm = FakeLLM(
+            json.dumps(
+                _ready_payload(
+                    filters=[
+                        {
+                            "column": "성명",
+                            "operator": "eq",
+                            "value": "백서연",
+                            "source_text": "백서연",
+                        }
+                    ],
+                    select=["학년"],
+                ),
+                ensure_ascii=False,
+            )
+        )
+
+        plan = await generate_query_plan(
+            "백서연 학과 알려줘",
+            schema='데이터프레임: df0\n컬럼: "성명", "학과", "학년"',
+            llm=llm,
+            operation_hint="lookup_field",
+        )
+
+        self.assertEqual(plan.select, ("학과",))
+
     async def test_lookup_field_hint_is_preserved_and_validated(self):
         invalid = json.dumps(
             _ready_payload(operation="count", select=[]),

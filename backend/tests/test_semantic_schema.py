@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from utils.parquet_store import drop_dataframe_files, save_dataframe
-from utils.semantic_schema import SCHEMA_VERSION, semantic_columns
+from utils.semantic_schema import SCHEMA_VERSION, infer_column_meaning, semantic_columns
 from utils.table_parser import _clean_dataframe
 from utils.text_utils import _table_to_text_chunks
 import datastore.state as dataframe_state
@@ -189,7 +189,8 @@ class SemanticSchemaTest(unittest.TestCase):
         self.assertEqual(mappings["후원금"]["qualifier"], "sponsorship")
         self.assertEqual(mappings["지급액"]["role"], "amount")
         self.assertEqual(mappings["지급액"]["qualifier"], "payment")
-        self.assertEqual(mappings["지급월"]["role"], "period")
+        self.assertEqual(mappings["지급월"]["role"], "month")
+        self.assertEqual(mappings["지급월"]["qualifier"], "month")
         self.assertEqual(mappings["지급기관"]["role"], "entity_name")
         self.assertEqual(mappings["지급기관"]["qualifier"], "organization")
         self.assertEqual(mappings["지급목적"]["role"], "description")
@@ -280,7 +281,7 @@ class SemanticSchemaTest(unittest.TestCase):
         self.assertEqual(mappings["연락정보"]["sensitivity"], "personal")
         self.assertEqual(mappings["연락정보"]["pii_type"], "phone_number")
         self.assertEqual(mappings["졸업정보"]["concept"], "temporal")
-        self.assertEqual(mappings["졸업정보"]["role"], "period")
+        self.assertEqual(mappings["졸업정보"]["role"], "year_month")
         self.assertEqual(mappings["졸업정보"]["data_type"], "year_month")
         self.assertEqual(mappings["큰금액"]["concept"], "measure")
         self.assertEqual(mappings["큰금액"]["role"], "amount")
@@ -361,6 +362,26 @@ class SemanticSchemaTest(unittest.TestCase):
 
         self.assertEqual(mapping["qualifier"], "organization")
         self.assertEqual(mapping["sensitivity"], "none")
+
+    def test_separate_date_components_receive_distinct_temporal_roles(self):
+        cases = (
+            ("년", pd.Series([2024, 2025]), "year"),
+            ("지급월", pd.Series([1, 12]), "month"),
+            ("일", pd.Series([1, 31]), "day"),
+            ("지급연월", pd.Series(["2025-01", "2025-12"]), "year_month"),
+            ("지급일자", pd.Series(["2025-01-01", "2025-12-31"]), "date"),
+        )
+
+        for column, values, expected_role in cases:
+            with self.subTest(column=column):
+                meaning = infer_column_meaning(column, values)
+                self.assertEqual(meaning.concept, "temporal")
+                self.assertEqual(meaning.role, expected_role)
+
+    def test_non_temporal_grade_column_is_not_classified_as_year(self):
+        meaning = infer_column_meaning("학년", pd.Series([1, 2, 3, 4]))
+
+        self.assertNotEqual(meaning.concept, "temporal")
 
 
 if __name__ == "__main__":
