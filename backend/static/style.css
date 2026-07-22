@@ -220,6 +220,7 @@ button { color: inherit; }
 .rename-modal input { width: 100%; padding: 12px 13px; border: 1px solid #d8d6e7; border-radius: 11px; outline: 0; color: var(--ink); background: #fbfbfe; }
 .rename-modal input:focus { border-color: #9b90ea; box-shadow: 0 0 0 3px rgba(118,103,232,.13); }
 .rename-modal-note { margin: 0; color: #85858f; font-size: 11px; }
+.rename-reindex-note { margin: 4px 0 0; padding: 9px 10px; border: 1px solid #f0d7a5; border-radius: 9px; color: #7b5a1f; background: #fff9ed; font-size: 10px; line-height: 1.55; }
 .rename-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 13px; }
 .rename-cancel-button, .rename-submit-button { min-height: 38px; padding: 0 13px; border-radius: 10px; font-size: 12px; font-weight: 800; cursor: pointer; }
 .rename-cancel-button { border: 1px solid var(--line); color: #62626b; background: #fff; }

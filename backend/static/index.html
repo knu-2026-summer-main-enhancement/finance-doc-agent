@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>문서 조회 에이전트</title>
-  <link rel="stylesheet" href="/static/style.css?v=20260722-25">
+  <link rel="stylesheet" href="/static/style.css?v=20260722-27">
 </head>
 <body>
   <div class="app-shell">
@@ -116,6 +116,7 @@
         <label for="renameInput">새 파일명</label>
         <input id="renameInput" type="text" autocomplete="off" required>
         <p class="rename-modal-note">확장자는 기존 파일과 동일해야 합니다.</p>
+        <p class="rename-reindex-note">이름을 바꾸면 문서를 다시 색인합니다. 완료 전까지는 검색에 사용할 수 없습니다.</p>
         <div class="rename-modal-actions">
           <button class="rename-cancel-button" id="renameCancel" type="button">취소</button>
           <button class="rename-submit-button" id="renameSubmit" type="submit">이름 변경</button>
