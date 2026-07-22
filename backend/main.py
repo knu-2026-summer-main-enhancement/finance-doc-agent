@@ -247,28 +247,48 @@ def health():
 
 
 def _result_1_contact_records() -> dict[str, dict[str, object]]:
-    """Return contact details indexed by the member names in Result_1.xlsx."""
+    """Return contacts from a member table, regardless of its display file name."""
     records: dict[str, dict[str, object]] = {}
     for alias, dataframe in _df_namespace.items():
-        source = _df_sources.get(alias, alias)
-        stem = os.path.splitext(os.path.basename(source))[0].casefold()
-        if stem != "result_1":
-            continue
-
         columns = {re.sub(r"\s+", "", str(column)).casefold(): column for column in dataframe.columns}
         name_column = next((columns[key] for key in ("회원명", "성명", "이름") if key in columns), None)
         email_column = next((column for key, column in columns.items() if "이메일" in key or "email" in key), None)
         phone_column = next((column for key, column in columns.items() if "전화" in key or "휴대폰" in key or "연락처" in key or "phone" in key), None)
         department_column = next((column for key, column in columns.items() if "전공" in key or "학과" in key or "department" in key), None)
-        if name_column is None:
+        if name_column is None or (email_column is None and phone_column is None):
             continue
 
-        for _, row in dataframe.iterrows():
+        year_column = columns.get("년")
+        month_column = columns.get("월")
+        day_column = columns.get("일")
+        date_columns = [
+            column for key, column in columns.items()
+            if "날짜" in key or "일자" in key or "date" in key
+        ]
+
+        def latest_rank(row, row_order: int) -> tuple[int, int, int, int]:
+            def number(column) -> int:
+                if column is None:
+                    return 0
+                match = re.search(r"\d+", str(row.get(column, "")))
+                return int(match.group()) if match else 0
+
+            year, month, day = number(year_column), number(month_column), number(day_column)
+            if year:
+                return year, month, day, row_order
+            for column in date_columns:
+                digits = re.sub(r"\D", "", str(row.get(column, "")))
+                if len(digits) >= 8:
+                    return int(digits[:4]), int(digits[4:6]), int(digits[6:8]), row_order
+            return 0, 0, 0, row_order
+
+        for row_order, (_, row) in enumerate(dataframe.iterrows()):
             display_name = str(row.get(name_column, "")).strip()
             name = normalize_person_name(display_name)
             if not name or name.casefold() in {"nan", "none", "<na>"}:
                 continue
             record = records.setdefault(name, {"name": display_name, "phones": set(), "emails": set(), "departments": set()})
+            rank = latest_rank(row, row_order)
             for column, key in ((phone_column, "phones"), (email_column, "emails"), (department_column, "departments")):
                 if column is None:
                     continue
@@ -278,14 +298,17 @@ def _result_1_contact_records() -> dict[str, dict[str, object]]:
                 if key == "phones":
                     digits = re.sub(r"\D", "", value)
                     value = f"{digits[:3]}-{digits[3:7]}-{digits[7:]}" if len(digits) == 11 and digits.startswith("01") else value
-                record[key].add(value)
+                rank_key = f"_{key}_rank"
+                if rank >= record.get(rank_key, (-1, -1, -1, -1)):
+                    record[key] = {value}
+                    record[rank_key] = rank
 
     return records
 
 
 @app.get("/contacts/names")
 def result_1_contact_names(_: None = Depends(_verify_api_key)):
-    """Names in Result_1 that can reveal a contact card when clicked in the UI."""
+    """Names from member tables that can reveal a contact card when clicked in the UI."""
     return {"names": [record["name"] for record in _result_1_contact_records().values()]}
 
 
