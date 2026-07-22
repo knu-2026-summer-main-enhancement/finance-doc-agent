@@ -28,21 +28,34 @@ _MISSING = re.compile(r"(?:비어\s*있|안\s*적|미입력|누락|공백|없(?:
 _PAYMENT_EXISTENCE = re.compile(
     r"(?:돈|금액|회비|결제|납부|후원|기부).{0,8}?(?:냈|내었|냈어|냈나요|했어|했나|했나요)"
 )
+_PERSON_LOOKUP_SUBJECT = r"([가-힣]{2,5}?(?:\s*[\(\[\{][^\]\)\}]*[\]\)\}])?)"
+_LEADING_PERSON_AMOUNT_LOOKUP = re.compile(
+    rf"^\s*{_PERSON_LOOKUP_SUBJECT}(?:에|은|는|이|가|의)?\s*(?:얼마|금액|돈)"
+)
+_LEADING_PERSON_FIELD_LOOKUP = re.compile(
+    rf"^\s*{_PERSON_LOOKUP_SUBJECT}(?:에|은|는|이|가|의)?\s*"
+    r"(?:전화번호|이메일|학과|전공|회비\s*구분)"
+)
 _GROUP_SUM_EXTREME = re.compile(
     r"(?:가장|제일|최고).{0,16}?(?:많이|큰|높은).{0,12}?(?:사람|회원|인원)|"
     r"(?:사람|회원|인원).{0,12}?(?:가장|제일|최고).{0,16}?(?:많이|큰|높은)"
 )
 _GROUP_SUM_MINIMUM = re.compile(
-    r"(?:가장|제일)\s*(?:돈|금액|회비|결제)?.{0,8}?(?:적게|작게|낮게|최소로).{0,8}?(?:낸|지급한|결제한)?\s*(?:사람|회원|인원)|"
-    r"(?:돈|금액|회비|결제).{0,8}?(?:가장|제일)\s*(?:적게|작게|낮게).{0,8}?(?:낸|지급한|결제한)?\s*(?:사람|회원|인원)"
+    r"(?:가장|제일)\s*(?:돈|금액|회비|결제)?.{0,8}?(?:적게|작게|낮게|최소로).{0,8}?(?:낸|지급한|결제한)?\s*(?:사람|회원|인원|누구(?:야|인지|인가)?)|"
+    r"(?:돈|금액|회비|결제).{0,8}?(?:가장|제일)\s*(?:적게|작게|낮게).{0,8}?(?:낸|지급한|결제한)?\s*(?:사람|회원|인원|누구(?:야|인지|인가)?)"
 )
 _PERSON_DISPLAY_SUFFIX = re.compile(r"\s*[\(\[\{][^\]\)\}]*[\]\)\}]\s*$")
+_NON_PERSON_LEADING_TOKENS = {"가장", "제일", "최고", "최저", "사람", "회원", "누구"}
 
 # These are user-facing Korean equivalents for a semantic category, not names
 # from any one document. The selected column still has to be inferred from the
 # dataframe schema before it can be used in a plan.
 _SEMANTIC_REQUEST_TERMS = {
     "department": ("학과", "학부", "전공", "계열", "무슨 과"),
+    # "언제" has no column-name overlap.  Return all available temporal
+    # evidence (components and full dates) so a sparse registered-date column
+    # cannot hide otherwise valid payment timing information.
+    "payment_time": ("언제", "날짜", "일자", "시기"),
 }
 
 
@@ -89,8 +102,18 @@ def _requested_columns(df: pd.DataFrame, question: str) -> list[Hashable]:
                     and meaning.role == "category"
                     and meaning.qualifier == qualifier
                 ),
-            )
+            ),
         )
+        if qualifier == "payment_time":
+            requested.extend(
+                _columns(
+                    df,
+                    lambda meaning: (
+                        meaning.concept == "temporal"
+                        and meaning.role in {"year", "month", "date", "year_month"}
+                    ),
+                )
+            )
     return list(dict.fromkeys(requested))
 
 
@@ -145,6 +168,166 @@ def _person_filter(
             source_text=_PERSON_DISPLAY_SUFFIX.sub("", base_matches[0]).strip(),
         )
     return None
+
+
+def has_unmatched_person_amount_reference(
+    question: str,
+    *,
+    dataframes: Mapping[str, pd.DataFrame],
+) -> bool:
+    """Identify a leading person-like amount lookup absent from the scoped data.
+
+    This is deliberately narrow: it applies only to a Korean name-shaped token
+    at the beginning of an amount lookup.  Before reporting no result, the
+    candidate is checked against the schema-derived person column and every
+    textual cell value so category/value queries are not mistaken for names.
+    """
+    match = _LEADING_PERSON_AMOUNT_LOOKUP.search(str(question or ""))
+    if not match or not dataframes:
+        return False
+    candidate = _norm(match.group(1))
+    if len(candidate) < 2:
+        return False
+    if candidate in {_norm(token) for token in _NON_PERSON_LEADING_TOKENS}:
+        return False
+
+    for df in dataframes.values():
+        person = _first(
+            df,
+            lambda item: (
+                item.concept == "entity"
+                and item.role == "entity_name"
+                and item.qualifier == "person"
+            ),
+        )
+        if person is not None:
+            for value in df[person].dropna().astype(str).str.strip().unique():
+                base = _PERSON_DISPLAY_SUFFIX.sub("", value).strip()
+                if candidate in {_norm(value), _norm(base)}:
+                    return False
+
+        for column in df.columns:
+            if str(column).startswith("_") or column_data_type(df, column) != "string":
+                continue
+            values = df[column].dropna().astype(str).str.strip()
+            if any(_norm(value) == candidate for value in values[values.ne("")].unique()):
+                return False
+    return True
+
+
+def has_unmatched_person_field_reference(
+    question: str,
+    *,
+    dataframes: Mapping[str, pd.DataFrame],
+) -> bool:
+    """Identify a leading person-like field lookup absent from scoped data.
+
+    This mirrors the amount-lookup fast path, but is deliberately restricted to
+    explicit personal-field requests.  It prevents an absent person from being
+    sent through repeated LLM planning attempts while preserving reverse field
+    lookups and non-person category queries.
+    """
+    match = _LEADING_PERSON_FIELD_LOOKUP.search(str(question or ""))
+    if not match or not dataframes:
+        return False
+    candidate = _norm(match.group(1))
+    if len(candidate) < 2:
+        return False
+    if candidate in {_norm(token) for token in _NON_PERSON_LEADING_TOKENS}:
+        return False
+
+    for df in dataframes.values():
+        person = _first(
+            df,
+            lambda item: (
+                item.concept == "entity"
+                and item.role == "entity_name"
+                and item.qualifier == "person"
+            ),
+        )
+        if person is not None:
+            for value in df[person].dropna().astype(str).str.strip().unique():
+                base = _PERSON_DISPLAY_SUFFIX.sub("", value).strip()
+                if candidate in {_norm(value), _norm(base)}:
+                    return False
+
+        for column in df.columns:
+            if str(column).startswith("_") or column_data_type(df, column) != "string":
+                continue
+            values = df[column].dropna().astype(str).str.strip()
+            if any(_norm(value) == candidate for value in values[values.ne("")].unique()):
+                return False
+    return True
+
+
+def ambiguous_person_lookup_candidates(
+    question: str,
+    *,
+    dataframes: Mapping[str, pd.DataFrame],
+) -> tuple[str, ...]:
+    """Return person-name candidates only for an ambiguous leading lookup.
+
+    A short partial name must never be treated as absent merely because it is
+    not an exact stored value.  Exact and unique display-name-base matches are
+    handled by ``_person_filter``; this helper only surfaces multiple possible
+    people so the caller can request a full name instead of guessing.
+    """
+    match = _LEADING_PERSON_AMOUNT_LOOKUP.search(str(question or "")) or _LEADING_PERSON_FIELD_LOOKUP.search(str(question or ""))
+    if not match or not dataframes:
+        return ()
+    candidate = _norm(match.group(1))
+    if len(candidate) < 2:
+        return ()
+
+    matches: list[str] = []
+    for df in dataframes.values():
+        person = _first(
+            df,
+            lambda item: (
+                item.concept == "entity"
+                and item.role == "entity_name"
+                and item.qualifier == "person"
+            ),
+        )
+        if person is None:
+            continue
+        for value in df[person].dropna().astype(str).str.strip().unique():
+            base = _PERSON_DISPLAY_SUFFIX.sub("", value).strip()
+            if candidate in {_norm(value), _norm(base)}:
+                return ()
+            if _norm(value).startswith(candidate) or _norm(base).startswith(candidate):
+                matches.append(value)
+    unique = tuple(dict.fromkeys(matches))
+    return unique if len(unique) > 1 else ()
+
+
+def is_grounded_person_payment_existence_question(
+    question: str,
+    *,
+    dataframes: Mapping[str, pd.DataFrame],
+) -> bool:
+    """Whether a payment-existence phrase has one grounded person subject."""
+    text = str(question or "")
+    # A payment-time request can include the same verb (for example "언제
+    # 냈어?") but must keep its temporal projection rather than becoming a sum.
+    if re.search(r"(?:\uc5b8\uc81c|\ub0a0\uc9dc|\ub4f1\ub85d|\uc2dc\uae30)", text):
+        return False
+    payment_existence = _PAYMENT_EXISTENCE.search(text) or re.search(
+        r"(?:\ub0c8\uc74c|\ub0c8\uc5b4|\ub0c8\ub098|\ub0b8\uac70)\??$",
+        text,
+    )
+    if not payment_existence or len(dataframes) != 1:
+        return False
+    _, df = next(iter(dataframes.items()))
+    person = _first(
+        df,
+        lambda item: (
+            item.concept == "entity"
+            and item.role == "entity_name"
+            and item.qualifier == "person"
+        ),
+    )
+    return person is not None and _person_filter(df, person, _norm(question)) is not None
 
 
 def build_schema_grounded_plan(

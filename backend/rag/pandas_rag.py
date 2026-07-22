@@ -295,9 +295,32 @@ async def _answer_pandas(
             date_filter=analysis.date_filter,
         )
         if direct_result is None:
-            return "조회된 데이터가 없습니다.", [], "pandas"
-        logger.info("[AGGREGATION] 고정 집계 실행 | source=%s", direct_sources)
-        return _format_scalar_result(direct_result, question), direct_sources, "pandas"
+            # Person-ranking aggregation may be structurally valid even when
+            # the legacy direct aggregator cannot produce its subject payload.
+            # Let the schema-grounded QueryPlan handle it instead of turning
+            # an unsupported direct shape into a false no-data response.
+            person_ranking = any(
+                intent.operation in {"min", "max"}
+                and intent.target in {"person_total", "row"}
+                for intent in analysis.aggregation_intents
+            )
+            if not person_ranking:
+                return "조회된 데이터가 없습니다.", [], "pandas"
+        else:
+            direct_notice = (
+                isinstance(direct_result, dict)
+                and direct_result.get("type") == "aggregation_notice"
+            )
+            person_ranking = any(
+                intent.operation in {"min", "max"}
+                and intent.target in {"person_total", "row"}
+                for intent in analysis.aggregation_intents
+            )
+            if direct_notice and person_ranking:
+                direct_result = None
+            else:
+                logger.info("[AGGREGATION] 고정 집계 실행 | source=%s", direct_sources)
+                return _format_scalar_result(direct_result, question), direct_sources, "pandas"
 
     # 1단계: 이름 전수 검색 (기존)
     # 숫자 비교가 명시된 복합 필터 질문에서 일반 조건어를 마스킹 이름으로

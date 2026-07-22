@@ -66,7 +66,13 @@ from rag.question_engine import (
     compare_shadow_decision,
     decide_question,
 )
-from rag.deterministic_query_plan import build_schema_grounded_plan
+from rag.deterministic_query_plan import (
+    ambiguous_person_lookup_candidates,
+    build_schema_grounded_plan,
+    has_unmatched_person_amount_reference,
+    has_unmatched_person_field_reference,
+    is_grounded_person_payment_existence_question,
+)
 from rag.question_decision import QuestionDecision
 
 logger = logging.getLogger("uvicorn.error")
@@ -112,7 +118,13 @@ async def _resolve_llm_question(question: str):
     # A plain whole-table list has no semantic ambiguity and should not wait
     # for a local model. File/document inventories use a separate route and do
     # not match this table-record expression.
-    if re.fullmatch(
+    if is_grounded_person_payment_existence_question(question, dataframes=dataframes):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="lookup_amount"
+        )
+        if candidate is not None:
+            deterministic_operation = "lookup_amount"
+    elif re.fullmatch(
         r"(?:표의?)?(?:전체|모든|전부)(?:데이터|기록|행|명단|목록|리스트)?"
         r"(?:보여줘|보여|알려줘|조회해줘|확인해줘)?[?!.]*",
         normalized,
@@ -130,6 +142,14 @@ async def _resolve_llm_question(question: str):
         )
         if candidate is not None:
             deterministic_operation = "structured_query"
+    # A payment-time request can naturally contain "돈 냈어".  Resolve its
+    # explicit temporal projection before the payment-existence total below.
+    elif any(token in normalized for token in ("등록날짜", "지급일", "날짜", "언제", "시기")):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="lookup_field"
+        )
+        if candidate is not None:
+            deterministic_operation = "lookup_field"
     elif re.search(r"(?:돈|금액|회비|결제|납부|후원|기부).{0,8}?(?:냈|내었|냈어|냈나요|했어|했나|했나요)", normalized):
         candidate = build_schema_grounded_plan(
             question, dataframes=dataframes, operation_hint="lookup_amount"
@@ -145,7 +165,7 @@ async def _resolve_llm_question(question: str):
         )
         if candidate is not None:
             deterministic_operation = "lookup_amount"
-    elif any(token in normalized for token in ("전화번호", "이메일", "전공", "학과", "등록날짜", "지급일")):
+    elif any(token in normalized for token in ("전화번호", "이메일", "전공", "학과")):
         candidate = build_schema_grounded_plan(
             question, dataframes=dataframes, operation_hint="lookup_field"
         )
@@ -157,7 +177,10 @@ async def _resolve_llm_question(question: str):
         )
         if candidate is not None:
             deterministic_operation = "count_records"
-    elif re.search(r"(?:총합|합계|총액|얼마(?:야|예|지|냈))", normalized):
+    # A grounded person plus a short money noun is a person-scoped total.
+    # The QueryPlan builder keeps explicit average/mode/ranking precedence and
+    # declines this route unless the subject is grounded in the dataframe.
+    elif re.search(r"(?:총합|합계|총액|얼마|금액|돈)", normalized):
         candidate = build_schema_grounded_plan(
             question, dataframes=dataframes, operation_hint="sum_amount"
         )
@@ -399,6 +422,38 @@ async def chat(
                 and req.mode == "auto"
             )
             if use_llm_engine:
+                scoped_dataframes = scoped_mapping(_df_namespace, _df_sources)
+                candidates = ambiguous_person_lookup_candidates(
+                    req.question,
+                    dataframes=scoped_dataframes,
+                )
+                if candidates:
+                    return ChatResponse(
+                        answer=(
+                            "동일하거나 유사한 이름의 회원이 여러 명입니다. "
+                            "전체 이름을 알려 주세요. 후보: " + ", ".join(candidates)
+                        ),
+                        source="pandas",
+                        sources=[],
+                    )
+                if has_unmatched_person_field_reference(
+                    req.question,
+                    dataframes=scoped_dataframes,
+                ):
+                    return ChatResponse(
+                        answer="\uc870\ud68c\ub41c \uc815\ubcf4\uac00 \uc5c6\uc2b5\ub2c8\ub2e4.",
+                        source="pandas",
+                        sources=[],
+                    )
+                if has_unmatched_person_amount_reference(
+                    req.question,
+                    dataframes=scoped_dataframes,
+                ):
+                    return ChatResponse(
+                        answer="조회된 금액이 없습니다.",
+                        source="pandas",
+                        sources=[],
+                    )
                 try:
                     guard_result, route, pandas_strategy = (
                         await _resolve_llm_question(req.question)

@@ -97,6 +97,40 @@ def _unique_people_from_evidence(answer: str) -> int | None:
     return int(match.group(1).replace(",", "")) if match else None
 
 
+def _is_no_data_answer(answer: str) -> bool:
+    """Recognize the normal user-facing response for an empty filtered result."""
+    normalized = _normalize_text(answer)
+    return any(
+        phrase in normalized
+        for phrase in (
+            "\uc870\ud68c\ub41c\uae08\uc561\uc774\uc5c6\uc2b5\ub2c8\ub2e4",
+            "\uc870\ud68c\ub41c\uc815\ubcf4\uac00\uc5c6\uc2b5\ub2c8\ub2e4",
+            "\uc870\ud68c\uacb0\uacfc\uac00\uc5c6\uc2b5\ub2c8\ub2e4",
+            "\uc870\ud68c\ub41c\ub370\uc774\ud130\uac00\uc5c6\uc2b5\ub2c8\ub2e4",
+        )
+    )
+
+
+def _is_missing_value_answer(answer: str) -> bool:
+    """Recognize an existing record whose requested field is blank/null."""
+    normalized = _normalize_text(answer)
+    return any(
+        phrase in normalized
+        for phrase in (
+            "\uc5c6\uc74c",
+            "\ube44\uc5b4\uc788\uc2b5\ub2c8\ub2e4",
+            "\ubbf8\ub4f1\ub85d",
+            "\uc785\ub825\ub418\uc9c0\uc54a\uc558\uc2b5\ub2c8\ub2e4",
+            "\uc815\ubcf4\uac00\uc5c6\uc2b5\ub2c8\ub2e4",
+        )
+    )
+
+
+def _is_clarification_answer(answer: str) -> bool:
+    normalized = _normalize_text(answer)
+    return "여러명" in normalized and "전체이름" in normalized
+
+
 def score_structured_facts(answer: str, expected: dict[str, Any]) -> tuple[bool, list[dict[str, Any]]]:
     """Verify goldset facts against scalar output and deterministic execution evidence.
 
@@ -111,19 +145,31 @@ def score_structured_facts(answer: str, expected: dict[str, Any]) -> tuple[bool,
 
     if "record_count" in expected:
         actual_rows = _matched_rows_from_evidence(answer)
-        add("record_count", expected["record_count"], actual_rows, actual_rows == expected["record_count"])
+        expected_rows = expected["record_count"]
+        empty_result = expected_rows == 0 and _is_no_data_answer(answer)
+        add("record_count", expected_rows, 0 if empty_result else actual_rows,
+            actual_rows == expected_rows or empty_result)
 
     if "unique_people" in expected:
         expected_people = expected["unique_people"]
         actual_people = _unique_people_from_evidence(answer)
         add("unique_people", expected_people, actual_people, actual_people == expected_people)
 
-    for field in ("amount", "name", "matched_name", "major", "email", "phone", "registered_at"):
+    for field in (
+        "amount", "min_amount", "max_amount", "mode_amount",
+        "name", "matched_name", "major", "email", "phone", "registered_at",
+    ):
         if field not in expected:
             continue
         value = expected[field]
-        ok = _contains_money(answer, value) if field == "amount" else _normalize_text(value) in _normalize_text(answer)
-        add(field, value, None, ok)
+        empty_result = expected.get("record_count") == 0 and _is_no_data_answer(answer)
+        missing_value = value is None and _is_missing_value_answer(answer)
+        ok = empty_result or missing_value if (empty_result or missing_value) else (
+            _contains_money(answer, value)
+            if field in {"amount", "min_amount", "max_amount", "mode_amount"}
+            else _normalize_text(value) in _normalize_text(answer)
+        )
+        add(field, value, 0 if field == "amount" and empty_result else None, ok)
 
     if "fee_types" in expected:
         for value in expected["fee_types"]:
@@ -132,8 +178,12 @@ def score_structured_facts(answer: str, expected: dict[str, Any]) -> tuple[bool,
     if "exists" in expected:
         # The remaining expected facts (for example amount and record_count)
         # establish existence.  A negative case must explicitly say no data.
-        no_data = "조회된 데이터가 없습니다" in answer
+        no_data = _is_no_data_answer(answer)
         add("exists", expected["exists"], None, not no_data if expected["exists"] else no_data)
+
+    if "clarification" in expected:
+        add("clarification", expected["clarification"], None,
+            _is_clarification_answer(answer) == expected["clarification"])
 
     # Goldset may add explicit exclusions for list questions.  Supporting this
     # now prevents a future return-the-whole-table false positive.

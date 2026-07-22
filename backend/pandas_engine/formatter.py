@@ -227,7 +227,9 @@ def _format_list_result(df: pd.DataFrame) -> str:
     if df is None or (hasattr(df, "empty") and df.empty):
         return "조회된 데이터가 없습니다."
     warning = _mask_warning(df)
-    display = _display_df(df)
+    # Keep missing spreadsheet fields user-facing. Pandas' ``NaN`` is an
+    # implementation detail, not a meaningful answer value.
+    display = _display_df(df).fillna("없음")
     header = f"총 {len(display)}건\n"
     date_evidence = df.attrs.get("date_filter_evidence")
     if isinstance(date_evidence, dict) and "items" not in date_evidence:
@@ -347,7 +349,16 @@ def _format_query_execution_result(
     """Format deterministic QueryPlan output without another LLM call."""
 
     if isinstance(result.value, pd.DataFrame):
-        answer = _format_dataframe_result_for_question(result.value, question)
+        if result.operation == "group_sum" and not result.value.empty:
+            group_column = result.value.columns[0]
+            amount_column = result.target or result.value.columns[-1]
+            lines = [
+                f"{row[group_column]} {_format_number(row[amount_column])}"
+                for _, row in result.value.iterrows()
+            ]
+            answer = f"총 {len(lines)}건\n" + "\n".join(lines)
+        else:
+            answer = _format_dataframe_result_for_question(result.value, question)
     elif result.operation == "count":
         unit = "명" if result.evidence.distinct_by else "건"
         answer = f"총 {int(result.value or 0):,}{unit}입니다."
