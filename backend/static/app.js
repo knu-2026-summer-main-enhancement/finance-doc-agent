@@ -34,6 +34,11 @@ const elements = {
   questionInput: document.getElementById("questionInput"),
   sendButton: document.getElementById("sendButton"),
   toast: document.getElementById("toast"),
+  detailDialog: document.getElementById("detailDialog"),
+  detailTitle: document.getElementById("detailTitle"),
+  detailBody: document.getElementById("detailBody"),
+  closeDetail: document.getElementById("closeDetail"),
+  detailMore: document.getElementById("detailMore"),
 };
 
 const state = {
@@ -270,7 +275,7 @@ async function uploadDocument(event) {
   }
 }
 
-function appendMessage(role, text, route = "", sources = []) {
+function appendMessage(role, text, route = "", sources = [], result = null) {
   const message = document.createElement("article");
   message.className = `message ${role}`;
 
@@ -289,23 +294,134 @@ function appendMessage(role, text, route = "", sources = []) {
 
   const body = document.createElement("div");
   body.className = "message-body";
-  body.textContent = text;
+  const inlineSegments = role === "assistant" ? result?.inline_segments : null;
+  if (Array.isArray(inlineSegments) && inlineSegments.length) {
+    inlineSegments.forEach((segment) => {
+      if (!segment.kind) {
+        body.append(document.createTextNode(segment.text));
+        return;
+      }
+      const link = document.createElement("button");
+      link.type = "button";
+      link.className = `answer-link ${segment.kind}-link`;
+      link.textContent = segment.text;
+      link.addEventListener("click", () => openDetail(segment.detail_ref));
+      body.append(link);
+    });
+  } else {
+    body.textContent = text.split("\n\n계산 근거:", 1)[0];
+  }
   message.append(body);
 
-  if (sources.length) {
-    const sourceRow = document.createElement("div");
-    sourceRow.className = "source-row";
-    sources.forEach((source) => {
-      const chip = document.createElement("span");
-      chip.className = "source-chip";
-      chip.textContent = source;
-      sourceRow.append(chip);
-    });
-    message.append(sourceRow);
-  }
   elements.chatArea.append(message);
   elements.chatArea.scrollTop = elements.chatArea.scrollHeight;
   return message;
+}
+
+function renderDetail(detail) {
+  elements.detailTitle.textContent = detail.kind === "entity_detail"
+    ? `${detail.display_name || "사람"} 정보`
+    : detail.kind === "entity_collection_detail"
+      ? `${detail.display_name || "동명이인"} 정보 선택`
+      : "계산 상세";
+  elements.detailBody.replaceChildren();
+  if (detail.kind === "entity_detail") {
+    (detail.attributes || []).forEach((item) => {
+      const row = document.createElement("div"); row.className = "detail-row";
+      const label = document.createElement("strong"); label.textContent = item.column;
+      const value = document.createElement("span"); value.textContent = item.missing ? "없음" : item.value;
+      row.append(label, value); elements.detailBody.append(row);
+    });
+    if ((detail.payment_history || []).length) {
+      const historyTitle = document.createElement("h3");
+      historyTitle.className = "detail-section-title";
+      historyTitle.textContent = `결제 이력 ${detail.payment_history.length}건`;
+      elements.detailBody.append(historyTitle);
+      (detail.payment_history || []).forEach((record, index) => {
+        const card = document.createElement("section");
+        card.className = "detail-record-card payment-history-card";
+        const number = document.createElement("div");
+        number.className = "detail-record-number";
+        number.textContent = `${index + 1}`;
+        const fields = document.createElement("div");
+        fields.className = "detail-record-fields";
+        (record.fields || []).forEach((historyField) => {
+          const field = document.createElement("div");
+          const label = document.createElement("span"); label.textContent = historyField.column;
+          const value = document.createElement("strong");
+          value.textContent = historyField.data_type === "money" && typeof historyField.value === "number"
+            ? `${historyField.value.toLocaleString("ko-KR")}원`
+            : historyField.value ?? "없음";
+          field.append(label, value); fields.append(field);
+        });
+        card.append(number, fields);
+        elements.detailBody.append(card);
+      });
+    }
+  } else if (detail.kind === "entity_collection_detail") {
+    const guide = document.createElement("p");
+    guide.className = "contributor-caption";
+    guide.textContent = `같은 이름의 정보가 ${detail.candidates?.length ?? 0}개 있습니다.`;
+    elements.detailBody.append(guide);
+    (detail.candidates || []).forEach((candidate, index) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "entity-candidate-card";
+      const title = document.createElement("strong"); title.textContent = `${detail.display_name} ${index + 1}`;
+      const preview = document.createElement("span");
+      preview.textContent = (candidate.attributes || []).slice(0, 3).map((item) => `${item.column}: ${item.value ?? "없음"}`).join(" · ");
+      card.append(title, preview);
+      card.addEventListener("click", () => openDetail(candidate.detail_ref));
+      elements.detailBody.append(card);
+    });
+  } else {
+    const summary = document.createElement("div");
+    summary.className = "calculation-summary";
+    const operationLabels = { sum: "합계", mean: "평균", median: "중앙값", min: "최솟값", max: "최댓값", mode: "최빈값", count: "개수", group_sum: "그룹 합계" };
+    const summaryTitle = document.createElement("strong"); summaryTitle.textContent = operationLabels[detail.operation] || "계산";
+    const summaryTarget = document.createElement("span"); summaryTarget.textContent = detail.target || "대상";
+    const summaryValue = document.createElement("b"); summaryValue.textContent = detail.value ?? "-";
+    const summaryCounts = document.createElement("small"); summaryCounts.textContent = `유효 ${detail.valid_rows ?? 0}건 · 제외 ${detail.excluded_rows ?? 0}건`;
+    summary.append(summaryTitle, summaryTarget, summaryValue, summaryCounts);
+    elements.detailBody.append(summary);
+    const caption = document.createElement("p");
+    caption.className = "contributor-caption";
+    caption.textContent = `기여 기록 ${detail.page?.total ?? 0}건`;
+    elements.detailBody.append(caption);
+    (detail.contributors || []).forEach((record, index) => {
+      const card = document.createElement("section");
+      card.className = "detail-record-card";
+      const number = document.createElement("div");
+      number.className = "detail-record-number";
+      number.textContent = `${(detail.page?.offset ?? 0) + index + 1}`;
+      const fields = document.createElement("div");
+      fields.className = "detail-record-fields";
+      Object.entries(record).forEach(([key, rawValue]) => {
+        const field = document.createElement("div");
+        const label = document.createElement("span"); label.textContent = key;
+        const value = document.createElement("strong"); value.textContent = rawValue ?? "없음";
+        field.append(label, value); fields.append(field);
+      });
+      card.append(number, fields);
+      elements.detailBody.append(card);
+    });
+  }
+  const page = detail.page;
+  elements.detailMore.hidden = !page?.has_more;
+  elements.detailMore.onclick = () => openDetail(detail._reference, page.offset + page.limit);
+  if (!elements.detailDialog.open) elements.detailDialog.showModal();
+}
+
+async function openDetail(reference, offset = 0) {
+  try {
+    const response = await fetch(`/chat/details/${encodeURIComponent(reference)}?offset=${offset}&limit=50`, { headers: apiHeaders() });
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const detail = await response.json();
+    detail._reference = reference;
+    renderDetail(detail);
+  } catch (error) {
+    showToast(`상세 조회 실패: ${error.message}`);
+  }
 }
 
 function appendLoading() {
@@ -356,7 +472,7 @@ async function sendQuestion(question) {
     const data = await response.json();
     loading.remove();
     const responseMode = mode === "natural" ? "natural" : (data.source || "");
-    appendMessage("assistant", data.answer || "답변이 비어 있습니다.", responseMode, data.sources || []);
+    appendMessage("assistant", data.answer || "답변이 비어 있습니다.", responseMode, data.sources || [], data.result || null);
   } catch (error) {
     loading.remove();
     appendMessage("assistant", error.message, "error");
@@ -475,6 +591,8 @@ elements.clearChat.addEventListener("click", () => {
   elements.chatArea.innerHTML = initialChat;
   bindSuggestions();
 });
+elements.closeDetail.addEventListener("click", () => elements.detailDialog.close());
+elements.detailDialog.addEventListener("click", (event) => { if (event.target === elements.detailDialog) elements.detailDialog.close(); });
 elements.openSidebar.addEventListener("click", () => elements.sidebar.classList.add("open"));
 elements.closeSidebar.addEventListener("click", () => elements.sidebar.classList.remove("open"));
 

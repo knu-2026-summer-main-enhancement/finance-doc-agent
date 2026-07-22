@@ -85,6 +85,17 @@ class QueryExecutorTest(unittest.TestCase):
         self.assertEqual(result.evidence.limit, 2)
         self.assertEqual(result.evidence.filters[0].column, "기수")
 
+    def test_list_dense_rank_returns_all_tied_rows(self):
+        result = self._execute(
+            {
+                "operation": "list",
+                "sort": [{"column": "기수", "direction": "desc"}],
+                "rank_position": 2,
+                "tie_policy": "dense",
+            }
+        )
+        self.assertEqual(result.value["기수"].tolist(), [59, 59])
+
     def test_any_filter_logic_uses_or(self):
         result = self._execute(
             {

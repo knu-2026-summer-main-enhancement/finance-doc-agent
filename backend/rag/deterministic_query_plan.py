@@ -44,6 +44,12 @@ _GROUP_SUM_MINIMUM = re.compile(
     r"(?:가장|제일)\s*(?:돈|금액|회비|결제)?.{0,8}?(?:적게|작게|낮게|최소로).{0,8}?(?:낸|지급한|결제한)?\s*(?:사람|회원|인원|누구(?:야|인지|인가)?)|"
     r"(?:돈|금액|회비|결제).{0,8}?(?:가장|제일)\s*(?:적게|작게|낮게).{0,8}?(?:낸|지급한|결제한)?\s*(?:사람|회원|인원|누구(?:야|인지|인가)?)"
 )
+_ORDINAL = re.compile(r"(?<!\d)(\d+)\s*(?:번째|째)")
+_KOREAN_ORDINAL = re.compile(r"(첫|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*(?:번째|째)")
+_KOREAN_ORDINAL_VALUES = {"첫": 1, "한": 1, "두": 2, "세": 3, "네": 4, "다섯": 5, "여섯": 6, "일곱": 7, "여덟": 8, "아홉": 9, "열": 10}
+_LIMIT = re.compile(r"(?<!\d)(\d+)\s*(?:건|개|명)(?!\d)")
+_DESC_ORDER = re.compile(r"(?:내림차순|큰\s*순(?:서(?:대로)?)?|많은\s*순(?:서(?:대로)?)?|높은\s*순(?:서(?:대로)?)?|최신|늦은|가장\s*(?:큰|많은|높은))")
+_ASC_ORDER = re.compile(r"(?:오름차순|작은\s*순(?:서(?:대로)?)?|적은\s*순(?:서(?:대로)?)?|낮은\s*순(?:서(?:대로)?)?|빠른|이른|가장\s*(?:작은|적은|낮은))")
 _PERSON_DISPLAY_SUFFIX = re.compile(r"\s*[\(\[\{][^\]\)\}]*[\]\)\}]\s*$")
 _NON_PERSON_LEADING_TOKENS = {"가장", "제일", "최고", "최저", "사람", "회원", "누구"}
 
@@ -347,6 +353,7 @@ def build_schema_grounded_plan(
     alias, df = next(iter(dataframes.items()))
     person = _first(df, lambda item: item.concept == "entity" and item.role == "entity_name" and item.qualifier == "person")
     money = _first(df, lambda item: item.role == "amount" or item.data_type == "money")
+    temporal = _first(df, lambda item: item.data_type == "date" or item.role in {"date", "registered_date"})
     year = _first(df, lambda item: item.role == "year")
     month = _first(df, lambda item: item.role == "month")
     normalized_question = _norm(question)
@@ -412,11 +419,24 @@ def build_schema_grounded_plan(
         return QueryPlan(status="ready", dataframe=alias, operation="list", filters=tuple(filters), select=select)
 
     people_count = bool(_PERSON_COUNT.search(question))
+    ordinal_match = _ORDINAL.search(question)
+    korean_ordinal_match = _KOREAN_ORDINAL.search(question)
+    rank_position = (
+        int(ordinal_match.group(1)) if ordinal_match
+        else _KOREAN_ORDINAL_VALUES.get(korean_ordinal_match.group(1)) if korean_ordinal_match else None
+    )
+    limit_match = _LIMIT.search(question)
+    explicit_limit = int(limit_match.group(1)) if limit_match else None
     group_order = (
         "asc" if _GROUP_SUM_MINIMUM.search(question)
         else "desc" if _GROUP_SUM_EXTREME.search(question)
         else None
     )
+    if rank_position is not None and person is not None and money is not None and re.search(r"(?:사람|회원|인원|누구)", question):
+        if re.search(r"(?:적게|작게|작은|낮게|낮은|최소)", question):
+            group_order = "asc"
+        elif re.search(r"(?:많이|많은|크게|큰|높게|높은|최대)", question):
+            group_order = "desc"
     if group_order is not None and person is not None and money is not None:
         return QueryPlan(
             status="ready",
@@ -426,7 +446,7 @@ def build_schema_grounded_plan(
             target=str(money),
             group_by=(str(person),),
             group_order=group_order,
-            top_n=1,
+            **({"rank_position": rank_position, "tie_policy": "dense"} if rank_position else {"top_n": explicit_limit or 1}),
         )
     if operation_hint == "count_records" or people_count or _ROW_COUNT.search(question):
         return QueryPlan(status="ready", dataframe=alias, operation="count", filters=tuple(filters), distinct_by=(str(person),) if people_count and person is not None else ())
@@ -443,11 +463,26 @@ def build_schema_grounded_plan(
             return None
         return QueryPlan(status="ready", dataframe=alias, operation="sum", filters=tuple(filters), target=str(money))
     if operation_hint in {"list_records", "filter_records", "structured_query"}:
-        if operation_hint != "list_records" and not filters:
+        direction = "desc" if _DESC_ORDER.search(question) else "asc" if _ASC_ORDER.search(question) else None
+        if direction is None and rank_position is not None:
+            if re.search(r"(?:큰|많은|높은|최대)", question):
+                direction = "desc"
+            elif re.search(r"(?:작은|적은|낮은|최소)", question):
+                direction = "asc"
+        if operation_hint != "list_records" and not filters and direction is None:
             return None
         select = tuple(dict.fromkeys((
             *((str(person),) if person is not None else ()),
             *(str(column) for column in requested if column != person),
         )))
+        sort_column = money if money is not None and re.search(r"(?:금액|돈|회비|결제|납부|후원|기부)", question) else temporal
+        if direction is not None and sort_column is not None:
+            return QueryPlan(
+                status="ready", dataframe=alias, operation="list", filters=tuple(filters), select=select,
+                sort=({"column": str(sort_column), "direction": direction},),
+                **({"rank_position": rank_position, "tie_policy": "dense"} if rank_position else {"limit": explicit_limit} if explicit_limit else {}),
+            )
+        if rank_position is not None:
+            return None
         return QueryPlan(status="ready", dataframe=alias, operation="list", filters=tuple(filters), select=select)
     return None

@@ -60,7 +60,8 @@ from rag.router import (
 from rag.guard import check_question, check_question_decision
 from rag.guide import build_guide_response
 from rag.vector import _answer_vector, _stream_vector
-from rag.pandas_rag import _answer_pandas
+from rag.pandas_rag import _answer_pandas, current_interactive_result
+from pandas_engine.interactive import get_interactive_detail
 from rag.question_engine import (
     QuestionEngineError,
     compare_shadow_decision,
@@ -177,6 +178,19 @@ async def _resolve_llm_question(question: str):
         )
         if candidate is not None:
             deterministic_operation = "count_records"
+    # Ordering and ordinal ranking must take precedence over the generic
+    # money-total shortcut below.  "금액을 큰 순서대로" is a list request,
+    # while "누적 금액이 두 번째로 큰 사람" is a grouped rank request.
+    elif re.search(
+        r"(?:오름차순|내림차순|순서대로|큰순|작은순|많은순|적은순|"
+        r"\d+번째|첫번째|두번째|세번째|네번째|다섯번째|최신|가장이른)",
+        normalized,
+    ):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="structured_query"
+        )
+        if candidate is not None:
+            deterministic_operation = "structured_query"
     # A grounded person plus a short money noun is a person-scoped total.
     # The QueryPlan builder keeps explicit average/mode/ranking precedence and
     # declines this route unless the subject is grounded in the dataframe.
@@ -293,6 +307,7 @@ class ChatResponse(BaseModel):
     answer: str #답변,
     source: str  #소스,
     sources: list[str] = Field(default_factory=list) #출처
+    result: dict | None = None
 
 class IngestRequest(BaseModel):
     file_path: str #파일 업로드 요청
@@ -340,6 +355,16 @@ def health():
         result["chromadb"] = "unreachable"
         result["status"] = "degraded"
     return result
+
+
+@app.get("/chat/details/{reference}")
+def chat_detail(reference: str, offset: int = 0, limit: int = 50, _: None = Depends(_verify_api_key)):
+    if offset < 0 or not 1 <= limit <= 100:
+        raise HTTPException(status_code=400, detail="offset/limit 범위가 올바르지 않습니다.")
+    detail = get_interactive_detail(reference, offset=offset, limit=limit)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="상세 조회 정보가 없거나 만료되었습니다.")
+    return detail
 
 
 @app.get("/summary") #모든 적재 문서의 요약 정보 반환 
@@ -516,6 +541,7 @@ async def chat(
                         else None
                     ),
                 )
+                interactive_result = current_interactive_result()
             else:
                 answer, sources, actual_route = await _answer_vector(
                     req.question,
@@ -525,7 +551,8 @@ async def chat(
                     ),
                     analysis=guard_result.analysis,
                 )
-            return ChatResponse(answer=answer, source=actual_route, sources=sources)
+                interactive_result = None
+            return ChatResponse(answer=answer, source=actual_route, sources=sources, result=interactive_result if route == "PANDAS" else None)
     except Exception as e:
         logger.exception("[CHAT] 처리 오류 | question=%s", req.question[:50])
         raise HTTPException(status_code=500, detail=str(e))

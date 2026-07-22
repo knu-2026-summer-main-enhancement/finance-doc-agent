@@ -83,6 +83,44 @@ class DeterministicQueryPlanTest(unittest.TestCase):
         self.assertEqual(plan.target, "\uacb0\uc81c_\uae08\uc561")
         self.assertEqual(plan.filters[0].value, "\uae40\ub098\ub2e4")
 
+    def test_amount_order_and_ordinal_are_explicit_list_rank(self):
+        plan = self._plan("결제 금액 큰 순으로 2번째 기록 보여줘", "list_records")
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.operation, "list")
+        self.assertEqual(plan.sort[0].column, "결제_금액")
+        self.assertEqual(plan.sort[0].direction, "desc")
+        self.assertEqual(plan.rank_position, 2)
+        self.assertEqual(plan.tie_policy, "dense")
+
+    def test_person_total_ordinal_uses_group_sum_not_payment_row(self):
+        plan = self._plan("두 번째로 많이 낸 사람은 누구야?", "structured_query")
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.operation, "group_sum")
+        self.assertEqual(plan.group_by, ("회원명",))
+        self.assertEqual(plan.rank_position, 2)
+
+    def test_natural_order_wording_and_explicit_limit_are_grounded(self):
+        plan = self._plan("2026년 결제 금액을 큰 순서대로 3건 보여줘", "structured_query")
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.operation, "list")
+        self.assertEqual(plan.sort[0].direction, "desc")
+        self.assertEqual(plan.limit, 3)
+
+    def test_ordinal_large_record_is_dense_row_rank(self):
+        plan = self._plan("2026년 두 번째로 큰 결제 내역 보여줘", "structured_query")
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.operation, "list")
+        self.assertEqual(plan.sort[0].direction, "desc")
+        self.assertEqual(plan.rank_position, 2)
+        self.assertEqual(plan.tie_policy, "dense")
+
+    def test_ordinal_large_person_total_is_group_rank(self):
+        plan = self._plan("2026년 누적 결제 금액이 두 번째로 큰 사람 알려줘", "structured_query")
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.operation, "group_sum")
+        self.assertEqual(plan.group_order, "desc")
+        self.assertEqual(plan.rank_position, 2)
+
     def test_short_person_money_terms_become_person_amount_sum(self):
         for question in (
             "\uae40\ub098\ub2e4 \uc5bc\ub9c8", "\uae40\ub098\ub2e4 \uae08\uc561",

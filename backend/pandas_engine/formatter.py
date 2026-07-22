@@ -329,6 +329,8 @@ def _format_query_plan_evidence(result: QueryExecutionResult) -> str:
         lines.append(f"- 반환 제한: {evidence.limit:,}개")
     elif evidence.top_n is not None:
         lines.append(f"- 순위 제한: 상위 {evidence.top_n:,}개")
+    if evidence.rank_position is not None:
+        lines.append(f"- 순위: 동순위 포함 {evidence.rank_position:,}번째")
     lines.append(
         f"- 행 수: 원본 {evidence.source_rows:,}개 → "
         f"조건 통과 {evidence.filtered_rows:,}개 → 계산 대상 {result.matched_rows:,}개"
@@ -349,7 +351,12 @@ def _format_query_execution_result(
     """Format deterministic QueryPlan output without another LLM call."""
 
     if isinstance(result.value, pd.DataFrame):
-        if result.operation == "group_sum" and not result.value.empty:
+        if result.value.empty and result.evidence.rank_position is not None:
+            answer = (
+                f"동순위를 포함한 {result.evidence.rank_position}번째 순위는 없습니다. "
+                f"조건에 맞는 서로 다른 순위 값은 {result.available_rank_count or 0}개입니다."
+            )
+        elif result.operation == "group_sum" and not result.value.empty:
             group_column = result.value.columns[0]
             amount_column = result.target or result.value.columns[-1]
             lines = [

@@ -119,6 +119,8 @@ class QueryPlan(_PlanModel):
     group_order: Literal["asc", "desc"] | None = None
     limit: int | None = Field(default=None, ge=1, le=500)
     top_n: int | None = Field(default=None, ge=1, le=100)
+    rank_position: int | None = Field(default=None, ge=1, le=100)
+    tie_policy: Literal["dense"] | None = None
     message: str | None = Field(default=None, max_length=500)
     candidates: tuple[str, ...] = Field(default_factory=tuple, max_length=20)
 
@@ -167,6 +169,8 @@ class QueryPlan(_PlanModel):
                 or self.group_order is not None
                 or self.limit is not None
                 or self.top_n is not None
+                or self.rank_position is not None
+                or self.tie_policy is not None
                 or self.result_mode is not None
             ):
                 raise ValueError(f"{self.status} must not include execution fields")
@@ -189,6 +193,15 @@ class QueryPlan(_PlanModel):
                 raise ValueError("list must return records")
             if self.top_n is not None:
                 raise ValueError("list uses limit instead of top_n")
+            if self.rank_position is not None:
+                if not self.sort:
+                    raise ValueError("rank_position requires an explicit sort")
+                if self.limit is not None:
+                    raise ValueError("rank_position must not be combined with limit")
+                if self.tie_policy not in {None, "dense"}:
+                    raise ValueError("unsupported list tie policy")
+            elif self.tie_policy is not None:
+                raise ValueError("tie_policy requires rank_position")
             return self
 
         if self.operation == "group_sum":
@@ -200,6 +213,12 @@ class QueryPlan(_PlanModel):
                 raise ValueError("group_sum returns ranked group records")
             if self.select or self.sort or self.distinct_by or self.limit is not None:
                 raise ValueError("group_sum uses group_by, group_order and top_n")
+            if self.rank_position is not None and self.top_n is not None:
+                raise ValueError("group_sum rank_position must not be combined with top_n")
+            if self.rank_position is not None and self.tie_policy not in {None, "dense"}:
+                raise ValueError("unsupported group_sum tie policy")
+            if self.rank_position is None and self.tie_policy is not None:
+                raise ValueError("tie_policy requires rank_position")
             return self
 
         if self.group_by or self.group_order is not None:
@@ -211,7 +230,7 @@ class QueryPlan(_PlanModel):
         if self.operation in scalar_operations:
             if self.result_mode not in {None, "value"}:
                 raise ValueError(f"{self.operation} must return a value")
-            if self.select or self.sort or self.limit is not None or self.top_n is not None:
+            if self.select or self.sort or self.limit is not None or self.top_n is not None or self.rank_position is not None or self.tie_policy is not None:
                 raise ValueError(
                     f"{self.operation} must not include record-returning fields"
                 )

@@ -46,6 +46,8 @@ class QueryExecutionEvidence:
     unique_people: int | None
     limit: int | None
     top_n: int | None
+    rank_position: int | None
+    tie_policy: str | None
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,9 @@ class QueryExecutionResult:
     valid_rows: int
     excluded_rows: int
     evidence: QueryExecutionEvidence
+    # Exact post-filter/post-distinct rows, retained for structured UI evidence.
+    matched_frame: pd.DataFrame
+    available_rank_count: int | None = None
 
 
 def _is_internal_column(column: object) -> bool:
@@ -300,11 +305,24 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
         unique_people=unique_people,
         limit=plan.effective_limit,
         top_n=plan.effective_top_n,
+        rank_position=plan.rank_position,
+        tie_policy=plan.tie_policy,
     )
 
     if plan.operation == "list":
         rows = _sort_rows(filtered, plan)
-        if plan.effective_limit is not None:
+        available_rank_count = None
+        if plan.rank_position is not None:
+            rank_column = _actual_column(rows, plan.sort[0].column)
+            ranked_values = _typed_series(rows, rank_column).dropna()
+            # Dense ranking: the Nth distinct sorted value returns every tied row.
+            distinct_values = ranked_values.drop_duplicates().tolist()
+            available_rank_count = len(distinct_values)
+            if len(distinct_values) < plan.rank_position:
+                rows = rows.iloc[0:0]
+            else:
+                rows = rows[_typed_series(rows, rank_column).eq(distinct_values[plan.rank_position - 1])]
+        elif plan.effective_limit is not None:
             rows = rows.head(plan.effective_limit)
         rows = _select_records(rows, plan)
         return QueryExecutionResult(
@@ -317,6 +335,8 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
             valid_rows=matched_rows,
             excluded_rows=0,
             evidence=evidence,
+            matched_frame=filtered,
+            available_rank_count=available_rank_count,
         )
 
     if plan.operation == "count":
@@ -339,6 +359,7 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
             valid_rows=valid_rows,
             excluded_rows=matched_rows - valid_rows,
             evidence=evidence,
+            matched_frame=filtered,
         )
 
     if plan.operation == "group_sum":
@@ -357,6 +378,7 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
         valid_input = grouped_input[valid_mask]
         valid_rows = int(len(valid_input))
         excluded_rows = matched_rows - valid_rows
+        available_rank_count = 0 if plan.rank_position is not None else None
         if valid_input.empty:
             ranked = pd.DataFrame(columns=[*plan.group_by, plan.target])
         else:
@@ -370,12 +392,20 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
                     kind="stable",
                 )
             )
-            top_n = plan.effective_top_n or 1
-            if top_n == 1 and not ranked.empty:
-                extreme = ranked.iloc[0][str(plan.target)]
-                ranked = ranked[ranked[str(plan.target)].eq(extreme)]
+            if plan.rank_position is not None:
+                distinct_values = ranked[str(plan.target)].drop_duplicates().tolist()
+                available_rank_count = len(distinct_values)
+                ranked = (
+                    ranked[ranked[str(plan.target)].eq(distinct_values[plan.rank_position - 1])]
+                    if len(distinct_values) >= plan.rank_position else ranked.iloc[0:0]
+                )
             else:
-                ranked = ranked.head(top_n)
+                top_n = plan.effective_top_n or 1
+                if top_n == 1 and not ranked.empty:
+                    extreme = ranked.iloc[0][str(plan.target)]
+                    ranked = ranked[ranked[str(plan.target)].eq(extreme)]
+                else:
+                    ranked = ranked.head(top_n)
         ranked.attrs.update(filtered.attrs)
         return QueryExecutionResult(
             operation="group_sum",
@@ -387,6 +417,8 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
             valid_rows=valid_rows,
             excluded_rows=excluded_rows,
             evidence=evidence,
+            matched_frame=filtered,
+            available_rank_count=available_rank_count,
         )
 
     if not plan.target:
@@ -445,4 +477,5 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
         valid_rows=valid_rows,
         excluded_rows=excluded_rows,
         evidence=evidence,
+        matched_frame=filtered,
     )

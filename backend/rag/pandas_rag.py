@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from contextvars import ContextVar
 from typing import Literal
 
 import pandas as pd
@@ -32,8 +33,18 @@ from rag.query_planner import (
 from rag.question_analyzer import QuestionAnalysis, analyze_question
 from rag.deterministic_query_plan import build_schema_grounded_plan
 from utils.semantic_schema import infer_column_meaning
+from pandas_engine.interactive import build_interactive_result, build_interactive_dataframe
 
 logger = logging.getLogger("uvicorn.error")
+_interactive_result: ContextVar[dict | None] = ContextVar("interactive_result", default=None)
+
+
+def clear_interactive_result() -> None:
+    _interactive_result.set(None)
+
+
+def current_interactive_result() -> dict | None:
+    return _interactive_result.get()
 
 _NUMERIC_COMPARISON_FILTER = re.compile(
     r"(?:\d[\d,.]*\s*(?:원|만원|천원|점|명|개)?\s*(?:이상|이하|초과|미만))"
@@ -83,7 +94,9 @@ def _format_direct_dataframe_with_evidence(
         )
         unique_people = int(df[person_column].dropna().nunique())
         lines.append(f"- 조건 충족 고유 인원: {unique_people:,}명")
-    return "\n".join(lines)
+    answer = "\n".join(lines)
+    _interactive_result.set(build_interactive_dataframe(df, answer=answer))
+    return answer
 
 
 async def _answer_query_plan(
@@ -115,8 +128,10 @@ async def _answer_query_plan(
         )
         if early_validation.is_executable:
             execution = execute_query_plan(early_validation)
+            answer = _format_query_execution_result(execution, question)
+            _interactive_result.set(build_interactive_result(execution, answer=answer))
             logger.info("[PANDAS] 스키마 기반 선행 계획 실행 | operation=%s", execution.operation)
-            return _format_query_execution_result(execution, question), [execution.source_file], "pandas"
+            return answer, [execution.source_file], "pandas"
     try:
         validation = await generate_validated_query_plan(
             question,
@@ -139,8 +154,10 @@ async def _answer_query_plan(
             )
             if fallback_validation.is_executable:
                 execution = execute_query_plan(fallback_validation)
+                answer = _format_query_execution_result(execution, question)
+                _interactive_result.set(build_interactive_result(execution, answer=answer))
                 logger.warning("[PANDAS] 스키마 기반 폴백 계획 실행 | operation=%s", execution.operation)
-                return _format_query_execution_result(execution, question), [execution.source_file], "pandas"
+                return answer, [execution.source_file], "pandas"
         return (
             "질문을 안전한 표 조회 계획으로 변환하지 못했습니다. "
             "조회할 항목과 조건을 조금 더 명확하게 입력해 주세요.",
@@ -189,8 +206,10 @@ async def _answer_query_plan(
             )
             if fallback_validation.is_executable:
                 execution = execute_query_plan(fallback_validation)
+                answer = _format_query_execution_result(execution, question)
+                _interactive_result.set(build_interactive_result(execution, answer=answer))
                 logger.warning("[PANDAS] 검증 실패 후 스키마 기반 폴백 실행 | operation=%s", execution.operation)
-                return _format_query_execution_result(execution, question), [execution.source_file], "pandas"
+                return answer, [execution.source_file], "pandas"
         if any(
             issue.code in {"literal_mismatch", "ungrounded_numeric_filter"}
             for issue in validation.issues
@@ -221,6 +240,7 @@ async def _answer_query_plan(
         execution.source_file,
     )
     answer = _format_query_execution_result(execution, question)
+    _interactive_result.set(build_interactive_result(execution, answer=answer))
     return answer, [execution.source_file], "pandas"
 
 
@@ -231,6 +251,7 @@ async def _answer_pandas(
     strategy: Literal["AUTO", "DIRECT", "QUERY_PLAN"] = "AUTO",
     operation_hint: str | None = None,
 ) -> tuple[str, list[str], str]:
+    clear_interactive_result()
     scoped_dataframes = scoped_mapping(_df_namespace, _df_sources)
     if not scoped_dataframes:
         message = "선택한 문서에서 조회 가능한 표 데이터를 찾을 수 없습니다." if source_scope_active() else "현재 로드된 데이터프레임이 없습니다."
