@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>문서 조회 에이전트</title>
-  <script>if (location.pathname === "/ui-v2") document.documentElement.classList.add("ui-v2"); if (location.pathname === "/ui") { const root = document.documentElement; root.classList.add("ui-v3"); const syncV3Layout = () => root.classList.toggle("ui-v2", window.innerWidth > 820); syncV3Layout(); window.addEventListener("resize", syncV3Layout); }</script>
+  <script>const root = document.documentElement; root.classList.add("ui-v3"); const syncLayout = () => root.classList.toggle("ui-v2", window.innerWidth > 820); syncLayout(); window.addEventListener("resize", syncLayout);</script>
   <link rel="stylesheet" href="/static/style.css?v=20260722-53">
 </head>
 <body>

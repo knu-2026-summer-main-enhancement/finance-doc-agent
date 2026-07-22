@@ -216,25 +216,7 @@ def root_ui():
 
 @app.get("/ui", include_in_schema=False)
 def chatbot_ui():
-    """Primary chat UI (V3 on mobile, V2 treatment on desktop)."""
-    return FileResponse(
-        os.path.join(STATIC_DIR, "index.html"),
-        headers={"Cache-Control": "no-store"},
-    )
-
-
-@app.get("/ui-v2", include_in_schema=False)
-def chatbot_ui_v2():
-    """Alternative, document-portal visual treatment using the same chat UI."""
-    return FileResponse(
-        os.path.join(STATIC_DIR, "index.html"),
-        headers={"Cache-Control": "no-store"},
-    )
-
-
-@app.get("/ui-v3", include_in_schema=False)
-def chatbot_ui_v3():
-    """Original V1 chat layout retained for comparison."""
+    """Primary chat UI (V3 mobile layout and desktop treatment)."""
     return FileResponse(
         os.path.join(STATIC_DIR, "index.html"),
         headers={"Cache-Control": "no-store"},
