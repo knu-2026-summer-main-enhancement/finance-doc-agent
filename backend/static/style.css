@@ -32,15 +32,15 @@ button { color: inherit; }
   background: #1f1f23;
   color: #f7f7f8;
 }
-.brand-row { display: flex; align-items: center; gap: 12px; padding: 0 4px 24px; }
-.brand-row > div:nth-child(2) { display: grid; gap: 3px; }
-.brand-row strong { font-size: 17px; letter-spacing: -.02em; }
-.brand-row span { color: #a1a1aa; font-size: 12px; }
+.brand-row { display: flex; align-items: center; gap: 11px; padding: 1px 4px 24px; }
+.brand-row > div:nth-child(2) { display: grid; gap: 4px; }
+.brand-row strong { font-size: 15px; letter-spacing: -.025em; }
+.brand-row span { color: #9b9ba4; font-size: 10px; font-weight: 600; letter-spacing: .015em; }
 .brand-mark {
-  display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px;
-  color: #fff; background: linear-gradient(145deg, #8b7cf6, #6d5fda); font-weight: 800;
-  box-shadow: 0 8px 22px rgba(118,103,232,.28);
+  display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid rgba(202,195,255,.28); border-radius: 10px;
+  color: #d9d4ff; background: rgba(139,124,246,.14);
 }
+.brand-mark svg { width: 19px; height: 19px; }
 .side-section { min-height: 0; }
 .document-section { display: flex; flex: 1; flex-direction: column; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
