@@ -17,10 +17,6 @@ const elements = {
   uploadButton: document.getElementById("uploadButton"),
   uploadProgress: document.getElementById("uploadProgress"),
   uploadProgressText: document.getElementById("uploadProgressText"),
-  apiKey: document.getElementById("apiKey"),
-  saveApiKey: document.getElementById("saveApiKey"),
-  statusDot: document.getElementById("statusDot"),
-  serverStatus: document.getElementById("serverStatus"),
   scopeSummary: document.getElementById("scopeSummary"),
   clearChat: document.getElementById("clearChat"),
   chatArea: document.getElementById("chatArea"),
@@ -32,29 +28,43 @@ const elements = {
   modeHelpPopover: document.getElementById("modeHelpPopover"),
   chatForm: document.getElementById("chatForm"),
   questionInput: document.getElementById("questionInput"),
+  quickAttach: document.getElementById("quickAttach"),
+  quickModeToggle: document.getElementById("quickModeToggle"),
   sendButton: document.getElementById("sendButton"),
-  toast: document.getElementById("toast"),
+  renameModal: document.getElementById("renameModal"),
+  renameForm: document.getElementById("renameForm"),
+  renameCurrentName: document.getElementById("renameCurrentName"),
+  renameInput: document.getElementById("renameInput"),
+  renameCancel: document.getElementById("renameCancel"),
+  renameSubmit: document.getElementById("renameSubmit"),
+  deleteModal: document.getElementById("deleteModal"),
+  deleteCurrentName: document.getElementById("deleteCurrentName"),
+  deleteCancel: document.getElementById("deleteCancel"),
+  deleteSubmit: document.getElementById("deleteSubmit"),
   detailDialog: document.getElementById("detailDialog"),
   detailTitle: document.getElementById("detailTitle"),
   detailBody: document.getElementById("detailBody"),
   closeDetail: document.getElementById("closeDetail"),
   detailMore: document.getElementById("detailMore"),
+  toast: document.getElementById("toast"),
 };
 
 const state = {
   documents: [],
   selected: new Set(),
   busy: false,
-  apiKey: sessionStorage.getItem("finance-doc-api-key") || "",
+  chatController: null,
+  contactNames: new Set(),
+  contactNamesPromise: null,
+  renameSource: "",
+  deleteSource: "",
 };
 
 const initialChat = elements.chatArea.innerHTML;
-elements.apiKey.value = state.apiKey;
 
 function apiHeaders(json = false) {
   const headers = {};
   if (json) headers["Content-Type"] = "application/json";
-  if (state.apiKey) headers["X-API-Key"] = state.apiKey;
   return headers;
 }
 
@@ -67,6 +77,34 @@ function showToast(message) {
 
 function fileType(document) {
   return String(document.file_type || document.source?.split(".").pop() || "DOC").toUpperCase().slice(0, 5);
+}
+
+function renderDocumentIcon(icon, source, item) {
+  const extension = String(source).split(".").pop().toLocaleLowerCase("ko-KR");
+  const icons = {
+    xlsx: { className: "excel", markup: '<path d="M8 3.5h7.2L19 7.3v13.2H8z" fill="currentColor" opacity=".95"/><path d="M15 3.7v3.8h3.8" fill="none" stroke="#bce6c9" stroke-width="1.3" stroke-linejoin="round"/><path d="M4.5 7h7v10h-7z" fill="#fff"/><path d="m6.3 9 3.4 6M9.7 9l-3.4 6" stroke="#207245" stroke-width="1.45" stroke-linecap="round"/>' },
+    pdf: { className: "pdf", markup: '<path d="M5.5 3.5h8.8L18.5 7.7v12.8h-13z" fill="currentColor"/><path d="M14 3.7v4h4" fill="none" stroke="#ffd1d1" stroke-width="1.3" stroke-linejoin="round"/><text x="7.2" y="16" fill="#fff" font-size="5.1" font-family="Arial, sans-serif" font-weight="700">PDF</text>' },
+    hwp: { className: "hwp", markup: '<path d="M5.5 3.5h8.8L18.5 7.7v12.8h-13z" fill="currentColor"/><path d="M14 3.7v4h4" fill="none" stroke="#cddfff" stroke-width="1.3" stroke-linejoin="round"/><text x="6.8" y="16" fill="#fff" font-size="5.1" font-family="Arial, sans-serif" font-weight="700">HWP</text>' },
+    hwpx: { className: "hwp", markup: '<path d="M5.5 3.5h8.8L18.5 7.7v12.8h-13z" fill="currentColor"/><path d="M14 3.7v4h4" fill="none" stroke="#cddfff" stroke-width="1.3" stroke-linejoin="round"/><text x="6" y="16" fill="#fff" font-size="4.2" font-family="Arial, sans-serif" font-weight="700">HWPX</text>' },
+    jpg: { className: "image", markup: '<rect x="4" y="5" width="16" height="14" rx="2" fill="currentColor"/><circle cx="9" cy="9.3" r="1.6" fill="#e2dfff"/><path d="m5.8 17 4.5-4.8 2.8 2.8 2.2-2.3 3 4.3" fill="none" stroke="#fff" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"/>' },
+    jpeg: { className: "image", markup: '<rect x="4" y="5" width="16" height="14" rx="2" fill="currentColor"/><circle cx="9" cy="9.3" r="1.6" fill="#e2dfff"/><path d="m5.8 17 4.5-4.8 2.8 2.8 2.2-2.3 3 4.3" fill="none" stroke="#fff" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"/>' },
+    png: { className: "image", markup: '<rect x="4" y="5" width="16" height="14" rx="2" fill="currentColor"/><circle cx="9" cy="9.3" r="1.6" fill="#e2dfff"/><path d="m5.8 17 4.5-4.8 2.8 2.8 2.2-2.3 3 4.3" fill="none" stroke="#fff" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"/>' },
+  };
+  ["webp", "bmp", "tif", "tiff"].forEach((imageExtension) => {
+    icons[imageExtension] = icons.png;
+  });
+  const definition = icons[extension];
+  if (!definition) {
+    icon.textContent = fileType(item);
+    return;
+  }
+  icon.classList.add(definition.className);
+  icon.setAttribute("aria-label", `${extension.toUpperCase()} 파일`);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = definition.markup;
+  icon.append(svg);
 }
 
 function renderDocuments() {
@@ -97,7 +135,7 @@ function renderDocuments() {
 
     const icon = document.createElement("span");
     icon.className = "document-icon";
-    icon.textContent = fileType(item);
+    renderDocumentIcon(icon, source, item);
     const label = document.createElement("span");
     const strong = document.createElement("strong");
     strong.textContent = source;
@@ -110,6 +148,13 @@ function renderDocuments() {
     dot.className = "selection-dot";
     button.append(icon, label, dot);
     button.addEventListener("click", () => toggleDocument(source));
+    const renameButton = document.createElement("button");
+    renameButton.type = "button";
+    renameButton.className = "rename-document";
+    renameButton.textContent = "✎";
+    renameButton.title = `${source} 이름 수정`;
+    renameButton.setAttribute("aria-label", `${source} 이름 수정`);
+    renameButton.addEventListener("click", () => renameDocument(source));
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
     deleteButton.className = "delete-document";
@@ -117,7 +162,7 @@ function renderDocuments() {
     deleteButton.title = `${source} 삭제`;
     deleteButton.setAttribute("aria-label", `${source} 삭제`);
     deleteButton.addEventListener("click", () => deleteDocument(source));
-    row.append(button, deleteButton);
+    row.append(button, renameButton, deleteButton);
     elements.documentList.append(row);
   });
 }
@@ -163,35 +208,163 @@ async function loadDocuments() {
   }
 }
 
-async function checkServer() {
+function deleteDocument(source) {
+  state.deleteSource = source;
+  elements.deleteCurrentName.textContent = source;
+  elements.deleteModal.hidden = false;
+  window.setTimeout(() => elements.deleteCancel.focus(), 0);
+}
+
+async function loadContactNames() {
+  if (state.contactNamesPromise) return state.contactNamesPromise;
+  state.contactNamesPromise = fetch("/contacts/names", { headers: apiHeaders() })
+    .then(async (response) => {
+      if (!response.ok) throw new Error();
+      const data = await response.json();
+      state.contactNames = new Set((data.names || []).map((name) => String(name).trim()).filter(Boolean));
+    })
+    .catch(() => {
+      state.contactNames = new Set();
+    });
+  return state.contactNamesPromise;
+}
+
+function linkContactNames(body) {
+  if (!state.contactNames.size) return;
+  const names = [...state.contactNames].sort((left, right) => right.length - left.length);
+  const escaped = names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const matcher = new RegExp(`(${escaped.join("|")})`, "g");
+  const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  let node;
+  while ((node = walker.nextNode())) {
+    if (node.parentElement?.closest(".contact-name")) continue;
+    if (matcher.test(node.textContent)) textNodes.push(node);
+    matcher.lastIndex = 0;
+  }
+  textNodes.forEach((textNode) => {
+    const text = textNode.textContent;
+    const fragment = document.createDocumentFragment();
+    let cursor = 0;
+    text.replace(matcher, (matched, _group, offset) => {
+      fragment.append(document.createTextNode(text.slice(cursor, offset)));
+      const nameWrap = document.createElement("span");
+      nameWrap.className = "contact-name-wrap";
+      const name = document.createElement("button");
+      name.type = "button";
+      name.className = "contact-name";
+      name.textContent = matched;
+      name.dataset.contactName = matched;
+      name.title = "연락처 보기";
+      nameWrap.append(name);
+      fragment.append(nameWrap);
+      cursor = offset + matched.length;
+      return matched;
+    });
+    fragment.append(document.createTextNode(text.slice(cursor)));
+    textNode.replaceWith(fragment);
+  });
+}
+
+async function toggleContactCard(button) {
+  const existing = button.nextElementSibling;
+  if (existing?.classList.contains("contact-card")) {
+    existing.remove();
+    return;
+  }
+  document.querySelectorAll(".contact-card").forEach((card) => card.remove());
+  const card = document.createElement("span");
+  card.className = "contact-card loading";
+  card.textContent = "연락처 확인 중";
+  button.after(card);
   try {
-    const response = await fetch("/health");
-    if (!response.ok) throw new Error();
-    elements.statusDot.className = "status-dot ok";
-    elements.serverStatus.textContent = "서버 연결됨";
+    const response = await fetch(`/contacts/${encodeURIComponent(button.dataset.contactName)}`, { headers: apiHeaders() });
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const contact = await response.json();
+    const details = [
+      ...(contact.departments || []).map((department) => `학과 ${department}`),
+      ...(contact.phones || []).map((phone) => `전화 ${phone}`),
+      ...(contact.emails || []).map((email) => `이메일 ${email}`),
+    ];
+    card.classList.remove("loading");
+    card.textContent = details.length ? details.join("\n") : "등록된 연락처가 없습니다.";
   } catch (_) {
-    elements.statusDot.className = "status-dot warn";
-    elements.serverStatus.textContent = "서버 확인 필요";
+    card.remove();
+    showToast("연락처 정보를 불러오지 못했습니다.");
   }
 }
 
-async function deleteDocument(source) {
-  const confirmed = window.confirm(
-    `'${source}' 문서를 삭제할까요?\n\n원본 파일, Parquet, ChromaDB 색인과 적재 기록이 함께 삭제됩니다.`
-  );
-  if (!confirmed) return;
+function closeDeleteModal() {
+  elements.deleteModal.hidden = true;
+  state.deleteSource = "";
+  elements.deleteSubmit.disabled = false;
+}
+
+async function submitDeleteDocument() {
+  const source = state.deleteSource;
+  if (!source) return;
 
   try {
+    elements.deleteSubmit.disabled = true;
     const response = await fetch(`/documents/${encodeURIComponent(source)}`, {
       method: "DELETE",
       headers: apiHeaders(),
     });
     if (!response.ok) throw new Error(await errorMessage(response));
     state.selected.delete(source);
+    closeDeleteModal();
     await loadDocuments();
     showToast(`'${source}' 문서를 삭제했습니다.`);
   } catch (error) {
     showToast(`삭제 실패: ${error.message}`);
+    elements.deleteSubmit.disabled = false;
+  }
+}
+
+function renameDocument(source) {
+  state.renameSource = source;
+  elements.renameCurrentName.textContent = source;
+  elements.renameInput.value = source;
+  elements.renameModal.hidden = false;
+  window.setTimeout(() => {
+    elements.renameInput.focus();
+    elements.renameInput.select();
+  }, 0);
+}
+
+function closeRenameModal() {
+  elements.renameModal.hidden = true;
+  state.renameSource = "";
+  elements.renameSubmit.disabled = false;
+}
+
+async function submitRenameDocument(event) {
+  event.preventDefault();
+  const source = state.renameSource;
+  const newName = elements.renameInput.value.trim();
+  if (!source || !newName || newName === source) {
+    closeRenameModal();
+    return;
+  }
+
+  try {
+    elements.renameSubmit.disabled = true;
+    const response = await fetch(`/documents/${encodeURIComponent(source)}`, {
+      method: "PATCH",
+      headers: apiHeaders(true),
+      body: JSON.stringify({ new_name: newName }),
+    });
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const data = await response.json();
+    const filename = data.filename || newName;
+    state.selected.delete(source);
+    closeRenameModal();
+    await loadDocuments();
+    showToast(data.message || "파일 이름을 변경했습니다.");
+    if (data.status === "accepted") pollIngestStatus(filename);
+  } catch (error) {
+    showToast(`이름 수정 실패: ${error.message}`);
+    elements.renameSubmit.disabled = false;
   }
 }
 
@@ -275,7 +448,14 @@ async function uploadDocument(event) {
   }
 }
 
-function appendMessage(role, text, route = "", sources = [], result = null) {
+function appendMessage(
+  role,
+  text,
+  route = "",
+  sources = [],
+  retryRequest = null,
+  actionsHidden = false,
+) {
   const message = document.createElement("article");
   message.className = `message ${role}`;
 
@@ -286,7 +466,7 @@ function appendMessage(role, text, route = "", sources = [], result = null) {
     if (route) {
       const badge = document.createElement("span");
       badge.className = `route-badge ${route.toLocaleLowerCase()}`;
-      badge.textContent = route === "natural" ? "자연어 검색" : route.toUpperCase();
+      badge.textContent = route === "natural" ? "AI 문서 검색" : route.toUpperCase();
       head.append(badge);
     }
     message.append(head);
@@ -294,134 +474,52 @@ function appendMessage(role, text, route = "", sources = [], result = null) {
 
   const body = document.createElement("div");
   body.className = "message-body";
-  const inlineSegments = role === "assistant" ? result?.inline_segments : null;
-  if (Array.isArray(inlineSegments) && inlineSegments.length) {
-    inlineSegments.forEach((segment) => {
-      if (!segment.kind) {
-        body.append(document.createTextNode(segment.text));
-        return;
-      }
-      const link = document.createElement("button");
-      link.type = "button";
-      link.className = `answer-link ${segment.kind}-link`;
-      link.textContent = segment.text;
-      link.addEventListener("click", () => openDetail(segment.detail_ref));
-      body.append(link);
-    });
-  } else {
-    body.textContent = text.split("\n\n계산 근거:", 1)[0];
-  }
+  body.textContent = text;
   message.append(body);
 
+  if (sources.length) {
+    const sourceRow = document.createElement("div");
+    sourceRow.className = "source-row";
+    sources.forEach((source) => {
+      const chip = document.createElement("span");
+      chip.className = "source-chip";
+      chip.textContent = source;
+      sourceRow.append(chip);
+    });
+    message.append(sourceRow);
+  }
+  if (role === "assistant" && retryRequest) {
+    const actions = document.createElement("div");
+    actions.className = "message-actions";
+    actions.hidden = actionsHidden;
+
+    const copyButton = document.createElement("button");
+    copyButton.className = "message-action";
+    copyButton.type = "button";
+    copyButton.textContent = "⧉";
+    copyButton.setAttribute("aria-label", "답변 복사");
+    copyButton.title = "답변 복사";
+    copyButton.addEventListener("click", () => copyAnswer(body.textContent));
+
+    const retryButton = document.createElement("button");
+    retryButton.className = "message-action";
+    retryButton.type = "button";
+    retryButton.textContent = "↻";
+    retryButton.setAttribute("aria-label", "답변 다시 시도");
+    retryButton.title = "답변 다시 시도";
+    retryButton.addEventListener("click", () => {
+      if (state.busy) {
+        showToast("현재 답변을 생성 중입니다.");
+        return;
+      }
+      sendQuestion(retryRequest.question);
+    });
+    actions.append(copyButton, retryButton);
+    message.append(actions);
+  }
   elements.chatArea.append(message);
   elements.chatArea.scrollTop = elements.chatArea.scrollHeight;
   return message;
-}
-
-function renderDetail(detail) {
-  elements.detailTitle.textContent = detail.kind === "entity_detail"
-    ? `${detail.display_name || "사람"} 정보`
-    : detail.kind === "entity_collection_detail"
-      ? `${detail.display_name || "동명이인"} 정보 선택`
-      : "계산 상세";
-  elements.detailBody.replaceChildren();
-  if (detail.kind === "entity_detail") {
-    (detail.attributes || []).forEach((item) => {
-      const row = document.createElement("div"); row.className = "detail-row";
-      const label = document.createElement("strong"); label.textContent = item.column;
-      const value = document.createElement("span"); value.textContent = item.missing ? "없음" : item.value;
-      row.append(label, value); elements.detailBody.append(row);
-    });
-    if ((detail.payment_history || []).length) {
-      const historyTitle = document.createElement("h3");
-      historyTitle.className = "detail-section-title";
-      historyTitle.textContent = `결제 이력 ${detail.payment_history.length}건`;
-      elements.detailBody.append(historyTitle);
-      (detail.payment_history || []).forEach((record, index) => {
-        const card = document.createElement("section");
-        card.className = "detail-record-card payment-history-card";
-        const number = document.createElement("div");
-        number.className = "detail-record-number";
-        number.textContent = `${index + 1}`;
-        const fields = document.createElement("div");
-        fields.className = "detail-record-fields";
-        (record.fields || []).forEach((historyField) => {
-          const field = document.createElement("div");
-          const label = document.createElement("span"); label.textContent = historyField.column;
-          const value = document.createElement("strong");
-          value.textContent = historyField.data_type === "money" && typeof historyField.value === "number"
-            ? `${historyField.value.toLocaleString("ko-KR")}원`
-            : historyField.value ?? "없음";
-          field.append(label, value); fields.append(field);
-        });
-        card.append(number, fields);
-        elements.detailBody.append(card);
-      });
-    }
-  } else if (detail.kind === "entity_collection_detail") {
-    const guide = document.createElement("p");
-    guide.className = "contributor-caption";
-    guide.textContent = `같은 이름의 정보가 ${detail.candidates?.length ?? 0}개 있습니다.`;
-    elements.detailBody.append(guide);
-    (detail.candidates || []).forEach((candidate, index) => {
-      const card = document.createElement("button");
-      card.type = "button";
-      card.className = "entity-candidate-card";
-      const title = document.createElement("strong"); title.textContent = `${detail.display_name} ${index + 1}`;
-      const preview = document.createElement("span");
-      preview.textContent = (candidate.attributes || []).slice(0, 3).map((item) => `${item.column}: ${item.value ?? "없음"}`).join(" · ");
-      card.append(title, preview);
-      card.addEventListener("click", () => openDetail(candidate.detail_ref));
-      elements.detailBody.append(card);
-    });
-  } else {
-    const summary = document.createElement("div");
-    summary.className = "calculation-summary";
-    const operationLabels = { sum: "합계", mean: "평균", median: "중앙값", min: "최솟값", max: "최댓값", mode: "최빈값", count: "개수", group_sum: "그룹 합계" };
-    const summaryTitle = document.createElement("strong"); summaryTitle.textContent = operationLabels[detail.operation] || "계산";
-    const summaryTarget = document.createElement("span"); summaryTarget.textContent = detail.target || "대상";
-    const summaryValue = document.createElement("b"); summaryValue.textContent = detail.value ?? "-";
-    const summaryCounts = document.createElement("small"); summaryCounts.textContent = `유효 ${detail.valid_rows ?? 0}건 · 제외 ${detail.excluded_rows ?? 0}건`;
-    summary.append(summaryTitle, summaryTarget, summaryValue, summaryCounts);
-    elements.detailBody.append(summary);
-    const caption = document.createElement("p");
-    caption.className = "contributor-caption";
-    caption.textContent = `기여 기록 ${detail.page?.total ?? 0}건`;
-    elements.detailBody.append(caption);
-    (detail.contributors || []).forEach((record, index) => {
-      const card = document.createElement("section");
-      card.className = "detail-record-card";
-      const number = document.createElement("div");
-      number.className = "detail-record-number";
-      number.textContent = `${(detail.page?.offset ?? 0) + index + 1}`;
-      const fields = document.createElement("div");
-      fields.className = "detail-record-fields";
-      Object.entries(record).forEach(([key, rawValue]) => {
-        const field = document.createElement("div");
-        const label = document.createElement("span"); label.textContent = key;
-        const value = document.createElement("strong"); value.textContent = rawValue ?? "없음";
-        field.append(label, value); fields.append(field);
-      });
-      card.append(number, fields);
-      elements.detailBody.append(card);
-    });
-  }
-  const page = detail.page;
-  elements.detailMore.hidden = !page?.has_more;
-  elements.detailMore.onclick = () => openDetail(detail._reference, page.offset + page.limit);
-  if (!elements.detailDialog.open) elements.detailDialog.showModal();
-}
-
-async function openDetail(reference, offset = 0) {
-  try {
-    const response = await fetch(`/chat/details/${encodeURIComponent(reference)}?offset=${offset}&limit=50`, { headers: apiHeaders() });
-    if (!response.ok) throw new Error(await errorMessage(response));
-    const detail = await response.json();
-    detail._reference = reference;
-    renderDetail(detail);
-  } catch (error) {
-    showToast(`상세 조회 실패: ${error.message}`);
-  }
 }
 
 function appendLoading() {
@@ -448,40 +546,216 @@ async function errorMessage(response) {
   }
 }
 
-async function sendQuestion(question) {
+function renderInlineSegments(body, segments) {
+  if (!Array.isArray(segments) || !segments.length) {
+    collapseCalculationEvidence(body);
+    return;
+  }
+  body.replaceChildren();
+  segments.forEach((segment) => {
+    if (!segment.detail_ref) {
+      body.append(document.createTextNode(segment.text || ""));
+      return;
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `inline-detail-link ${segment.kind || "detail"}`;
+    button.textContent = segment.text || "상세 보기";
+    button.title = segment.kind === "entity" ? "인물 정보와 납부 기록 보기" : "금액 계산 근거 보기";
+    button.addEventListener("click", () => openDetail(segment.detail_ref));
+    body.append(button);
+  });
+}
+
+function appendDetailFields(container, fields) {
+  Object.entries(fields || {}).forEach(([label, value]) => {
+    const field = document.createElement("div");
+    const name = document.createElement("span");
+    const content = document.createElement("strong");
+    name.textContent = label;
+    content.textContent = value ?? "-";
+    field.append(name, content);
+    container.append(field);
+  });
+}
+
+function renderDetail(detail) {
+  elements.detailBody.replaceChildren();
+  elements.detailTitle.textContent = detail.kind === "entity_detail"
+    ? `${detail.display_name || "인물"} 정보`
+    : detail.kind === "entity_collection_detail" ? `${detail.display_name || "동명이인"} 선택` : "금액 계산 근거";
+
+  if (detail.kind === "entity_detail") {
+    (detail.attributes || []).forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "detail-row";
+      const label = document.createElement("strong");
+      const value = document.createElement("span");
+      label.textContent = item.column;
+      value.textContent = item.value ?? "-";
+      row.append(label, value);
+      elements.detailBody.append(row);
+    });
+    if ((detail.payment_history || []).length) {
+      const title = document.createElement("h3");
+      title.className = "detail-section-title";
+      title.textContent = `납부 기록 ${detail.payment_history.length}건`;
+      elements.detailBody.append(title);
+      detail.payment_history.forEach((record, index) => {
+        const card = document.createElement("div");
+        card.className = "detail-record-card payment-history-card";
+        const number = document.createElement("span");
+        number.className = "detail-record-number";
+        number.textContent = index + 1;
+        const fields = document.createElement("div");
+        fields.className = "detail-record-fields";
+        (record.fields || []).forEach((item) => appendDetailFields(fields, { [item.column]: item.value }));
+        card.append(number, fields);
+        elements.detailBody.append(card);
+      });
+    }
+  } else if (detail.kind === "entity_collection_detail") {
+    (detail.candidates || []).forEach((candidate, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "detail-candidate";
+      button.textContent = `${detail.display_name} ${index + 1} · 상세 보기`;
+      button.addEventListener("click", () => openDetail(candidate.detail_ref));
+      elements.detailBody.append(button);
+    });
+  } else {
+    const summary = document.createElement("div");
+    summary.className = "calculation-summary";
+    appendDetailFields(summary, { 계산: detail.operation, 대상: detail.target, 결과: detail.value, "유효/제외": `${detail.valid_rows ?? 0} / ${detail.excluded_rows ?? 0}` });
+    elements.detailBody.append(summary);
+    (detail.contributors || []).forEach((record, index) => {
+      const card = document.createElement("div");
+      card.className = "detail-record-card";
+      const number = document.createElement("span");
+      number.className = "detail-record-number";
+      number.textContent = (detail.page?.offset || 0) + index + 1;
+      const fields = document.createElement("div");
+      fields.className = "detail-record-fields";
+      appendDetailFields(fields, record);
+      card.append(number, fields);
+      elements.detailBody.append(card);
+    });
+  }
+  elements.detailMore.hidden = !detail.page?.has_more;
+  elements.detailMore.onclick = () => openDetail(detail._reference, detail.page.offset + detail.page.limit);
+  if (!elements.detailDialog.open) elements.detailDialog.showModal();
+}
+
+async function openDetail(reference, offset = 0) {
+  try {
+    const response = await fetch(`/chat/details/${encodeURIComponent(reference)}?offset=${offset}&limit=50`, { headers: apiHeaders() });
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const detail = await response.json();
+    detail._reference = reference;
+    renderDetail(detail);
+  } catch (error) {
+    showToast(error.message || "상세 정보를 불러오지 못했습니다.");
+  }
+}
+
+async function sendQuestion(question, options = {}) {
   const value = question.trim();
   if (!value || state.busy) return;
 
-  state.busy = true;
-  const mode = elements.naturalMode.checked ? "natural" : "auto";
-  elements.sendButton.disabled = true;
-  elements.naturalMode.disabled = true;
+  const controller = new AbortController();
+  state.chatController = controller;
+  setChatBusy(true);
+  const request = {
+    question: value,
+    sources: options.sources ? [...options.sources] : [...state.selected],
+    mode: options.mode || (elements.naturalMode.checked ? "natural" : "auto"),
+  };
   elements.questionInput.value = "";
   resizeTextarea();
   elements.chatArea.querySelector(".welcome-card")?.remove();
   appendMessage("user", value);
   const loading = appendLoading();
-
   try {
     const response = await fetch("/chat", {
       method: "POST",
       headers: apiHeaders(true),
-      body: JSON.stringify({ question: value, sources: [...state.selected], mode }),
+      body: JSON.stringify(request),
+      signal: controller.signal,
     });
     if (!response.ok) throw new Error(await errorMessage(response));
     const data = await response.json();
     loading.remove();
-    const responseMode = mode === "natural" ? "natural" : (data.source || "");
-    appendMessage("assistant", data.answer || "답변이 비어 있습니다.", responseMode, data.sources || [], data.result || null);
+    const message = appendMessage("assistant", data.answer || "답변이 비어 있습니다.", data.source || "", data.sources || [], request);
+    renderInlineSegments(message.querySelector(".message-body"), data.result?.inline_segments);
   } catch (error) {
     loading.remove();
-    appendMessage("assistant", error.message, "error");
+    if (error.name === "AbortError") {
+      appendMessage("assistant", "답변 생성을 중단했습니다.", "error", [], request);
+    } else {
+      appendMessage("assistant", error.message || "답변 처리 중 오류가 발생했습니다.", "error", [], request);
+    }
   } finally {
-    state.busy = false;
-    elements.sendButton.disabled = false;
-    elements.naturalMode.disabled = false;
+    if (state.chatController === controller) state.chatController = null;
+    setChatBusy(false);
     elements.questionInput.focus();
   }
+}
+
+async function copyAnswer(text) {
+  if (!text.trim()) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("답변을 복사했습니다.");
+  } catch (_) {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.append(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    showToast(copied ? "답변을 복사했습니다." : "복사하지 못했습니다.");
+  }
+}
+
+function collapseCalculationEvidence(body) {
+  const text = body.textContent;
+  const marker = "계산 근거:";
+  const markerIndex = text.indexOf(marker);
+  if (markerIndex <= 0) return;
+
+  const answer = text.slice(0, markerIndex).trimEnd();
+  const evidence = text.slice(markerIndex + marker.length).trim();
+  if (!evidence) return;
+
+  body.replaceChildren();
+  const answerText = document.createElement("div");
+  answerText.textContent = answer;
+  body.append(answerText);
+
+  const details = document.createElement("details");
+  details.className = "calculation-evidence";
+  const summary = document.createElement("summary");
+  summary.textContent = "계산 근거";
+  const evidenceText = document.createElement("div");
+  evidenceText.className = "calculation-evidence-body";
+  evidenceText.textContent = evidence;
+  details.append(summary, evidenceText);
+  body.append(details);
+}
+
+function setChatBusy(busy) {
+  state.busy = busy;
+  elements.sendButton.classList.toggle("stop", busy);
+  elements.sendButton.setAttribute("aria-label", busy ? "답변 생성 중단" : "질문 전송");
+  elements.sendButton.querySelector("[data-send-label]").textContent = busy ? "중단" : "전송";
+  elements.sendButton.querySelector("[data-send-icon]").textContent = busy ? "■" : "→";
+  elements.naturalMode.disabled = busy;
+}
+
+function stopChat() {
+  state.chatController?.abort();
 }
 
 function resizeTextarea() {
@@ -491,7 +765,10 @@ function resizeTextarea() {
 
 function bindSuggestions() {
   elements.chatArea.querySelectorAll(".suggestion").forEach((button) => {
-    button.addEventListener("click", () => sendQuestion(button.textContent));
+    button.addEventListener("click", () => {
+      const label = button.querySelector(".suggestion-icon + span");
+      sendQuestion(label?.textContent || button.textContent);
+    });
   });
 }
 
@@ -512,11 +789,17 @@ function updateNaturalMode() {
   elements.queryModeRow.classList.toggle("active", active);
   elements.questionInput.placeholder = active
     ? "질문의 의미와 문맥으로 검색하세요."
-    : "문서에 대해 질문하세요.";
+    : (document.documentElement.classList.contains("ui-v3")
+      ? "질문을 입력하세요..."
+      : "문서에 대해 질문하세요.");
 }
 
 elements.chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (state.busy) {
+    stopChat();
+    return;
+  }
   sendQuestion(elements.questionInput.value);
 });
 elements.questionInput.addEventListener("input", resizeTextarea);
@@ -532,6 +815,12 @@ elements.uploadToggle.addEventListener("click", () => {
   setUploadPanelOpen(elements.uploadForm.hidden);
 });
 document.addEventListener("pointerdown", (event) => {
+  if (!elements.renameModal.hidden && event.target === elements.renameModal) {
+    closeRenameModal();
+  }
+  if (!elements.deleteModal.hidden && event.target === elements.deleteModal) {
+    closeDeleteModal();
+  }
   if (
     !elements.uploadForm.hidden
     && !elements.uploadForm.contains(event.target)
@@ -545,6 +834,14 @@ document.addEventListener("pointerdown", (event) => {
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    if (!elements.deleteModal.hidden) {
+      closeDeleteModal();
+      return;
+    }
+    if (!elements.renameModal.hidden) {
+      closeRenameModal();
+      return;
+    }
     if (!elements.uploadForm.hidden) {
       setUploadPanelOpen(false);
       elements.uploadToggle.focus();
@@ -556,6 +853,14 @@ document.addEventListener("keydown", (event) => {
   }
 });
 elements.naturalMode.addEventListener("change", updateNaturalMode);
+elements.renameForm.addEventListener("submit", submitRenameDocument);
+elements.renameCancel.addEventListener("click", closeRenameModal);
+elements.deleteCancel.addEventListener("click", closeDeleteModal);
+elements.deleteSubmit.addEventListener("click", submitDeleteDocument);
+elements.closeDetail.addEventListener("click", () => elements.detailDialog.close());
+elements.detailDialog.addEventListener("click", (event) => {
+  if (event.target === elements.detailDialog) elements.detailDialog.close();
+});
 elements.modeHelpButton.addEventListener("click", () => {
   setModeHelpOpen(elements.modeHelpPopover.hidden);
 });
@@ -580,24 +885,32 @@ elements.allDocuments.addEventListener("click", () => {
   state.selected.clear();
   updateScope();
 });
-elements.saveApiKey.addEventListener("click", () => {
-  state.apiKey = elements.apiKey.value.trim();
-  if (state.apiKey) sessionStorage.setItem("finance-doc-api-key", state.apiKey);
-  else sessionStorage.removeItem("finance-doc-api-key");
-  showToast(state.apiKey ? "API Key를 적용했습니다." : "API Key를 비웠습니다.");
-  loadDocuments();
-});
 elements.clearChat.addEventListener("click", () => {
   elements.chatArea.innerHTML = initialChat;
   bindSuggestions();
 });
-elements.closeDetail.addEventListener("click", () => elements.detailDialog.close());
-elements.detailDialog.addEventListener("click", (event) => { if (event.target === elements.detailDialog) elements.detailDialog.close(); });
+elements.chatArea.addEventListener("click", (event) => {
+  const contactName = event.target.closest(".contact-name");
+  if (contactName) toggleContactCard(contactName);
+});
 elements.openSidebar.addEventListener("click", () => elements.sidebar.classList.add("open"));
 elements.closeSidebar.addEventListener("click", () => elements.sidebar.classList.remove("open"));
+document.addEventListener("click", (event) => {
+  if (window.innerWidth > 820 && !document.documentElement.classList.contains("ui-v3")) return;
+  if (!elements.sidebar.classList.contains("open")) return;
+  if (event.target.closest("#sidebar, #openSidebar")) return;
+  elements.sidebar.classList.remove("open");
+});
+elements.quickAttach.addEventListener("click", () => {
+  elements.sidebar.classList.add("open");
+  setUploadPanelOpen(true);
+});
+elements.quickModeToggle.addEventListener("click", () => {
+  elements.naturalMode.checked = !elements.naturalMode.checked;
+  updateNaturalMode();
+});
 
 bindSuggestions();
-checkServer();
 loadDocuments();
 updateNaturalMode();
 elements.questionInput.focus();

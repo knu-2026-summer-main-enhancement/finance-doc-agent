@@ -6,6 +6,7 @@ text.  It is kept independent from FastAPI so direct callers can test it.
 from __future__ import annotations
 
 from hashlib import sha256
+import re
 from typing import Any
 
 import pandas as pd
@@ -18,6 +19,12 @@ _PRIVATE = {"contact", "email", "phone"}
 _PRESENTATION_INTERNAL_COLUMNS = {"source", "표시명", "엔티티 타입", "entity_type", "row"}
 _INTERNAL_COLUMNS = set(SYSTEM_COLUMNS) | set(IDENTITY_INTERNAL_COLS) | _PRESENTATION_INTERNAL_COLUMNS
 _DETAILS: dict[str, dict[str, Any]] = {}
+
+
+def _is_processing_column(key: str) -> bool:
+    """Return whether a parser/OCR-produced field must stay out of the UI."""
+    compact = re.sub(r"[\s_-]+", "", key).casefold()
+    return compact.startswith("ocr")
 
 
 def get_interactive_detail(reference: str, *, offset: int = 0, limit: int = 50) -> dict[str, Any] | None:
@@ -78,9 +85,13 @@ def _person_identity_seed(row: pd.Series, name_column: str) -> tuple[str, str]:
 
 def _is_visible_column(column: object, series: pd.Series, *, include_contact: bool) -> bool:
     key = str(column)
-    if key in _INTERNAL_COLUMNS or key.startswith("__"):
+    # Parsing, OCR, identity and semantic-enrichment fields never belong in a
+    # user-facing card.  Source table columns do not use the reserved `_` prefix.
+    if key in _INTERNAL_COLUMNS or key.startswith("_") or _is_processing_column(key):
         return False
     meaning = infer_column_meaning(key, series)
+    if meaning.concept == "quality" or meaning.is_derived:
+        return False
     if not include_contact and (
         meaning.qualifier == "contact"
         or meaning.pii_type in {"phone_number", "email_address"}
@@ -208,7 +219,11 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 5
     entities: list[dict[str, Any]] = []
     if isinstance(frame, pd.DataFrame):
         for _, row in frame.head(page_size).iterrows():
-            records.append({str(k): _json_value(v) for k, v in row.items() if str(k) not in SYSTEM_COLUMNS})
+            records.append({
+                str(k): _json_value(v)
+                for k, v in row.items()
+                if _is_visible_column(k, pd.Series([v]), include_contact=False)
+            })
     # Projection intentionally removes system columns from list values.  Build
     # entities from the matching execution rows so references retain row scope.
     entity_frame = result.matched_frame

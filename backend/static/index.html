@@ -4,15 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>재정 문서 에이전트</title>
-  <link rel="stylesheet" href="/static/style.css?v=20260722-5">
+  <title>문서 조회 에이전트</title>
+  <script>const root = document.documentElement; root.classList.add("ui-v3"); const syncLayout = () => root.classList.toggle("ui-v2", window.innerWidth > 820); syncLayout(); window.addEventListener("resize", syncLayout);</script>
+  <link rel="stylesheet" href="/static/style.css?v=20260722-53">
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
       <div class="brand-row">
-        <div class="brand-mark" aria-hidden="true">F</div>
-        <div><strong>Finance Doc</strong><span>문서 조회 에이전트</span></div>
+        <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M7 3.75h6.2L17.5 8v12.25H7z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M13 3.9V8h4.15M9.5 12h5M9.5 15.5h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <div><strong>Finance Doc</strong><span>문서 분석 · 조회</span></div>
         <button class="icon-button mobile-only" id="closeSidebar" aria-label="문서 패널 닫기">×</button>
       </div>
 
@@ -35,27 +36,34 @@
         </div>
       </section>
 
-      <section class="side-section api-section">
-        <label for="apiKey">API Key</label>
-        <div class="api-input-row">
-          <input id="apiKey" type="password" placeholder="설정된 경우 입력" autocomplete="off">
-          <button id="saveApiKey" type="button">적용</button>
+      <button class="sidebar-upload-button" id="uploadToggle" type="button" aria-expanded="false" aria-label="문서 업로드 열기">
+        <span aria-hidden="true">＋</span> 문서 업로드
+      </button>
+      <form class="upload-panel" id="uploadForm" hidden>
+        <div class="upload-popover-head">
+          <div><strong>문서 업로드</strong><small>업로드 후 표 추출과 검색 색인 자동 진행</small></div>
         </div>
-        <small>키는 현재 브라우저 탭에만 보관됩니다.</small>
-      </section>
-      <div class="server-state">
-        <span class="status-dot" id="statusDot"></span><span id="serverStatus">서버 확인 중</span>
-        <a href="/docs" target="_blank" rel="noreferrer">Swagger</a>
-      </div>
+        <label class="file-picker" for="uploadFile" id="filePicker">
+          <span class="file-picker-icon">＋</span>
+          <span><strong id="uploadFileName">파일 선택</strong><small>XLSX·PDF·HWP·HWPX·이미지</small></span>
+        </label>
+        <input id="uploadFile" type="file" accept=".xlsx,.pdf,.hwp,.hwpx,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff" hidden>
+        <label class="override-label" for="filenameOverride">저장 파일명 <small>(선택)</small></label>
+        <input class="override-input" id="filenameOverride" type="text" placeholder="원본 파일명 그대로 사용" autocomplete="off">
+        <button class="upload-button" id="uploadButton" type="submit"><span>업로드하고 적재</span><span aria-hidden="true">↑</span></button>
+        <div class="upload-progress" id="uploadProgress" hidden>
+          <span></span><small id="uploadProgressText">업로드 중</small>
+        </div>
+      </form>
     </aside>
 
     <main class="main-panel">
       <header class="topbar">
         <button class="icon-button mobile-only" id="openSidebar" aria-label="문서 패널 열기">☰</button>
-        <div><p class="eyebrow">LOCAL HYBRID RAG</p><h1>재정 문서 질의</h1></div>
+        <div><p class="eyebrow">HYBRID RAG</p><h1>문서 조회 에이전트</h1></div>
         <div class="top-actions">
           <div class="scope-summary" id="scopeSummary">전체 문서</div>
-          <button class="secondary-button" id="clearChat" type="button">대화 지우기</button>
+          <button class="secondary-button" id="clearChat" type="button" aria-label="대화 지우기" title="대화 지우기"><svg class="clear-chat-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg><span class="clear-chat-label">대화 지우기</span></button>
         </div>
       </header>
 
@@ -63,13 +71,12 @@
         <div class="welcome-card">
           <div class="welcome-icon">₩</div>
           <p class="eyebrow">READY TO SEARCH</p>
-          <h2>문서를 선택하고 편하게 질문하세요.</h2>
-          <p>명단과 금액 계산은 PANDAS로, 기준과 목적 설명은 VECTOR로 자동 처리합니다.</p>
+          <h2>재무 문서를 선택하고 질문하세요.</h2>
           <div class="suggestion-grid">
-            <button class="suggestion" type="button">출연금액 총액 알려줘</button>
-            <button class="suggestion" type="button">가장 많이 기부한 사람은 누구야?</button>
-            <button class="suggestion" type="button">전체목록을 알려줘</button>
-            <button class="suggestion" type="button">이 문서의 지급 기준을 설명해줘</button>
+            <button class="suggestion" type="button"><span class="suggestion-icon" aria-hidden="true">₩</span><span>총액 알려줘</span></button>
+            <button class="suggestion" type="button"><span class="suggestion-icon" aria-hidden="true">↑</span><span>가장 큰 금액은?</span></button>
+            <button class="suggestion" type="button"><span class="suggestion-icon" aria-hidden="true">☷</span><span>전체 목록 보여줘</span></button>
+            <button class="suggestion" type="button"><span class="suggestion-icon" aria-hidden="true">i</span><span>문서 목적 알려줘</span></button>
           </div>
         </div>
       </section>
@@ -80,47 +87,70 @@
           <label class="natural-mode-option" for="naturalMode">
             <input id="naturalMode" type="checkbox">
             <span class="mode-switch" aria-hidden="true"><i></i></span>
-            <span>자연어 검색</span>
+            <span>AI 문서 검색</span>
           </label>
           <div class="mode-help-wrap" id="modeHelpWrap">
-            <button class="mode-help-button" id="modeHelpButton" type="button" aria-expanded="false" aria-controls="modeHelpPopover" aria-label="자연어 검색 주의사항">i</button>
+            <button class="mode-help-button" id="modeHelpButton" type="button" aria-expanded="false" aria-controls="modeHelpPopover" aria-label="AI 문서 검색 주의사항">i</button>
             <div class="mode-help-popover" id="modeHelpPopover" role="note" hidden>
               <strong>주의</strong>
-              <p>자연어 검색은 의미가 비슷한 내용을 찾는 보조 기능으로, 답변이 부정확할 수 있습니다. 자동 분류가 잘못될 때만 사용하고 정확한 계산에는 사용하지 마세요.</p>
+              <p>AI 문서 검색은 의미가 비슷한 내용을 찾는 보조 기능으로, 답변이 부정확할 수 있습니다. 자동 분류가 잘못될 때만 사용하고 정확한 계산에는 사용하지 마세요.</p>
             </div>
           </div>
         </div>
-        <form class="upload-panel" id="uploadForm" hidden>
-          <div class="upload-popover-head">
-            <div><strong>문서 업로드</strong><small>업로드 후 표 추출과 검색 색인 자동 진행</small></div>
-          </div>
-          <label class="file-picker" for="uploadFile" id="filePicker">
-            <span class="file-picker-icon">＋</span>
-            <span><strong id="uploadFileName">파일 선택</strong><small>XLSX·PDF·HWP·HWPX·이미지</small></span>
-          </label>
-          <input id="uploadFile" type="file" accept=".xlsx,.pdf,.hwp,.hwpx,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff" hidden>
-          <label class="override-label" for="filenameOverride">저장 파일명 <small>(선택)</small></label>
-          <input class="override-input" id="filenameOverride" type="text" placeholder="원본 파일명 그대로 사용" autocomplete="off">
-          <button class="upload-button" id="uploadButton" type="submit"><span>업로드하고 적재</span><span aria-hidden="true">↑</span></button>
-          <div class="upload-progress" id="uploadProgress" hidden>
-            <span></span><small id="uploadProgressText">업로드 중</small>
-          </div>
-        </form>
         <form class="composer" id="chatForm">
-          <button class="attach-button" id="uploadToggle" type="button" aria-expanded="false" aria-label="문서 업로드 열기" title="문서 업로드">＋</button>
+          <button class="quick-attach-button" id="quickAttach" type="button" aria-label="문서 첨부" title="문서 첨부">＋</button>
           <textarea id="questionInput" rows="1" maxlength="2000" placeholder="문서에 대해 질문하세요."></textarea>
-          <button class="send-button" id="sendButton" type="submit"><span>전송</span><span aria-hidden="true">→</span></button>
+          <button class="quick-mode-button" id="quickModeToggle" type="button" aria-label="AI 문서 검색 전환" title="AI 문서 검색 전환"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button>
+          <button class="send-button" id="sendButton" type="submit" aria-label="질문 전송"><span data-send-label>전송</span><span data-send-icon aria-hidden="true">→</span></button>
         </form>
         <p class="composer-note">금액·인원·통계 외의 문서 검색은 핵심 키워드 중심 입력 권장 · 중요한 금액은 계산 근거와 원문 확인</p>
       </footer>
     </main>
   </div>
+  <div class="rename-modal-backdrop" id="renameModal" hidden>
+    <section class="rename-modal" role="dialog" aria-modal="true" aria-labelledby="renameModalTitle">
+      <div class="rename-modal-icon" aria-hidden="true">✎</div>
+      <div class="rename-modal-heading">
+        <p class="eyebrow">DOCUMENT SETTINGS</p>
+        <h2 id="renameModalTitle">파일 이름 수정</h2>
+        <p id="renameCurrentName"></p>
+      </div>
+      <form id="renameForm">
+        <label for="renameInput">새 파일명</label>
+        <input id="renameInput" type="text" autocomplete="off" required>
+        <p class="rename-modal-note">확장자는 기존 파일과 동일해야 합니다.</p>
+        <p class="rename-reindex-note">이름을 바꾸면 문서를 다시 색인합니다. 완료 전까지는 검색에 사용할 수 없습니다.</p>
+        <div class="rename-modal-actions">
+          <button class="rename-cancel-button" id="renameCancel" type="button">취소</button>
+          <button class="rename-submit-button" id="renameSubmit" type="submit">이름 변경</button>
+        </div>
+      </form>
+    </section>
+  </div>
+  <div class="delete-modal-backdrop" id="deleteModal" hidden>
+    <section class="delete-modal" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+      <div class="delete-modal-icon" aria-hidden="true">!</div>
+      <div class="delete-modal-heading">
+        <p class="eyebrow">DELETE DOCUMENT</p>
+        <h2 id="deleteModalTitle">문서를 삭제할까요?</h2>
+        <p id="deleteCurrentName"></p>
+      </div>
+      <p class="delete-modal-note">원본 파일, 표 데이터, 검색 색인 및 적재 기록이 함께 삭제됩니다.</p>
+      <div class="delete-modal-actions">
+        <button class="delete-cancel-button" id="deleteCancel" type="button">취소</button>
+        <button class="delete-submit-button" id="deleteSubmit" type="button">삭제</button>
+      </div>
+    </section>
+  </div>
   <dialog class="detail-dialog" id="detailDialog" aria-labelledby="detailTitle">
-    <div class="detail-dialog-head"><strong id="detailTitle">상세 정보</strong><button class="icon-button" id="closeDetail" type="button" aria-label="상세 정보 닫기">×</button></div>
+    <div class="detail-dialog-head">
+      <strong id="detailTitle">상세 정보</strong>
+      <button class="icon-button" id="closeDetail" type="button" aria-label="상세 정보 닫기">×</button>
+    </div>
     <div class="detail-dialog-body" id="detailBody"></div>
     <button class="secondary-button" id="detailMore" type="button" hidden>더 보기</button>
   </dialog>
   <div class="toast" id="toast" role="status"></div>
-    <script src="/static/app.js?v=20260722-5" defer></script>
+  <script src="/static/app.js?v=20260723-1" defer></script>
 </body>
 </html>

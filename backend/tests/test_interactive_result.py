@@ -97,3 +97,23 @@ class InteractiveResultTest(unittest.TestCase):
             if field["data_type"] == "money"
         ]
         self.assertEqual(amounts, [10000, 20000])
+
+    def test_cards_exclude_ocr_and_derived_processing_columns(self):
+        df = self.df.copy()
+        df["_ocr_confidence_min"] = [0.81, 0.92]
+        df["_ocr_low_confidence_cells"] = ["회원명", ""]
+        df["ocrconfidence"] = [0.81, 0.92]
+        df.attrs["semantic_schema"] = attach_semantic_schema(
+            df, var_name="df_ocr", source_file="ocr.xlsx", dataframe_dir=".",
+        )
+        execution = execute_query_plan(
+            validate_query_plan(
+                QueryPlan(status="ready", dataframe="df_ocr", operation="list"),
+                dataframes={"df_ocr": df}, source_by_alias={"df_ocr": "ocr.xlsx"},
+            )
+        )
+        result = build_interactive_result(execution)
+        detail = get_interactive_detail(result["entities"][0]["detail_ref"])
+        card_columns = {attribute["column"] for attribute in detail["attributes"]}
+        self.assertFalse({"_ocr_confidence_min", "_ocr_low_confidence_cells", "ocrconfidence"} & card_columns)
+        self.assertFalse({"_ocr_confidence_min", "_ocr_low_confidence_cells", "ocrconfidence"} & set(result["records"][0]))
