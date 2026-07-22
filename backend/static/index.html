@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>문서 조회 에이전트</title>
-  <link rel="stylesheet" href="/static/style.css?v=20260722-30">
+  <script>if (location.pathname === "/ui-v2") document.documentElement.classList.add("ui-v2"); if (location.pathname === "/ui") { const root = document.documentElement; root.classList.add("ui-v3"); const syncV3Layout = () => root.classList.toggle("ui-v2", window.innerWidth > 820); syncV3Layout(); window.addEventListener("resize", syncV3Layout); }</script>
+  <link rel="stylesheet" href="/static/style.css?v=20260722-53">
 </head>
 <body>
   <div class="app-shell">
@@ -97,7 +98,9 @@
           </div>
         </div>
         <form class="composer" id="chatForm">
+          <button class="quick-attach-button" id="quickAttach" type="button" aria-label="문서 첨부" title="문서 첨부">＋</button>
           <textarea id="questionInput" rows="1" maxlength="2000" placeholder="문서에 대해 질문하세요."></textarea>
+          <button class="quick-mode-button" id="quickModeToggle" type="button" aria-label="AI 문서 검색 전환" title="AI 문서 검색 전환"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button>
           <button class="send-button" id="sendButton" type="submit" aria-label="질문 전송"><span data-send-label>전송</span><span data-send-icon aria-hidden="true">→</span></button>
         </form>
         <p class="composer-note">금액·인원·통계 외의 문서 검색은 핵심 키워드 중심 입력 권장 · 중요한 금액은 계산 근거와 원문 확인</p>
@@ -140,6 +143,6 @@
     </section>
   </div>
   <div class="toast" id="toast" role="status"></div>
-  <script src="/static/app.js?v=20260722-17" defer></script>
+  <script src="/static/app.js?v=20260722-20" defer></script>
 </body>
 </html>

@@ -28,6 +28,8 @@ const elements = {
   modeHelpPopover: document.getElementById("modeHelpPopover"),
   chatForm: document.getElementById("chatForm"),
   questionInput: document.getElementById("questionInput"),
+  quickAttach: document.getElementById("quickAttach"),
+  quickModeToggle: document.getElementById("quickModeToggle"),
   sendButton: document.getElementById("sendButton"),
   renameModal: document.getElementById("renameModal"),
   renameForm: document.getElementById("renameForm"),
@@ -72,6 +74,34 @@ function fileType(document) {
   return String(document.file_type || document.source?.split(".").pop() || "DOC").toUpperCase().slice(0, 5);
 }
 
+function renderDocumentIcon(icon, source, item) {
+  const extension = String(source).split(".").pop().toLocaleLowerCase("ko-KR");
+  const icons = {
+    xlsx: { className: "excel", markup: '<path d="M8 3.5h7.2L19 7.3v13.2H8z" fill="currentColor" opacity=".95"/><path d="M15 3.7v3.8h3.8" fill="none" stroke="#bce6c9" stroke-width="1.3" stroke-linejoin="round"/><path d="M4.5 7h7v10h-7z" fill="#fff"/><path d="m6.3 9 3.4 6M9.7 9l-3.4 6" stroke="#207245" stroke-width="1.45" stroke-linecap="round"/>' },
+    pdf: { className: "pdf", markup: '<path d="M5.5 3.5h8.8L18.5 7.7v12.8h-13z" fill="currentColor"/><path d="M14 3.7v4h4" fill="none" stroke="#ffd1d1" stroke-width="1.3" stroke-linejoin="round"/><text x="7.2" y="16" fill="#fff" font-size="5.1" font-family="Arial, sans-serif" font-weight="700">PDF</text>' },
+    hwp: { className: "hwp", markup: '<path d="M5.5 3.5h8.8L18.5 7.7v12.8h-13z" fill="currentColor"/><path d="M14 3.7v4h4" fill="none" stroke="#cddfff" stroke-width="1.3" stroke-linejoin="round"/><text x="6.8" y="16" fill="#fff" font-size="5.1" font-family="Arial, sans-serif" font-weight="700">HWP</text>' },
+    hwpx: { className: "hwp", markup: '<path d="M5.5 3.5h8.8L18.5 7.7v12.8h-13z" fill="currentColor"/><path d="M14 3.7v4h4" fill="none" stroke="#cddfff" stroke-width="1.3" stroke-linejoin="round"/><text x="6" y="16" fill="#fff" font-size="4.2" font-family="Arial, sans-serif" font-weight="700">HWPX</text>' },
+    jpg: { className: "image", markup: '<rect x="4" y="5" width="16" height="14" rx="2" fill="currentColor"/><circle cx="9" cy="9.3" r="1.6" fill="#e2dfff"/><path d="m5.8 17 4.5-4.8 2.8 2.8 2.2-2.3 3 4.3" fill="none" stroke="#fff" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"/>' },
+    jpeg: { className: "image", markup: '<rect x="4" y="5" width="16" height="14" rx="2" fill="currentColor"/><circle cx="9" cy="9.3" r="1.6" fill="#e2dfff"/><path d="m5.8 17 4.5-4.8 2.8 2.8 2.2-2.3 3 4.3" fill="none" stroke="#fff" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"/>' },
+    png: { className: "image", markup: '<rect x="4" y="5" width="16" height="14" rx="2" fill="currentColor"/><circle cx="9" cy="9.3" r="1.6" fill="#e2dfff"/><path d="m5.8 17 4.5-4.8 2.8 2.8 2.2-2.3 3 4.3" fill="none" stroke="#fff" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"/>' },
+  };
+  ["webp", "bmp", "tif", "tiff"].forEach((imageExtension) => {
+    icons[imageExtension] = icons.png;
+  });
+  const definition = icons[extension];
+  if (!definition) {
+    icon.textContent = fileType(item);
+    return;
+  }
+  icon.classList.add(definition.className);
+  icon.setAttribute("aria-label", `${extension.toUpperCase()} 파일`);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = definition.markup;
+  icon.append(svg);
+}
+
 function renderDocuments() {
   const keyword = elements.documentSearch.value.trim().toLocaleLowerCase("ko-KR");
   const filtered = state.documents.filter((document) =>
@@ -100,7 +130,7 @@ function renderDocuments() {
 
     const icon = document.createElement("span");
     icon.className = "document-icon";
-    icon.textContent = fileType(item);
+    renderDocumentIcon(icon, source, item);
     const label = document.createElement("span");
     const strong = document.createElement("strong");
     strong.textContent = source;
@@ -692,7 +722,9 @@ function updateNaturalMode() {
   elements.queryModeRow.classList.toggle("active", active);
   elements.questionInput.placeholder = active
     ? "질문의 의미와 문맥으로 검색하세요."
-    : "문서에 대해 질문하세요.";
+    : (document.documentElement.classList.contains("ui-v3")
+      ? "질문을 입력하세요..."
+      : "문서에 대해 질문하세요.");
 }
 
 elements.chatForm.addEventListener("submit", (event) => {
@@ -793,9 +825,18 @@ elements.chatArea.addEventListener("click", (event) => {
 elements.openSidebar.addEventListener("click", () => elements.sidebar.classList.add("open"));
 elements.closeSidebar.addEventListener("click", () => elements.sidebar.classList.remove("open"));
 document.addEventListener("click", (event) => {
-  if (window.innerWidth > 820 || !elements.sidebar.classList.contains("open")) return;
+  if (window.innerWidth > 820 && !document.documentElement.classList.contains("ui-v3")) return;
+  if (!elements.sidebar.classList.contains("open")) return;
   if (event.target.closest("#sidebar, #openSidebar")) return;
   elements.sidebar.classList.remove("open");
+});
+elements.quickAttach.addEventListener("click", () => {
+  elements.sidebar.classList.add("open");
+  setUploadPanelOpen(true);
+});
+elements.quickModeToggle.addEventListener("click", () => {
+  elements.naturalMode.checked = !elements.naturalMode.checked;
+  updateNaturalMode();
 });
 
 bindSuggestions();
