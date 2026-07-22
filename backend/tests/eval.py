@@ -49,6 +49,100 @@ def score_keywords(answer: str, keywords: list[str]) -> tuple[float, list[str], 
     return recall, hit, miss
 
 
+def _normalize_text(value: object) -> str:
+    """Compare human-facing values without making keyword recall a verdict."""
+    return re.sub(r"\s+", "", str(value).casefold())
+
+
+def _number_forms(value: int | float) -> tuple[str, ...]:
+    """Return the Korean display forms that are safe to accept for one number."""
+    numeric = int(value) if float(value).is_integer() else value
+    return tuple(dict.fromkeys((str(numeric), f"{numeric:,}")))
+
+
+def _contains_number(answer: str, value: int | float) -> bool:
+    normalized = _normalize_text(answer).replace(",", "")
+    return any(form.replace(",", "") in normalized for form in _number_forms(value))
+
+
+def _contains_money(answer: str, value: int | float) -> bool:
+    """Accept equivalent Korean money displays such as ``2만원`` and ``20,000원``."""
+    expected = float(value)
+    if _contains_number(answer, expected):
+        return True
+    money_pattern = re.compile(
+        r"(?<!\d)(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*(?:원|천원|만원|억원)(?!\w)"
+    )
+    for match in money_pattern.finditer(answer):
+        text = match.group(0).replace(",", "").replace(" ", "")
+        unit = next((candidate for candidate in ("억원", "만원", "천원", "원") if text.endswith(candidate)), "")
+        numeric = text[:-len(unit)] if unit else text
+        try:
+            actual = float(numeric) * {"원": 1, "천원": 1_000, "만원": 10_000, "억원": 100_000_000}[unit]
+        except (KeyError, ValueError):
+            continue
+        if actual is not None and abs(actual - expected) < 1e-9:
+            return True
+    return False
+
+
+def _matched_rows_from_evidence(answer: str) -> int | None:
+    """Read the deterministic QueryPlan evidence, not arbitrary answer prose."""
+    match = re.search(r"조건\s*통과\s*([\d,]+)\s*(?:건|개)", answer)
+    return int(match.group(1).replace(",", "")) if match else None
+
+
+def _unique_people_from_evidence(answer: str) -> int | None:
+    match = re.search(r"조건\s*충족\s*고유\s*인원\s*:\s*([\d,]+)\s*명", answer)
+    return int(match.group(1).replace(",", "")) if match else None
+
+
+def score_structured_facts(answer: str, expected: dict[str, Any]) -> tuple[bool, list[dict[str, Any]]]:
+    """Verify goldset facts against scalar output and deterministic execution evidence.
+
+    ``ground_truth_keywords`` remain a diagnostic aid only.  In particular, a
+    name occurring somewhere in an unfiltered table can never make a list
+    question pass: its QueryPlan evidence must report the expected row count.
+    """
+    checks: list[dict[str, Any]] = []
+
+    def add(field: str, expected_value: object, actual: object, ok: bool) -> None:
+        checks.append({"field": field, "expected": expected_value, "actual": actual, "ok": ok})
+
+    if "record_count" in expected:
+        actual_rows = _matched_rows_from_evidence(answer)
+        add("record_count", expected["record_count"], actual_rows, actual_rows == expected["record_count"])
+
+    if "unique_people" in expected:
+        expected_people = expected["unique_people"]
+        actual_people = _unique_people_from_evidence(answer)
+        add("unique_people", expected_people, actual_people, actual_people == expected_people)
+
+    for field in ("amount", "name", "matched_name", "major", "email", "phone", "registered_at"):
+        if field not in expected:
+            continue
+        value = expected[field]
+        ok = _contains_money(answer, value) if field == "amount" else _normalize_text(value) in _normalize_text(answer)
+        add(field, value, None, ok)
+
+    if "fee_types" in expected:
+        for value in expected["fee_types"]:
+            add("fee_types", value, None, _normalize_text(value) in _normalize_text(answer))
+
+    if "exists" in expected:
+        # The remaining expected facts (for example amount and record_count)
+        # establish existence.  A negative case must explicitly say no data.
+        no_data = "조회된 데이터가 없습니다" in answer
+        add("exists", expected["exists"], None, not no_data if expected["exists"] else no_data)
+
+    # Goldset may add explicit exclusions for list questions.  Supporting this
+    # now prevents a future return-the-whole-table false positive.
+    for value in expected.get("forbidden_values", []):
+        add("forbidden_values", value, None, _normalize_text(value) not in _normalize_text(answer))
+
+    return bool(checks) and all(check["ok"] for check in checks), checks
+
+
 def evaluate_case(
     tc: dict[str, Any],
     base_url: str,
@@ -58,6 +152,7 @@ def evaluate_case(
     question       = tc["question"]
     expected_route = tc["expected_route"]
     keywords       = tc["ground_truth_keywords"]
+    expected       = tc.get("expected", {})
 
     start = time.perf_counter()
     try:
@@ -84,10 +179,11 @@ def evaluate_case(
 
     keyword_recall, hit, miss = score_keywords(answer, keywords)
 
-    if tc["category"] == "negative":
-        passed = keyword_recall > 0
-    else:
-        passed = keyword_recall >= 0.75 or (route_ok and keyword_recall >= 0.5)
+    facts_ok, fact_checks = score_structured_facts(answer, expected)
+    # Route correctness is necessary but never sufficient.  Keyword recall is
+    # intentionally excluded from the verdict because it cannot prove filters,
+    # row counts, or scalar values.
+    passed = route_ok and facts_ok and error is None
 
     return {
         "id":              tc["id"],
@@ -101,6 +197,8 @@ def evaluate_case(
         "keyword_recall":  round(keyword_recall, 3),
         "hit_keywords":    hit,
         "miss_keywords":   miss,
+        "fact_checks":     fact_checks,
+        "facts_ok":        facts_ok,
         "passed":          passed,
         "elapsed_sec":     elapsed,
         "answer_preview":  answer[:500] if answer else "",
@@ -126,6 +224,9 @@ def print_result(r: dict[str, Any], verbose: bool = False) -> None:
         f"  {r['elapsed_sec']}s"
     )
     if not r["passed"] or verbose:
+        failed_facts = [check for check in r["fact_checks"] if not check["ok"]]
+        if failed_facts:
+            print(f"     구조화 검증 실패: {failed_facts}")
         if r["miss_keywords"]:
             print(f"     누락 키워드: {r['miss_keywords']}")
         if r["error"]:
@@ -188,6 +289,11 @@ def save_excel(results: list[dict[str, Any]], path: Path) -> None:
             "키워드 재현율": f"{r['keyword_recall']:.0%}",
             "적중 키워드":  ", ".join(r["hit_keywords"]),
             "누락 키워드":  ", ".join(r["miss_keywords"]),
+            "구조화 검증":  "O" if r["facts_ok"] else "X",
+            "구조화 실패":  json.dumps(
+                [check for check in r["fact_checks"] if not check["ok"]],
+                ensure_ascii=False,
+            ),
             "통과":        "O" if r["passed"] else "X",
             "소요시간(s)": r["elapsed_sec"],
             "답변 미리보기": r["answer_preview"],
@@ -284,10 +390,14 @@ def save_markdown(
                 f"- **카테고리**: {r['category']} · 난이도: {r['difficulty']}",
                 f"- **라우팅**: {r['normalized_route']} [{route_note}]",
                 f"- **키워드 재현율**: {r['keyword_recall']:.0%}",
+                f"- **구조화 검증**: {'O' if r['facts_ok'] else 'X'}",
                 f"- **적중**: {', '.join(r['hit_keywords']) or '없음'}",
                 f"- **누락**: {', '.join(r['miss_keywords']) or '없음'}",
                 f"- **소요 시간**: {r['elapsed_sec']}s",
             ]
+            failed_facts = [check for check in r["fact_checks"] if not check["ok"]]
+            if failed_facts:
+                lines.append(f"- **구조화 실패 항목**: `{json.dumps(failed_facts, ensure_ascii=False)}`")
             if r["answer_preview"]:
                 preview = r["answer_preview"].replace("\n", " ")[:200]
                 lines.append(f"- **답변 미리보기**: {preview}")
@@ -306,7 +416,7 @@ def save_markdown(
 def save_failed_log(results: list[dict[str, Any]], path: Path) -> None:
     failed = [r for r in results if not r["passed"]]
     if not failed:
-        print("  실패 케이스 없음 — failed.log 미생성")
+        print("  실패 케이스 없음 - failed.log 미생성")
         return
 
     lines = [
@@ -323,11 +433,15 @@ def save_failed_log(results: list[dict[str, Any]], path: Path) -> None:
             f"  카테고리  : {r['category']} ({r['difficulty']})",
             f"  라우팅    : {route_note}",
             f"  KW 재현율 : {r['keyword_recall']:.0%}",
+            f"  구조화 검증: {'O' if r['facts_ok'] else 'X'}",
             f"  적중      : {r['hit_keywords']}",
             f"  누락      : {r['miss_keywords']}",
             f"  소요시간  : {r['elapsed_sec']}s",
             f"  답변      : {r['answer_preview']}",
         ]
+        failed_facts = [check for check in r["fact_checks"] if not check["ok"]]
+        if failed_facts:
+            lines.append(f"  구조화 실패: {json.dumps(failed_facts, ensure_ascii=False)}")
         if r["error"]:
             lines.append(f"  오류      : {r['error']}")
         lines.append("")

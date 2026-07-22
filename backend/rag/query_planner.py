@@ -83,6 +83,20 @@ def _operation_hint_text(
         return text
     if operation_hint == "structured_query":
         return "structured_query: 범용 표 조건·정렬·선택 조회"
+    operation_contracts = {
+        "list_records": "list_records: operation=list으로 전체 행 목록을 반환",
+        "filter_records": "filter_records: operation=list과 질문의 모든 조건 filters를 사용",
+        "count_records": "count_records: operation=count. 사람/인원 질문이면 distinct_by에 사람 식별 컬럼 필수",
+        "sum_amount": "sum_amount: operation=sum, target은 금액 컬럼, 질문의 조건은 모두 filters에 보존",
+        "average_amount": "average_amount: operation=mean, target은 금액 컬럼",
+        "median_amount": "median_amount: operation=median, target은 금액 컬럼",
+        "mode_amount": "mode_amount: operation=mode, target은 금액 컬럼",
+        "lookup_amount": "lookup_amount: 특정 대상의 금액 조회. 대상 식별 filters와 금액 target을 사용",
+        "max_amount": "max_amount: operation=max, target은 금액 컬럼",
+        "min_amount": "min_amount: operation=min, target은 금액 컬럼",
+    }
+    if operation_hint in operation_contracts:
+        return operation_contracts[operation_hint]
     return "없음: 질문과 스키마만으로 계획 결정"
 
 
@@ -371,4 +385,5 @@ async def generate_validated_query_plan(
         dataframes=dataframes,
         source_by_alias=source_by_alias,
         explicit_dataframe_aliases=explicit_dataframe_aliases,
+        operation_hint=operation_hint,
     )

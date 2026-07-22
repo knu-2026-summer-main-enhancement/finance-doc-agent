@@ -40,8 +40,10 @@ class QueryExecutionEvidence:
     filters: tuple[FilterCondition, ...]
     sort: tuple[SortCondition, ...]
     distinct_by: tuple[str, ...]
+    group_by: tuple[str, ...]
     source_rows: int
     filtered_rows: int
+    unique_people: int | None
     limit: int | None
     top_n: int | None
 
@@ -77,11 +79,12 @@ def _is_person_name_column(df: pd.DataFrame, column: Hashable) -> bool:
         columns = schema.get("columns")
         mapping = columns.get(str(column)) if isinstance(columns, dict) else None
         if isinstance(mapping, dict):
-            return (
+            if (
                 mapping.get("concept") == "entity"
                 and mapping.get("role") == "entity_name"
                 and mapping.get("qualifier") == "person"
-            )
+            ):
+                return True
     meaning = infer_column_meaning(str(column), df[column])
     return (
         meaning.concept == "entity"
@@ -131,10 +134,14 @@ def _filter_mask(df: pd.DataFrame, condition: FilterCondition) -> pd.Series:
     series = _typed_series(df, column)
     operator = condition.operator
 
-    if operator == "is_null":
-        return series.isna()
-    if operator == "not_null":
-        return series.notna()
+    if operator in {"is_null", "not_null"}:
+        # Spreadsheet exports often represent a missing text cell as an empty
+        # string or textual null marker rather than a pandas NaN.
+        missing = series.isna()
+        if column_data_type(df, column) == "string":
+            text = series.astype("string").str.strip().str.casefold()
+            missing = missing | text.isin({"", "none", "nan", "nat", "null"}).fillna(False)
+        return missing if operator == "is_null" else ~missing
 
     raw_values = (
         condition.value
@@ -272,6 +279,14 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
     filtered = _drop_plan_duplicates(filtered, plan)
 
     matched_rows = int(len(filtered))
+    person_columns = [
+        column for column in filtered.columns if _is_person_name_column(filtered, column)
+    ]
+    unique_people = (
+        max(int(filtered[column].dropna().nunique()) for column in person_columns)
+        if person_columns
+        else None
+    )
     evidence = QueryExecutionEvidence(
         dataframe_alias=str(plan.dataframe),
         source_file=source_file,
@@ -279,8 +294,10 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
         filters=plan.filters,
         sort=plan.sort,
         distinct_by=plan.distinct_by,
+        group_by=plan.group_by,
         source_rows=int(len(df)),
         filtered_rows=filtered_rows,
+        unique_people=unique_people,
         limit=plan.effective_limit,
         top_n=plan.effective_top_n,
     )
@@ -320,6 +337,54 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
             matched_rows=matched_rows,
             valid_rows=valid_rows,
             excluded_rows=matched_rows - valid_rows,
+            evidence=evidence,
+        )
+
+    if plan.operation == "group_sum":
+        if not plan.target or not plan.group_by:
+            raise QueryPlanExecutionError("group_sum에는 대상 컬럼과 그룹 컬럼이 필요합니다.")
+        target, target_column = _target_series(filtered, plan.target)
+        target_data_type = column_data_type(filtered, target_column)
+        group_columns = [_actual_column(filtered, column) for column in plan.group_by]
+        grouped_input = pd.DataFrame(index=filtered.index)
+        for column in group_columns:
+            grouped_input[str(column)] = _typed_series(filtered, column)
+        grouped_input[str(plan.target)] = target
+        valid_mask = grouped_input[str(plan.target)].notna()
+        for column in group_columns:
+            valid_mask &= grouped_input[str(column)].notna()
+        valid_input = grouped_input[valid_mask]
+        valid_rows = int(len(valid_input))
+        excluded_rows = matched_rows - valid_rows
+        if valid_input.empty:
+            ranked = pd.DataFrame(columns=[*plan.group_by, plan.target])
+        else:
+            ranked = (
+                valid_input.groupby(list(plan.group_by), dropna=False, sort=False)[str(plan.target)]
+                .sum()
+                .reset_index()
+                .sort_values(
+                    by=str(plan.target),
+                    ascending=(plan.group_order or "desc") == "asc",
+                    kind="stable",
+                )
+            )
+            top_n = plan.effective_top_n or 1
+            if top_n == 1 and not ranked.empty:
+                extreme = ranked.iloc[0][str(plan.target)]
+                ranked = ranked[ranked[str(plan.target)].eq(extreme)]
+            else:
+                ranked = ranked.head(top_n)
+        ranked.attrs.update(filtered.attrs)
+        return QueryExecutionResult(
+            operation="group_sum",
+            value=ranked,
+            source_file=source_file,
+            target=plan.target,
+            target_data_type=target_data_type,
+            matched_rows=matched_rows,
+            valid_rows=valid_rows,
+            excluded_rows=excluded_rows,
             evidence=evidence,
         )
 

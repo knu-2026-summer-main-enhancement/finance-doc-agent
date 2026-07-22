@@ -321,6 +321,8 @@ def _format_query_plan_evidence(result: QueryExecutionResult) -> str:
         lines.append(f"- 정렬: {sort_text}")
     if evidence.distinct_by:
         lines.append(f"- 중복 제거 기준: {', '.join(evidence.distinct_by)}")
+    if evidence.group_by:
+        lines.append(f"- 그룹 집계 기준: {', '.join(evidence.group_by)}")
     if evidence.limit is not None:
         lines.append(f"- 반환 제한: {evidence.limit:,}개")
     elif evidence.top_n is not None:
@@ -329,6 +331,8 @@ def _format_query_plan_evidence(result: QueryExecutionResult) -> str:
         f"- 행 수: 원본 {evidence.source_rows:,}개 → "
         f"조건 통과 {evidence.filtered_rows:,}개 → 계산 대상 {result.matched_rows:,}개"
     )
+    if evidence.unique_people is not None:
+        lines.append(f"- 조건 충족 고유 인원: {evidence.unique_people:,}명")
     if result.target:
         lines.append(f"- 대상 컬럼: {result.target}")
     if result.excluded_rows:
@@ -345,7 +349,8 @@ def _format_query_execution_result(
     if isinstance(result.value, pd.DataFrame):
         answer = _format_dataframe_result_for_question(result.value, question)
     elif result.operation == "count":
-        answer = f"총 {int(result.value or 0):,}건입니다."
+        unit = "명" if result.evidence.distinct_by else "건"
+        answer = f"총 {int(result.value or 0):,}{unit}입니다."
     elif result.operation == "mode":
         values = result.value if isinstance(result.value, list) else []
         if not values:

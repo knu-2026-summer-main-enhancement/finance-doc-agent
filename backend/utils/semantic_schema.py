@@ -285,7 +285,7 @@ def _deterministic_meaning(column: str, series: pd.Series, is_derived: bool) -> 
     if any(token in header for token in ("학과", "학부", "전공", "계열")):
         return meaning("category", "category", qualifier="department")
     if (
-        header in {"성명", "이름", "학생명", "수혜자명", "기부자", "후원자", "출연자", "표시명", "성명원문", "성명검색키"}
+        header in {"성명", "이름", "회원명", "학생명", "수혜자명", "기부자", "후원자", "출연자", "표시명", "성명원문", "성명검색키"}
         or header.endswith("자명")
     ):
         return meaning(

@@ -150,7 +150,7 @@ class QueryPlanSchemaTest(unittest.TestCase):
 
         self.assertEqual(
             operation_schema["enum"],
-            ["list", "count", "sum", "mean", "median", "mode", "min", "max"],
+            ["list", "count", "sum", "mean", "median", "mode", "min", "max", "group_sum"],
         )
 
     def test_plan_and_nested_collections_are_immutable(self):

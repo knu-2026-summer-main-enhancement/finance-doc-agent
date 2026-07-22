@@ -64,7 +64,7 @@ class GuardRoutingTest(unittest.TestCase):
         self.assertEqual(route_operations(["sum_amount"]), "PANDAS")
         self.assertEqual(
             pandas_strategy_for_operations(["sum_amount"]),
-            "DIRECT",
+            "QUERY_PLAN",
         )
         self.assertEqual(
             route_operations(["structured_query"]),

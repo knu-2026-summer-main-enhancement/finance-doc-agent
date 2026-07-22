@@ -45,7 +45,7 @@ from core.security import _verify_api_key, _validate_ingest_path
 from core.llm import get_llm_rag
 from datastore.state import _df_namespace, _df_sources, _load_dataframes
 from datastore.schema import _get_df_schema
-from datastore.scope import document_scope
+from datastore.scope import document_scope, scoped_mapping
 from datastore.query import (
     _count_valid_name_rows,
     _extract_total_from_source,
@@ -66,6 +66,8 @@ from rag.question_engine import (
     compare_shadow_decision,
     decide_question,
 )
+from rag.deterministic_query_plan import build_schema_grounded_plan
+from rag.question_decision import QuestionDecision
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -103,6 +105,82 @@ def _schedule_shadow_question_engine(
 
 async def _resolve_llm_question(question: str):
     """Return validated LLM operations, engine, and optional PANDAS strategy."""
+
+    normalized = re.sub(r"\s+", "", question)
+    dataframes = scoped_mapping(_df_namespace, _df_sources)
+    deterministic_operation = None
+    # A plain whole-table list has no semantic ambiguity and should not wait
+    # for a local model. File/document inventories use a separate route and do
+    # not match this table-record expression.
+    if re.fullmatch(
+        r"(?:표의?)?(?:전체|모든|전부)(?:데이터|기록|행|명단|목록|리스트)?"
+        r"(?:보여줘|보여|알려줘|조회해줘|확인해줘)?[?!.]*",
+        normalized,
+    ):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="list_records"
+        )
+        if candidate is not None:
+            deterministic_operation = "list_records"
+    # A missing-value phrase is a filter condition even when it names a field
+    # that can otherwise be returned by a lookup (for example an email).
+    elif re.search(r"(?:비어있|안적|미입력|누락|공백|없(?:는|어|어?))", normalized):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="structured_query"
+        )
+        if candidate is not None:
+            deterministic_operation = "structured_query"
+    elif re.search(r"(?:돈|금액|회비|결제|납부|후원|기부).{0,8}?(?:냈|내었|냈어|냈나요|했어|했나|했나요)", normalized):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="lookup_amount"
+        )
+        if candidate is not None:
+            deterministic_operation = "lookup_amount"
+    elif (
+        any(token in normalized for token in ("전화번호", "이메일"))
+        and re.search(r"(?:얼마|돈|금액|회비|결제|납부|후원|기부)", normalized)
+    ):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="lookup_amount"
+        )
+        if candidate is not None:
+            deterministic_operation = "lookup_amount"
+    elif any(token in normalized for token in ("전화번호", "이메일", "전공", "학과", "등록날짜", "지급일")):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="lookup_field"
+        )
+        if candidate is not None:
+            deterministic_operation = "lookup_field"
+    elif re.search(r"(?:사람|인원|회원).*?(?:몇명|수)|몇명", normalized):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="count_records"
+        )
+        if candidate is not None:
+            deterministic_operation = "count_records"
+    elif re.search(r"(?:총합|합계|총액|얼마(?:야|예|지|냈))", normalized):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="sum_amount"
+        )
+        if candidate is not None:
+            deterministic_operation = "sum_amount"
+    else:
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="structured_query"
+        )
+        if candidate is not None:
+            deterministic_operation = "structured_query"
+
+    if deterministic_operation:
+        decision = QuestionDecision.model_validate(
+            {
+                "status": "ready",
+                "requests": [{"source_text": question, "operation": deterministic_operation}],
+                "reason": "스키마와 질문 원문으로 검증 가능한 표 조회입니다.",
+            }
+        )
+        guard_result = check_question_decision(decision)
+        logger.info("[QUESTION_ENGINE] 스키마 기반 분류 | operation=%s", deterministic_operation)
+        return guard_result, "PANDAS", pandas_strategy_for_operations(decision.operations)
 
     decision = await decide_question(
         question,

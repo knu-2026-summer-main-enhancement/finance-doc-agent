@@ -15,6 +15,7 @@ QueryOperation = Literal[
     "mode",
     "min",
     "max",
+    "group_sum",
 ]
 FilterOperator = Literal[
     "eq",
@@ -114,6 +115,8 @@ class QueryPlan(_PlanModel):
     result_mode: Literal["value", "records"] | None = None
     sort: tuple[SortCondition, ...] = Field(default_factory=tuple, max_length=10)
     distinct_by: tuple[str, ...] = Field(default_factory=tuple, max_length=10)
+    group_by: tuple[str, ...] = Field(default_factory=tuple, max_length=10)
+    group_order: Literal["asc", "desc"] | None = None
     limit: int | None = Field(default=None, ge=1, le=500)
     top_n: int | None = Field(default=None, ge=1, le=100)
     message: str | None = Field(default=None, max_length=500)
@@ -127,6 +130,8 @@ class QueryPlan(_PlanModel):
             return "value"
         if self.operation in {"min", "max"}:
             return self.result_mode or "value"
+        if self.operation == "group_sum":
+            return "records"
         return None
 
     @property
@@ -135,6 +140,8 @@ class QueryPlan(_PlanModel):
 
     @property
     def effective_top_n(self) -> int | None:
+        if self.operation == "group_sum":
+            return self.top_n or 1
         if self.operation in {"min", "max"} and self.effective_result_mode == "records":
             return self.top_n or 1
         return None
@@ -154,6 +161,8 @@ class QueryPlan(_PlanModel):
                 or self.target is not None
                 or self.sort
                 or self.distinct_by
+                or self.group_by
+                or self.group_order is not None
                 or self.limit is not None
                 or self.top_n is not None
                 or self.result_mode is not None
@@ -167,9 +176,11 @@ class QueryPlan(_PlanModel):
             raise ValueError("ready requires an operation")
 
         scalar_operations = {"count", "sum", "mean", "median", "mode"}
-        targeted_operations = {"sum", "mean", "median", "mode", "min", "max"}
+        targeted_operations = {"sum", "mean", "median", "mode", "min", "max", "group_sum"}
 
         if self.operation == "list":
+            if self.group_by or self.group_order is not None:
+                raise ValueError("list must not include grouping fields")
             if self.target is not None:
                 raise ValueError("list must not include a target")
             if self.result_mode not in {None, "records"}:
@@ -177,6 +188,20 @@ class QueryPlan(_PlanModel):
             if self.top_n is not None:
                 raise ValueError("list uses limit instead of top_n")
             return self
+
+        if self.operation == "group_sum":
+            if not self.target:
+                raise ValueError("group_sum requires a target column")
+            if not self.group_by:
+                raise ValueError("group_sum requires at least one group_by column")
+            if self.result_mode not in {None, "records"}:
+                raise ValueError("group_sum returns ranked group records")
+            if self.select or self.sort or self.distinct_by or self.limit is not None:
+                raise ValueError("group_sum uses group_by, group_order and top_n")
+            return self
+
+        if self.group_by or self.group_order is not None:
+            raise ValueError(f"{self.operation} must not include grouping fields")
 
         if self.operation in targeted_operations and not self.target:
             raise ValueError(f"{self.operation} requires a target column")

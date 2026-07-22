@@ -15,7 +15,7 @@ from pandas_engine.query_grounding import (
     parse_grounded_comparisons,
 )
 from pandas_engine.query_plan import FilterCondition, QueryPlan
-from utils.semantic_schema import SYSTEM_COLUMNS, infer_data_type
+from utils.semantic_schema import SYSTEM_COLUMNS, infer_column_meaning, infer_data_type
 from utils.table_parser import IDENTITY_INTERNAL_COLS
 
 
@@ -31,6 +31,15 @@ _NUMERIC_TYPES = {"number", "money"}
 _ORDERABLE_TYPES = _NUMERIC_TYPES | {"date", "year_month"}
 _STRING_TYPES = {"string"}
 _PLAN_COMPARISON_OPERATORS = {"gt", "gte", "lt", "lte", "between"}
+_PERSON_COUNT_QUESTION = re.compile(
+    r"(?:사람|인원|회원)\s*(?:은|이|가)?\s*(?:몇\s*명|수)|몇\s*명",
+    re.IGNORECASE,
+)
+_PERSON_DISPLAY_SUFFIX = re.compile(r"\s*[\(\[\{][^\]\)\}]*[\]\)\}]\s*$")
+_YEAR_RANGE_EVIDENCE = re.compile(
+    r"(?<!\d)((?:19|20)\d{2})\s*년?\s*(?:부터|에서|~|〜|-)\s*"
+    r"((?:19|20)\d{2})\s*년?\s*(?:까지)?"
+)
 
 
 @dataclass(frozen=True)
@@ -101,6 +110,126 @@ def _is_internal_column(column: str) -> bool:
     return column in _INTERNAL_COLUMNS or column.startswith("_")
 
 
+def _is_person_name_column(df: pd.DataFrame, column: Hashable) -> bool:
+    schema = df.attrs.get("semantic_schema")
+    if isinstance(schema, dict):
+        columns = schema.get("columns")
+        mapping = columns.get(str(column)) if isinstance(columns, dict) else None
+        if isinstance(mapping, dict):
+            if (
+                mapping.get("concept") == "entity"
+                and mapping.get("role") == "entity_name"
+                and mapping.get("qualifier") == "person"
+            ):
+                return True
+    meaning = infer_column_meaning(str(column), df[column])
+    return (
+        meaning.concept == "entity"
+        and meaning.role == "entity_name"
+        and meaning.qualifier == "person"
+    )
+
+
+def _align_person_count_distinct(
+    plan: QueryPlan,
+    question: str | None,
+    df: pd.DataFrame,
+) -> QueryPlan:
+    """Make the universal Korean '몇 명' semantics explicit before execution."""
+    if (
+        not question
+        or plan.status != "ready"
+        or plan.operation != "count"
+        or plan.distinct_by
+        or not _PERSON_COUNT_QUESTION.search(question)
+    ):
+        return plan
+    candidates = [column for column in df.columns if _is_person_name_column(df, column)]
+    if not candidates:
+        return plan
+    chosen = max(candidates, key=lambda column: int(df[column].dropna().nunique()))
+    return plan.model_copy(update={"distinct_by": (str(chosen),)})
+
+
+def _validate_lookup_projection_contract(
+    plan: QueryPlan,
+    question: str | None,
+    df: pd.DataFrame,
+    actual_columns: Mapping[str, Hashable],
+    operation_hint: str | None,
+) -> list[PlanValidationIssue]:
+    """Reject the dangerous reversal of lookup filter and return columns."""
+    if operation_hint != "lookup_field" or not question or plan.operation != "list":
+        return []
+    requested = {
+        name for name in actual_columns
+        if (
+            not _is_internal_column(name)
+            and len(_normalized_string_evidence(name)) >= 2
+            and _normalized_string_evidence(name) in _normalized_string_evidence(question)
+        )
+    }
+    if not requested:
+        return []
+    has_person_projection = any(
+        column in actual_columns
+        and _is_person_name_column(df, actual_columns[column])
+        for column in plan.select
+    )
+    reverse_lookup_filters: set[str] = set()
+    if has_person_projection:
+        for condition in plan.filters:
+            if condition.column not in actual_columns or condition.value is None:
+                continue
+            actual_column = actual_columns[condition.column]
+            if _is_person_name_column(df, actual_column):
+                continue
+            grounded_value = _normalized_string_evidence(condition.value)
+            if not grounded_value:
+                continue
+            stored_values = {
+                _normalized_string_evidence(value)
+                for value in df[actual_column].dropna().unique().tolist()
+            }
+            if grounded_value in stored_values:
+                reverse_lookup_filters.add(condition.column)
+    requested.difference_update(reverse_lookup_filters)
+    issues: list[PlanValidationIssue] = []
+    for condition in plan.filters:
+        if condition.column in requested:
+            issues.append(
+                _issue(
+                    "return_column_used_as_filter",
+                    "질문에서 반환을 요청한 컬럼을 대상 식별 필터로 사용할 수 없습니다: "
+                    f"{condition.column}",
+                    field="filters",
+                    column=condition.column,
+                )
+            )
+    if requested and not requested.intersection(plan.select):
+        issues.append(
+            _issue(
+                "missing_requested_projection",
+                "질문에서 요청한 반환 컬럼이 select에 없습니다.",
+                field="select",
+            )
+        )
+    has_person_filter = any(
+        _is_person_name_column(df, actual_columns[condition.column])
+        for condition in plan.filters
+        if condition.column in actual_columns
+    )
+    if not has_person_filter and not has_person_projection:
+        issues.append(
+            _issue(
+                "missing_subject_filter",
+                "필드 조회에는 사람 식별 필터 또는 사람 식별 반환 컬럼이 필요합니다.",
+                field="filters",
+            )
+        )
+    return issues
+
+
 def _referenced_columns(plan: QueryPlan) -> list[tuple[str, str]]:
     references: list[tuple[str, str]] = []
     if plan.target:
@@ -109,6 +238,7 @@ def _referenced_columns(plan: QueryPlan) -> list[tuple[str, str]]:
     references.extend(("filters", condition.column) for condition in plan.filters)
     references.extend(("sort", condition.column) for condition in plan.sort)
     references.extend(("distinct_by", column) for column in plan.distinct_by)
+    references.extend(("group_by", column) for column in plan.group_by)
     return references
 
 
@@ -181,6 +311,21 @@ def _validate_filter_type(
 
 def _question_numeric_conditions(question: str) -> list[_GroundedNumericCondition]:
     conditions: list[_GroundedNumericCondition] = []
+    for match in _YEAR_RANGE_EVIDENCE.finditer(question):
+        conditions.extend((
+            _GroundedNumericCondition(
+                operator="gte",
+                value=float(match.group(1)),
+                value_kind="unspecified",
+                original=match.group(0),
+            ),
+            _GroundedNumericCondition(
+                operator="lte",
+                value=float(match.group(2)),
+                value_kind="unspecified",
+                original=match.group(0),
+            ),
+        ))
     for comparison in parse_grounded_comparisons(question):
         if comparison.value_kind == "money":
             parsed = parse_money_value(comparison.value)
@@ -222,10 +367,11 @@ def _validate_filter_source_text(
                 )
             )
             continue
-        if (
-            condition.operator in _PLAN_COMPARISON_OPERATORS
-            and len(parse_grounded_comparisons(source_text)) != 1
-        ):
+        comparison_count_valid = (
+            condition.operator == "between"
+            and _YEAR_RANGE_EVIDENCE.fullmatch(source_text) is not None
+        ) or len(parse_grounded_comparisons(source_text)) == 1
+        if condition.operator in _PLAN_COMPARISON_OPERATORS and not comparison_count_valid:
             issues.append(
                 _issue(
                     "ambiguous_filter_evidence",
@@ -242,7 +388,23 @@ def _validate_filter_source_text(
 
 def _normalized_string_evidence(value: object) -> str:
     text = unicodedata.normalize("NFKC", str(value or "")).casefold()
-    return re.sub(r"\s+", "", text)
+    return re.sub(r"[\W_]+", "", text)
+
+
+def _is_grounded_person_display_value(
+    df: pd.DataFrame,
+    column: Hashable,
+    value: object,
+    source_text: str,
+) -> bool:
+    """Allow an unambiguous query-name base to resolve a display suffix."""
+    if not source_text or not _is_person_name_column(df, column):
+        return False
+    base = _PERSON_DISPLAY_SUFFIX.sub("", str(value)).strip()
+    return (
+        _normalized_string_evidence(base) == _normalized_string_evidence(source_text)
+        and base != str(value).strip()
+    )
 
 
 def _validate_string_filter_grounding(
@@ -268,11 +430,15 @@ def _validate_string_filter_grounding(
         evidence = source_text if source_text and source_text in question else question
         normalized_evidence = _normalized_string_evidence(evidence)
         values = _condition_values(condition)
-        missing = [
-            str(value)
-            for value in values
-            if _normalized_string_evidence(value) not in normalized_evidence
-        ]
+        missing = []
+        for value in values:
+            if _normalized_string_evidence(value) in normalized_evidence:
+                continue
+            if source_text and source_text in question and _is_grounded_person_display_value(
+                df, column, value, source_text
+            ):
+                continue
+            missing.append(str(value))
         if missing:
             issues.append(
                 _issue(
@@ -414,6 +580,7 @@ def validate_query_plan(
     dataframes: Mapping[str, pd.DataFrame] | None = None,
     source_by_alias: Mapping[str, str] | None = None,
     explicit_dataframe_aliases: set[str] | frozenset[str] | None = None,
+    operation_hint: str | None = None,
 ) -> PlanValidationResult:
     """Validate a parsed QueryPlan against the current document scope.
 
@@ -515,8 +682,9 @@ def validate_query_plan(
                 for column, actual_column in valid_references.items()
             },
         )
+        plan = _align_person_count_distinct(plan, question, df)
 
-    if plan.operation in {"sum", "mean", "median"} and plan.target:
+    if plan.operation in {"sum", "mean", "median", "group_sum"} and plan.target:
         target_type = column_data_type(df, valid_references[plan.target])
         if target_type not in _NUMERIC_TYPES:
             issues.append(
@@ -545,6 +713,11 @@ def validate_query_plan(
         issues.extend(_validate_filter_type(condition, data_type))
 
     if question:
+        issues.extend(
+            _validate_lookup_projection_contract(
+                plan, question, df, actual_columns, operation_hint
+            )
+        )
         issues.extend(_validate_filter_source_text(plan, question))
         issues.extend(
             _validate_string_filter_grounding(

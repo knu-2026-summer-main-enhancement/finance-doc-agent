@@ -58,15 +58,11 @@ def route_operations(
 def pandas_strategy_for_operations(
     operations: list[str] | tuple[str, ...],
 ) -> PandasStrategy | None:
-    """Choose direct verified handlers or the generic QueryPlan path."""
+    """Use one validated execution contract for every LLM-routed table query."""
 
     if route_operations(operations) != "PANDAS":
         return None
-    return (
-        "QUERY_PLAN"
-        if operations[0] in {"lookup_field", "structured_query"}
-        else "DIRECT"
-    )
+    return "QUERY_PLAN"
 
 
 def required_engines(analysis: QuestionAnalysis) -> list[str]:
