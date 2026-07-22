@@ -17,10 +17,6 @@ const elements = {
   uploadButton: document.getElementById("uploadButton"),
   uploadProgress: document.getElementById("uploadProgress"),
   uploadProgressText: document.getElementById("uploadProgressText"),
-  apiKey: document.getElementById("apiKey"),
-  saveApiKey: document.getElementById("saveApiKey"),
-  statusDot: document.getElementById("statusDot"),
-  serverStatus: document.getElementById("serverStatus"),
   scopeSummary: document.getElementById("scopeSummary"),
   clearChat: document.getElementById("clearChat"),
   chatArea: document.getElementById("chatArea"),
@@ -33,6 +29,16 @@ const elements = {
   chatForm: document.getElementById("chatForm"),
   questionInput: document.getElementById("questionInput"),
   sendButton: document.getElementById("sendButton"),
+  renameModal: document.getElementById("renameModal"),
+  renameForm: document.getElementById("renameForm"),
+  renameCurrentName: document.getElementById("renameCurrentName"),
+  renameInput: document.getElementById("renameInput"),
+  renameCancel: document.getElementById("renameCancel"),
+  renameSubmit: document.getElementById("renameSubmit"),
+  deleteModal: document.getElementById("deleteModal"),
+  deleteCurrentName: document.getElementById("deleteCurrentName"),
+  deleteCancel: document.getElementById("deleteCancel"),
+  deleteSubmit: document.getElementById("deleteSubmit"),
   toast: document.getElementById("toast"),
 };
 
@@ -40,16 +46,18 @@ const state = {
   documents: [],
   selected: new Set(),
   busy: false,
-  apiKey: sessionStorage.getItem("finance-doc-api-key") || "",
+  chatController: null,
+  contactNames: new Set(),
+  contactNamesPromise: null,
+  renameSource: "",
+  deleteSource: "",
 };
 
 const initialChat = elements.chatArea.innerHTML;
-elements.apiKey.value = state.apiKey;
 
 function apiHeaders(json = false) {
   const headers = {};
   if (json) headers["Content-Type"] = "application/json";
-  if (state.apiKey) headers["X-API-Key"] = state.apiKey;
   return headers;
 }
 
@@ -105,6 +113,13 @@ function renderDocuments() {
     dot.className = "selection-dot";
     button.append(icon, label, dot);
     button.addEventListener("click", () => toggleDocument(source));
+    const renameButton = document.createElement("button");
+    renameButton.type = "button";
+    renameButton.className = "rename-document";
+    renameButton.textContent = "✎";
+    renameButton.title = `${source} 이름 수정`;
+    renameButton.setAttribute("aria-label", `${source} 이름 수정`);
+    renameButton.addEventListener("click", () => renameDocument(source));
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
     deleteButton.className = "delete-document";
@@ -112,7 +127,7 @@ function renderDocuments() {
     deleteButton.title = `${source} 삭제`;
     deleteButton.setAttribute("aria-label", `${source} 삭제`);
     deleteButton.addEventListener("click", () => deleteDocument(source));
-    row.append(button, deleteButton);
+    row.append(button, renameButton, deleteButton);
     elements.documentList.append(row);
   });
 }
@@ -158,35 +173,163 @@ async function loadDocuments() {
   }
 }
 
-async function checkServer() {
+function deleteDocument(source) {
+  state.deleteSource = source;
+  elements.deleteCurrentName.textContent = source;
+  elements.deleteModal.hidden = false;
+  window.setTimeout(() => elements.deleteCancel.focus(), 0);
+}
+
+async function loadContactNames() {
+  if (state.contactNamesPromise) return state.contactNamesPromise;
+  state.contactNamesPromise = fetch("/contacts/names", { headers: apiHeaders() })
+    .then(async (response) => {
+      if (!response.ok) throw new Error();
+      const data = await response.json();
+      state.contactNames = new Set((data.names || []).map((name) => String(name).trim()).filter(Boolean));
+    })
+    .catch(() => {
+      state.contactNames = new Set();
+    });
+  return state.contactNamesPromise;
+}
+
+function linkContactNames(body) {
+  if (!state.contactNames.size) return;
+  const names = [...state.contactNames].sort((left, right) => right.length - left.length);
+  const escaped = names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const matcher = new RegExp(`(${escaped.join("|")})`, "g");
+  const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  let node;
+  while ((node = walker.nextNode())) {
+    if (node.parentElement?.closest(".contact-name")) continue;
+    if (matcher.test(node.textContent)) textNodes.push(node);
+    matcher.lastIndex = 0;
+  }
+  textNodes.forEach((textNode) => {
+    const text = textNode.textContent;
+    const fragment = document.createDocumentFragment();
+    let cursor = 0;
+    text.replace(matcher, (matched, _group, offset) => {
+      fragment.append(document.createTextNode(text.slice(cursor, offset)));
+      const nameWrap = document.createElement("span");
+      nameWrap.className = "contact-name-wrap";
+      const name = document.createElement("button");
+      name.type = "button";
+      name.className = "contact-name";
+      name.textContent = matched;
+      name.dataset.contactName = matched;
+      name.title = "연락처 보기";
+      nameWrap.append(name);
+      fragment.append(nameWrap);
+      cursor = offset + matched.length;
+      return matched;
+    });
+    fragment.append(document.createTextNode(text.slice(cursor)));
+    textNode.replaceWith(fragment);
+  });
+}
+
+async function toggleContactCard(button) {
+  const existing = button.nextElementSibling;
+  if (existing?.classList.contains("contact-card")) {
+    existing.remove();
+    return;
+  }
+  document.querySelectorAll(".contact-card").forEach((card) => card.remove());
+  const card = document.createElement("span");
+  card.className = "contact-card loading";
+  card.textContent = "연락처 확인 중";
+  button.after(card);
   try {
-    const response = await fetch("/health");
-    if (!response.ok) throw new Error();
-    elements.statusDot.className = "status-dot ok";
-    elements.serverStatus.textContent = "서버 연결됨";
+    const response = await fetch(`/contacts/${encodeURIComponent(button.dataset.contactName)}`, { headers: apiHeaders() });
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const contact = await response.json();
+    const details = [
+      ...(contact.departments || []).map((department) => `학과 ${department}`),
+      ...(contact.phones || []).map((phone) => `전화 ${phone}`),
+      ...(contact.emails || []).map((email) => `이메일 ${email}`),
+    ];
+    card.classList.remove("loading");
+    card.textContent = details.length ? details.join("\n") : "등록된 연락처가 없습니다.";
   } catch (_) {
-    elements.statusDot.className = "status-dot warn";
-    elements.serverStatus.textContent = "서버 확인 필요";
+    card.remove();
+    showToast("연락처 정보를 불러오지 못했습니다.");
   }
 }
 
-async function deleteDocument(source) {
-  const confirmed = window.confirm(
-    `'${source}' 문서를 삭제할까요?\n\n원본 파일, Parquet, ChromaDB 색인과 적재 기록이 함께 삭제됩니다.`
-  );
-  if (!confirmed) return;
+function closeDeleteModal() {
+  elements.deleteModal.hidden = true;
+  state.deleteSource = "";
+  elements.deleteSubmit.disabled = false;
+}
+
+async function submitDeleteDocument() {
+  const source = state.deleteSource;
+  if (!source) return;
 
   try {
+    elements.deleteSubmit.disabled = true;
     const response = await fetch(`/documents/${encodeURIComponent(source)}`, {
       method: "DELETE",
       headers: apiHeaders(),
     });
     if (!response.ok) throw new Error(await errorMessage(response));
     state.selected.delete(source);
+    closeDeleteModal();
     await loadDocuments();
     showToast(`'${source}' 문서를 삭제했습니다.`);
   } catch (error) {
     showToast(`삭제 실패: ${error.message}`);
+    elements.deleteSubmit.disabled = false;
+  }
+}
+
+function renameDocument(source) {
+  state.renameSource = source;
+  elements.renameCurrentName.textContent = source;
+  elements.renameInput.value = source;
+  elements.renameModal.hidden = false;
+  window.setTimeout(() => {
+    elements.renameInput.focus();
+    elements.renameInput.select();
+  }, 0);
+}
+
+function closeRenameModal() {
+  elements.renameModal.hidden = true;
+  state.renameSource = "";
+  elements.renameSubmit.disabled = false;
+}
+
+async function submitRenameDocument(event) {
+  event.preventDefault();
+  const source = state.renameSource;
+  const newName = elements.renameInput.value.trim();
+  if (!source || !newName || newName === source) {
+    closeRenameModal();
+    return;
+  }
+
+  try {
+    elements.renameSubmit.disabled = true;
+    const response = await fetch(`/documents/${encodeURIComponent(source)}`, {
+      method: "PATCH",
+      headers: apiHeaders(true),
+      body: JSON.stringify({ new_name: newName }),
+    });
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const data = await response.json();
+    const filename = data.filename || newName;
+    state.selected.delete(source);
+    closeRenameModal();
+    await loadDocuments();
+    showToast(data.message || "파일 이름을 변경했습니다.");
+    if (data.status === "accepted") pollIngestStatus(filename);
+  } catch (error) {
+    showToast(`이름 수정 실패: ${error.message}`);
+    elements.renameSubmit.disabled = false;
   }
 }
 
@@ -270,7 +413,14 @@ async function uploadDocument(event) {
   }
 }
 
-function appendMessage(role, text, route = "", sources = []) {
+function appendMessage(
+  role,
+  text,
+  route = "",
+  sources = [],
+  retryRequest = null,
+  actionsHidden = false,
+) {
   const message = document.createElement("article");
   message.className = `message ${role}`;
 
@@ -303,6 +453,35 @@ function appendMessage(role, text, route = "", sources = []) {
     });
     message.append(sourceRow);
   }
+  if (role === "assistant" && retryRequest) {
+    const actions = document.createElement("div");
+    actions.className = "message-actions";
+    actions.hidden = actionsHidden;
+
+    const copyButton = document.createElement("button");
+    copyButton.className = "message-action";
+    copyButton.type = "button";
+    copyButton.textContent = "⧉";
+    copyButton.setAttribute("aria-label", "답변 복사");
+    copyButton.title = "답변 복사";
+    copyButton.addEventListener("click", () => copyAnswer(body.textContent));
+
+    const retryButton = document.createElement("button");
+    retryButton.className = "message-action";
+    retryButton.type = "button";
+    retryButton.textContent = "↻";
+    retryButton.setAttribute("aria-label", "답변 다시 시도");
+    retryButton.title = "답변 다시 시도";
+    retryButton.addEventListener("click", () => {
+      if (state.busy) {
+        showToast("현재 답변을 생성 중입니다.");
+        return;
+      }
+      sendQuestion(retryRequest.question);
+    });
+    actions.append(copyButton, retryButton);
+    message.append(actions);
+  }
   elements.chatArea.append(message);
   elements.chatArea.scrollTop = elements.chatArea.scrollHeight;
   return message;
@@ -332,40 +511,154 @@ async function errorMessage(response) {
   }
 }
 
-async function sendQuestion(question) {
+async function sendQuestion(question, options = {}) {
   const value = question.trim();
   if (!value || state.busy) return;
 
-  state.busy = true;
-  const mode = elements.naturalMode.checked ? "natural" : "auto";
-  elements.sendButton.disabled = true;
-  elements.naturalMode.disabled = true;
+  await loadContactNames();
+
+  const controller = new AbortController();
+  state.chatController = controller;
+  setChatBusy(true);
+  const request = {
+    question: value,
+    sources: options.sources ? [...options.sources] : [...state.selected],
+    mode: options.mode || (elements.naturalMode.checked ? "natural" : "auto"),
+  };
   elements.questionInput.value = "";
   resizeTextarea();
   elements.chatArea.querySelector(".welcome-card")?.remove();
   appendMessage("user", value);
   const loading = appendLoading();
+  let streamedMessage;
+  let streamedBody;
+  const startStreamedMessage = () => {
+    if (streamedMessage) return;
+    loading.remove();
+    streamedMessage = appendMessage(
+      "assistant",
+      "",
+      request.mode === "natural" ? "natural" : "",
+      [],
+      request,
+      true,
+    );
+    streamedBody = streamedMessage.querySelector(".message-body");
+  };
 
   try {
-    const response = await fetch("/chat", {
+    const response = await fetch("/chat/stream", {
       method: "POST",
       headers: apiHeaders(true),
-      body: JSON.stringify({ question: value, sources: [...state.selected], mode }),
+      body: JSON.stringify(request),
+      signal: controller.signal,
     });
     if (!response.ok) throw new Error(await errorMessage(response));
-    const data = await response.json();
-    loading.remove();
-    const responseMode = mode === "natural" ? "natural" : (data.source || "");
-    appendMessage("assistant", data.answer || "답변이 비어 있습니다.", responseMode, data.sources || []);
+    if (!response.body) throw new Error("응답 스트림을 시작하지 못했습니다.");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pendingText = "";
+    while (true) {
+      const { done, value: chunk } = await reader.read();
+      if (done) break;
+      pendingText += decoder.decode(chunk, { stream: true });
+      if (pendingText.trim()) {
+        startStreamedMessage();
+        streamedBody.textContent += pendingText;
+        pendingText = "";
+        streamedMessage.querySelector(".message-actions").hidden = false;
+      }
+      elements.chatArea.scrollTop = elements.chatArea.scrollHeight;
+    }
+    pendingText += decoder.decode();
+    if (!streamedMessage) {
+      startStreamedMessage();
+      streamedBody.textContent = pendingText.trim() || "답변이 비어 있습니다.";
+    } else {
+      streamedBody.textContent += pendingText;
+    }
+    if (!streamedBody.textContent.trim()) {
+      streamedBody.textContent = "답변이 비어 있습니다.";
+    }
+    collapseCalculationEvidence(streamedBody);
+    linkContactNames(streamedBody);
+    streamedMessage.querySelector(".message-actions").hidden = false;
   } catch (error) {
     loading.remove();
-    appendMessage("assistant", error.message, "error");
+    if (error.name === "AbortError") {
+      if (streamedBody?.textContent.trim()) {
+        streamedBody.textContent += "\n\n[답변 생성을 중단했습니다.]";
+      } else {
+        streamedMessage?.remove();
+        appendMessage("assistant", "답변 생성을 중단했습니다.", "error", [], request);
+      }
+    } else {
+      streamedMessage?.remove();
+      appendMessage("assistant", error.message || "답변 처리 중 오류가 발생했습니다.", "error", [], request);
+    }
   } finally {
-    state.busy = false;
-    elements.sendButton.disabled = false;
-    elements.naturalMode.disabled = false;
+    if (state.chatController === controller) state.chatController = null;
+    setChatBusy(false);
     elements.questionInput.focus();
   }
+}
+
+async function copyAnswer(text) {
+  if (!text.trim()) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("답변을 복사했습니다.");
+  } catch (_) {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.append(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    showToast(copied ? "답변을 복사했습니다." : "복사하지 못했습니다.");
+  }
+}
+
+function collapseCalculationEvidence(body) {
+  const text = body.textContent;
+  const marker = "계산 근거:";
+  const markerIndex = text.indexOf(marker);
+  if (markerIndex <= 0) return;
+
+  const answer = text.slice(0, markerIndex).trimEnd();
+  const evidence = text.slice(markerIndex + marker.length).trim();
+  if (!evidence) return;
+
+  body.replaceChildren();
+  const answerText = document.createElement("div");
+  answerText.textContent = answer;
+  body.append(answerText);
+
+  const details = document.createElement("details");
+  details.className = "calculation-evidence";
+  const summary = document.createElement("summary");
+  summary.textContent = "계산 근거";
+  const evidenceText = document.createElement("div");
+  evidenceText.className = "calculation-evidence-body";
+  evidenceText.textContent = evidence;
+  details.append(summary, evidenceText);
+  body.append(details);
+}
+
+function setChatBusy(busy) {
+  state.busy = busy;
+  elements.sendButton.classList.toggle("stop", busy);
+  elements.sendButton.setAttribute("aria-label", busy ? "답변 생성 중단" : "질문 전송");
+  elements.sendButton.querySelector("[data-send-label]").textContent = busy ? "중단" : "전송";
+  elements.sendButton.querySelector("[data-send-icon]").textContent = busy ? "■" : "→";
+  elements.naturalMode.disabled = busy;
+}
+
+function stopChat() {
+  state.chatController?.abort();
 }
 
 function resizeTextarea() {
@@ -375,7 +668,10 @@ function resizeTextarea() {
 
 function bindSuggestions() {
   elements.chatArea.querySelectorAll(".suggestion").forEach((button) => {
-    button.addEventListener("click", () => sendQuestion(button.textContent));
+    button.addEventListener("click", () => {
+      const label = button.querySelector(".suggestion-icon + span");
+      sendQuestion(label?.textContent || button.textContent);
+    });
   });
 }
 
@@ -401,6 +697,10 @@ function updateNaturalMode() {
 
 elements.chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (state.busy) {
+    stopChat();
+    return;
+  }
   sendQuestion(elements.questionInput.value);
 });
 elements.questionInput.addEventListener("input", resizeTextarea);
@@ -416,6 +716,12 @@ elements.uploadToggle.addEventListener("click", () => {
   setUploadPanelOpen(elements.uploadForm.hidden);
 });
 document.addEventListener("pointerdown", (event) => {
+  if (!elements.renameModal.hidden && event.target === elements.renameModal) {
+    closeRenameModal();
+  }
+  if (!elements.deleteModal.hidden && event.target === elements.deleteModal) {
+    closeDeleteModal();
+  }
   if (
     !elements.uploadForm.hidden
     && !elements.uploadForm.contains(event.target)
@@ -429,6 +735,14 @@ document.addEventListener("pointerdown", (event) => {
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    if (!elements.deleteModal.hidden) {
+      closeDeleteModal();
+      return;
+    }
+    if (!elements.renameModal.hidden) {
+      closeRenameModal();
+      return;
+    }
     if (!elements.uploadForm.hidden) {
       setUploadPanelOpen(false);
       elements.uploadToggle.focus();
@@ -440,6 +754,10 @@ document.addEventListener("keydown", (event) => {
   }
 });
 elements.naturalMode.addEventListener("change", updateNaturalMode);
+elements.renameForm.addEventListener("submit", submitRenameDocument);
+elements.renameCancel.addEventListener("click", closeRenameModal);
+elements.deleteCancel.addEventListener("click", closeDeleteModal);
+elements.deleteSubmit.addEventListener("click", submitDeleteDocument);
 elements.modeHelpButton.addEventListener("click", () => {
   setModeHelpOpen(elements.modeHelpPopover.hidden);
 });
@@ -464,22 +782,18 @@ elements.allDocuments.addEventListener("click", () => {
   state.selected.clear();
   updateScope();
 });
-elements.saveApiKey.addEventListener("click", () => {
-  state.apiKey = elements.apiKey.value.trim();
-  if (state.apiKey) sessionStorage.setItem("finance-doc-api-key", state.apiKey);
-  else sessionStorage.removeItem("finance-doc-api-key");
-  showToast(state.apiKey ? "API Key를 적용했습니다." : "API Key를 비웠습니다.");
-  loadDocuments();
-});
 elements.clearChat.addEventListener("click", () => {
   elements.chatArea.innerHTML = initialChat;
   bindSuggestions();
+});
+elements.chatArea.addEventListener("click", (event) => {
+  const contactName = event.target.closest(".contact-name");
+  if (contactName) toggleContactCard(contactName);
 });
 elements.openSidebar.addEventListener("click", () => elements.sidebar.classList.add("open"));
 elements.closeSidebar.addEventListener("click", () => elements.sidebar.classList.remove("open"));
 
 bindSuggestions();
-checkServer();
 loadDocuments();
 updateNaturalMode();
 elements.questionInput.focus();
