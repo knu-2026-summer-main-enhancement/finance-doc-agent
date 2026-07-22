@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>문서 조회 에이전트</title>
-  <link rel="stylesheet" href="/static/style.css?v=20260722-28">
+  <link rel="stylesheet" href="/static/style.css?v=20260722-30">
 </head>
 <body>
   <div class="app-shell">
@@ -82,22 +82,22 @@
 
       <footer class="composer-wrap">
         <div class="selected-files" id="selectedFiles"></div>
-        <form class="composer" id="chatForm">
-          <textarea id="questionInput" rows="1" maxlength="2000" placeholder="문서에 대해 질문하세요."></textarea>
-          <div class="query-mode-row" id="queryModeRow">
-            <label class="natural-mode-option" for="naturalMode">
-              <input id="naturalMode" type="checkbox">
-              <span class="mode-switch" aria-hidden="true"><i></i></span>
-              <span>AI 문서 검색</span>
-            </label>
-            <div class="mode-help-wrap" id="modeHelpWrap">
-              <button class="mode-help-button" id="modeHelpButton" type="button" aria-expanded="false" aria-controls="modeHelpPopover" aria-label="AI 문서 검색 주의사항">i</button>
-              <div class="mode-help-popover" id="modeHelpPopover" role="note" hidden>
-                <strong>주의</strong>
-                <p>AI 문서 검색은 의미가 비슷한 내용을 찾는 보조 기능으로, 답변이 부정확할 수 있습니다. 자동 분류가 잘못될 때만 사용하고 정확한 계산에는 사용하지 마세요.</p>
-              </div>
+        <div class="query-mode-row" id="queryModeRow">
+          <label class="natural-mode-option" for="naturalMode">
+            <input id="naturalMode" type="checkbox">
+            <span class="mode-switch" aria-hidden="true"><i></i></span>
+            <span>AI 문서 검색</span>
+          </label>
+          <div class="mode-help-wrap" id="modeHelpWrap">
+            <button class="mode-help-button" id="modeHelpButton" type="button" aria-expanded="false" aria-controls="modeHelpPopover" aria-label="AI 문서 검색 주의사항">i</button>
+            <div class="mode-help-popover" id="modeHelpPopover" role="note" hidden>
+              <strong>주의</strong>
+              <p>AI 문서 검색은 의미가 비슷한 내용을 찾는 보조 기능으로, 답변이 부정확할 수 있습니다. 자동 분류가 잘못될 때만 사용하고 정확한 계산에는 사용하지 마세요.</p>
             </div>
           </div>
+        </div>
+        <form class="composer" id="chatForm">
+          <textarea id="questionInput" rows="1" maxlength="2000" placeholder="문서에 대해 질문하세요."></textarea>
           <button class="send-button" id="sendButton" type="submit" aria-label="질문 전송"><span data-send-label>전송</span><span data-send-icon aria-hidden="true">→</span></button>
         </form>
         <p class="composer-note">금액·인원·통계 외의 문서 검색은 핵심 키워드 중심 입력 권장 · 중요한 금액은 계산 근거와 원문 확인</p>
@@ -140,6 +140,6 @@
     </section>
   </div>
   <div class="toast" id="toast" role="status"></div>
-  <script src="/static/app.js?v=20260722-16" defer></script>
+  <script src="/static/app.js?v=20260722-17" defer></script>
 </body>
 </html>

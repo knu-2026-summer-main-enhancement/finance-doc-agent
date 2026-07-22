@@ -792,6 +792,11 @@ elements.chatArea.addEventListener("click", (event) => {
 });
 elements.openSidebar.addEventListener("click", () => elements.sidebar.classList.add("open"));
 elements.closeSidebar.addEventListener("click", () => elements.sidebar.classList.remove("open"));
+document.addEventListener("click", (event) => {
+  if (window.innerWidth > 820 || !elements.sidebar.classList.contains("open")) return;
+  if (event.target.closest("#sidebar, #openSidebar")) return;
+  elements.sidebar.classList.remove("open");
+});
 
 bindSuggestions();
 loadDocuments();
