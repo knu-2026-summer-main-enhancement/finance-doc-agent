@@ -304,7 +304,8 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
 
     if plan.operation == "list":
         rows = _sort_rows(filtered, plan)
-        rows = rows.head(plan.effective_limit or 100)
+        if plan.effective_limit is not None:
+            rows = rows.head(plan.effective_limit)
         rows = _select_records(rows, plan)
         return QueryExecutionResult(
             operation="list",

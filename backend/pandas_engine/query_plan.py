@@ -136,7 +136,9 @@ class QueryPlan(_PlanModel):
 
     @property
     def effective_limit(self) -> int | None:
-        return (self.limit or 100) if self.operation == "list" else None
+        # An omitted limit means the caller requested the complete list.
+        # Apply a cap only when the user or planner explicitly supplied one.
+        return self.limit if self.operation == "list" else None
 
     @property
     def effective_top_n(self) -> int | None:
