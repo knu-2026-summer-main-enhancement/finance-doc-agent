@@ -170,7 +170,7 @@ button { color: inherit; }
 .mode-help-popover p { margin: 7px 0 0; color: #5f5b52; font-size: 12px; line-height: 1.65; }
 .composer { display: flex; align-items: flex-end; gap: 9px; padding: 9px; border: 1px solid #d7d7dc; border-radius: 18px; background: #fff; box-shadow: 0 10px 30px rgba(24,24,27,.08); }
 .composer:focus-within { border-color: #aaa1ec; box-shadow: 0 0 0 3px rgba(118,103,232,.09), 0 10px 30px rgba(24,24,27,.08); }
-.composer textarea { width: 100%; max-height: 150px; padding: 9px 0; border: 0; outline: 0; resize: none; color: var(--ink); background: transparent; line-height: 1.5; }
+.composer textarea { width: 100%; max-height: 150px; padding: 9px 4px 9px 6px; border: 0; outline: 0; resize: none; color: var(--ink); background: transparent; line-height: 1.5; }
 .upload-panel {
   display: grid; gap: 11px; padding: 17px;
   border: 1px solid #dedee3; border-radius: 17px; color: var(--ink); background: rgba(255,255,255,.98);

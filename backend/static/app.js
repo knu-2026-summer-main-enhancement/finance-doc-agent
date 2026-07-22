@@ -431,7 +431,7 @@ function appendMessage(
     if (route) {
       const badge = document.createElement("span");
       badge.className = `route-badge ${route.toLocaleLowerCase()}`;
-      badge.textContent = route === "natural" ? "자연어 검색" : route.toUpperCase();
+      badge.textContent = route === "natural" ? "AI 문서 검색" : route.toUpperCase();
       head.append(badge);
     }
     message.append(head);
