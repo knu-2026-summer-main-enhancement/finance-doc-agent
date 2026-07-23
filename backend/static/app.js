@@ -238,7 +238,7 @@ function linkContactNames(body) {
   const textNodes = [];
   let node;
   while ((node = walker.nextNode())) {
-    if (node.parentElement?.closest(".contact-name")) continue;
+    if (node.parentElement?.closest(".contact-name, button")) continue;
     if (matcher.test(node.textContent)) textNodes.push(node);
     matcher.lastIndex = 0;
   }
@@ -546,9 +546,20 @@ async function errorMessage(response) {
   }
 }
 
-function renderInlineSegments(body, segments) {
+function evidenceMatch(text) {
+  const evidenceTypes = [
+    { marker: "계산 근거:", label: "계산 근거" },
+    { marker: "조회 근거:", label: "조회 근거" },
+  ];
+  return evidenceTypes
+    .map((type) => ({ ...type, index: text.indexOf(type.marker) }))
+    .filter((type) => type.index >= 0)
+    .sort((left, right) => left.index - right.index)[0];
+}
+
+function renderInlineSegments(body, segments, fullAnswer = "") {
   if (!Array.isArray(segments) || !segments.length) {
-    collapseCalculationEvidence(body);
+    collapseEvidence(body);
     linkContactNames(body);
     return;
   }
@@ -566,6 +577,14 @@ function renderInlineSegments(body, segments) {
     button.addEventListener("click", () => openDetail(segment.detail_ref));
     body.append(button);
   });
+  // Interactive segments omit calculation evidence, so restore the original
+  // text before turning the evidence into the shared collapsible section.
+  const originalEvidence = evidenceMatch(fullAnswer);
+  if (originalEvidence && !evidenceMatch(body.textContent)) {
+    body.append(document.createTextNode(`\n\n${fullAnswer.slice(originalEvidence.index)}`));
+  }
+  collapseEvidence(body);
+  linkContactNames(body);
 }
 
 function appendDetailFields(container, fields) {
@@ -694,7 +713,7 @@ async function sendQuestion(question, options = {}) {
       data.sources || [],
       request,
     );
-    renderInlineSegments(message.querySelector(".message-body"), data.result?.inline_segments);
+    renderInlineSegments(message.querySelector(".message-body"), data.result?.inline_segments, data.answer || "");
   } catch (error) {
     loading.remove();
     appendMessage(
@@ -729,25 +748,39 @@ async function copyAnswer(text) {
   }
 }
 
-function collapseCalculationEvidence(body) {
+function collapseEvidence(body) {
   const text = body.textContent;
-  const marker = "계산 근거:";
-  const markerIndex = text.indexOf(marker);
+  const match = evidenceMatch(text);
+  if (!match) return;
+
+  const markerIndex = match.index;
   if (markerIndex <= 0) return;
 
-  const answer = text.slice(0, markerIndex).trimEnd();
-  const evidence = text.slice(markerIndex + marker.length).trim();
+  const evidence = text.slice(markerIndex + match.marker.length).trim();
   if (!evidence) return;
 
+  // Keep interactive name/detail buttons that precede the evidence marker.
+  const answerNodes = [];
+  let consumed = 0;
+  for (const node of [...body.childNodes]) {
+    const nodeLength = node.textContent.length;
+    if (consumed + nodeLength <= markerIndex) {
+      answerNodes.push(node);
+    } else if (consumed < markerIndex && node.nodeType === Node.TEXT_NODE) {
+      const prefix = node.textContent.slice(0, markerIndex - consumed).trimEnd();
+      if (prefix) answerNodes.push(document.createTextNode(prefix));
+    }
+    consumed += nodeLength;
+    if (consumed >= markerIndex) break;
+  }
+
   body.replaceChildren();
-  const answerText = document.createElement("div");
-  answerText.textContent = answer;
-  body.append(answerText);
+  body.append(...answerNodes);
 
   const details = document.createElement("details");
   details.className = "calculation-evidence";
   const summary = document.createElement("summary");
-  summary.textContent = "계산 근거";
+  summary.textContent = match.label;
   const evidenceText = document.createElement("div");
   evidenceText.className = "calculation-evidence-body";
   evidenceText.textContent = evidence;
