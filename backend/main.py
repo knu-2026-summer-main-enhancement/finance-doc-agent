@@ -114,6 +114,8 @@ async def _resolve_llm_question(question: str):
     """Return validated LLM operations, engine, and optional PANDAS strategy."""
 
     normalized = re.sub(r"\s+", "", question)
+    # Common IME typo/variant: "두번쨰", "두번째" should mean "두번째".
+    normalized = normalized.replace("번쨰", "번째")
     dataframes = scoped_mapping(_df_namespace, _df_sources)
     deterministic_operation = None
     # A plain whole-table list has no semantic ambiguity and should not wait
@@ -178,6 +180,32 @@ async def _resolve_llm_question(question: str):
         )
         if candidate is not None:
             deterministic_operation = "count_records"
+    # Explicit scalar extremes must take precedence over the generic money-total
+    # shortcut below. "가장 큰 금액" asks for max, not sum.
+    elif (
+        re.search(
+            r"(?:최댓값|최대(?:값|액|금액)?|최고(?:값|액|금액)?|"
+            r"(?:가장|제일)(?:큰|높은|많은)(?:값|금액|돈|액)|"
+            r"(?:값|금액|돈|액).{0,8}?(?:가장|제일)(?:큰|높은|많은))",
+            normalized,
+        )
+        and not re.search(r"(?:사람|회원|인원|누구)", normalized)
+    ):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="max_amount"
+        )
+        if candidate is not None:
+            deterministic_operation = "max_amount"
+    elif re.search(
+        r"(?:최솟값|최소(?:값|액|금액)?|최저(?:값|액|금액)?|"
+        r"(?:가장|제일)(?:작은|낮은)(?:값|금액|돈|액))",
+        normalized,
+    ):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="min_amount"
+        )
+        if candidate is not None:
+            deterministic_operation = "min_amount"
     # Ordering and ordinal ranking must take precedence over the generic
     # money-total shortcut below.  "금액을 큰 순서대로" is a list request,
     # while "누적 금액이 두 번째로 큰 사람" is a grouped rank request.

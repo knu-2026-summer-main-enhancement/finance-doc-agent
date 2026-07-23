@@ -25,6 +25,16 @@ _PERSON_COUNT = re.compile(r"(?:사람|인원|회원).*?(?:몇\s*명|수)|몇\s*
 _SUM = re.compile(r"(?:총합|합계|총액|얼마(?:야|예|지|냈))")
 _MEAN = re.compile(r"(?:평균|평균값|평균액)")
 _MODE = re.compile(r"(?:최빈값|최빈액|가장\s*(?:흔한|많이\s*나온)\s*(?:값|금액)?)")
+_MAX_VALUE = re.compile(
+    r"(?:최댓값|최대(?:값|액|\s*금액)?|최고(?:값|액|\s*금액)?|"
+    r"(?:가장|제일)\s*(?:큰|높은|많은)\s*(?:값|금액|돈|액)|"
+    r"(?:값|금액|돈|액).{0,8}?(?:가장|제일)\s*(?:큰|높은|많은))"
+)
+_MIN_VALUE = re.compile(
+    r"(?:최솟값|최소(?:값|액|\s*금액)?|최저(?:값|액|\s*금액)?|"
+    r"(?:가장|제일)\s*(?:작은|낮은)\s*(?:값|금액|돈|액)|"
+    r"(?:값|금액|돈|액).{0,8}?(?:가장|제일)\s*(?:작은|낮은))"
+)
 _ROW_COUNT = re.compile(r"(?:몇\s*번|몇\s*회|횟수)")
 _MISSING = re.compile(r"(?:비어\s*있|안\s*적|미입력|누락|공백|없(?:는|어|어?))")
 _PAYMENT_EXISTENCE = re.compile(
@@ -39,15 +49,18 @@ _LEADING_PERSON_FIELD_LOOKUP = re.compile(
     r"(?:전화번호|이메일|학과|전공|회비\s*구분)"
 )
 _GROUP_SUM_EXTREME = re.compile(
-    r"(?:가장|제일|최고).{0,16}?(?:많이|큰|높은).{0,12}?(?:사람|회원|인원)|"
-    r"(?:사람|회원|인원).{0,12}?(?:가장|제일|최고).{0,16}?(?:많이|큰|높은)"
+    r"(?:가장|제일|최고).{0,16}?(?:많이|많은|큰|높은).{0,12}?(?:사람|회원|인원)|"
+    r"(?:사람|회원|인원).{0,12}?(?:가장|제일|최고).{0,16}?(?:많이|많은|큰|높은)"
 )
 _GROUP_SUM_MINIMUM = re.compile(
     r"(?:가장|제일)\s*(?:돈|금액|회비|결제)?.{0,8}?(?:적게|작게|낮게|최소로).{0,8}?(?:낸|지급한|결제한)?\s*(?:사람|회원|인원|누구(?:야|인지|인가)?)|"
     r"(?:돈|금액|회비|결제).{0,8}?(?:가장|제일)\s*(?:적게|작게|낮게).{0,8}?(?:낸|지급한|결제한)?\s*(?:사람|회원|인원|누구(?:야|인지|인가)?)"
 )
 _ORDINAL = re.compile(r"(?<!\d)(\d+)\s*(?:번째|째)")
-_KOREAN_ORDINAL = re.compile(r"(첫|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*(?:번째|째)")
+_KOREAN_ORDINAL = re.compile(
+    r"(첫|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*"
+    r"(?:번째|번\s*[째쨰])"
+)
 _KOREAN_ORDINAL_VALUES = {"첫": 1, "한": 1, "두": 2, "세": 3, "네": 4, "다섯": 5, "여섯": 6, "일곱": 7, "여덟": 8, "아홉": 9, "열": 10}
 _LIMIT = re.compile(r"(?<!\d)(\d+)\s*(?:건|개|명)(?!\d)")
 _DESC_ORDER = re.compile(r"(?:내림차순|큰\s*순(?:서(?:대로)?)?|많은\s*순(?:서(?:대로)?)?|높은\s*순(?:서(?:대로)?)?|최신|늦은|가장\s*(?:큰|많은|높은))")
@@ -513,6 +526,10 @@ def build_schema_grounded_plan(
         return QueryPlan(status="ready", dataframe=alias, operation="mean", filters=tuple(filters), target=str(money))
     if _MODE.search(question) and money is not None:
         return QueryPlan(status="ready", dataframe=alias, operation="mode", filters=tuple(filters), target=str(money))
+    if (operation_hint == "max_amount" or _MAX_VALUE.search(question)) and money is not None:
+        return QueryPlan(status="ready", dataframe=alias, operation="max", filters=tuple(filters), target=str(money))
+    if (operation_hint == "min_amount" or _MIN_VALUE.search(question)) and money is not None:
+        return QueryPlan(status="ready", dataframe=alias, operation="min", filters=tuple(filters), target=str(money))
     if (
         operation_hint in {"sum_amount", "lookup_amount"}
         or (_SUM.search(question) and money is not None)

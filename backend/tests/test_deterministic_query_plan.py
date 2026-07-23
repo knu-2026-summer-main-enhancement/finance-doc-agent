@@ -99,6 +99,34 @@ class DeterministicQueryPlanTest(unittest.TestCase):
         self.assertEqual(plan.group_by, ("회원명",))
         self.assertEqual(plan.rank_position, 2)
 
+    def test_common_second_ordinal_typo_still_uses_person_total_rank(self):
+        plan = self._plan("두번쨰로 돈 많이 낸 사람 누구야?", "structured_query")
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.operation, "group_sum")
+        self.assertEqual(plan.group_by, ("회원명",))
+        self.assertEqual(plan.rank_position, 2)
+        self.assertEqual(plan.group_order, "desc")
+
+    def test_largest_amount_overrides_incorrect_sum_hint(self):
+        for question in (
+            "가장 큰 금액 뭐야?",
+            "제일 많은 돈 얼마야?",
+            "가장 많은 금액 알려줘",
+            "돈 중에서 제일 많은 값 뭐야?",
+        ):
+            with self.subTest(question=question):
+                plan = self._plan(question, "sum_amount")
+                self.assertIsNotNone(plan)
+                self.assertEqual(plan.operation, "max")
+                self.assertEqual(plan.target, "결제_금액")
+
+    def test_most_money_person_wording_remains_person_total_rank(self):
+        plan = self._plan("제일 많은 돈 낸 사람 누구야?", "structured_query")
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.operation, "group_sum")
+        self.assertEqual(plan.group_order, "desc")
+        self.assertEqual(plan.group_by, ("회원명",))
+
     def test_natural_order_wording_and_explicit_limit_are_grounded(self):
         plan = self._plan("2026년 결제 금액을 큰 순서대로 3건 보여줘", "structured_query")
         self.assertIsNotNone(plan)
