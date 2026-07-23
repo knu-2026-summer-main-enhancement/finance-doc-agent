@@ -84,6 +84,36 @@ class InteractiveResultTest(unittest.TestCase):
         self.assertEqual(len(result["entities"]), 50)
         self.assertEqual(len(linked_names), 55)
 
+    def test_different_names_with_same_mask_candidate_keep_both_links(self):
+        df = pd.DataFrame({
+            "회원명": ["이종호", "이정호"],
+            "전공": ["기계과", "기계과"],
+            "결제 금액": [10_000, 20_000],
+            "person_candidate_key": ["이*호::기계과", "이*호::기계과"],
+        })
+        df.attrs["semantic_schema"] = attach_semantic_schema(
+            df, var_name="df_collision", source_file="collision.xlsx", dataframe_dir=".",
+        )
+        plan = QueryPlan(status="ready", dataframe="df_collision", operation="list")
+        execution = execute_query_plan(validate_query_plan(
+            plan,
+            dataframes={"df_collision": df},
+            source_by_alias={"df_collision": "collision.xlsx"},
+        ))
+
+        result = build_interactive_result(
+            execution,
+            answer="이종호\n이정호",
+        )
+
+        linked_names = [
+            segment["text"]
+            for segment in result["inline_segments"]
+            if segment.get("kind") == "entity"
+        ]
+        self.assertEqual(linked_names, ["이종호", "이정호"])
+        self.assertEqual(len({entity["entity_id"] for entity in result["entities"]}), 2)
+
     def test_grouped_result_links_name_to_original_person_columns(self):
         df = self.df.copy()
         df["person_candidate_key"] = ["same-person", "same-person"]

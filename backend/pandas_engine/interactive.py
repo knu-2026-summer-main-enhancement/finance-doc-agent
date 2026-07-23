@@ -14,7 +14,7 @@ import pandas as pd
 from pandas_engine.query_executor import QueryExecutionResult
 from pandas_engine.money import parse_money_value
 from utils.semantic_schema import SYSTEM_COLUMNS, infer_column_meaning, is_source_column
-from utils.table_parser import IDENTITY_INTERNAL_COLS
+from utils.table_parser import IDENTITY_INTERNAL_COLS, normalize_person_name
 
 _PRIVATE = {"contact", "email", "phone"}
 _PRESENTATION_INTERNAL_COLUMNS = {"source", "표시명", "엔티티 타입", "entity_type", "row"}
@@ -67,9 +67,14 @@ def _row_identity(row: pd.Series) -> dict[str, str]:
 
 def _person_identity_seed(row: pd.Series, name_column: str) -> tuple[str, str]:
     """Prefer ingest identity, then schema-detected contact data, then scoped display name."""
+    display_key = normalize_person_name(row.get(name_column, ""))
     candidate = str(row.get("person_candidate_key", "")).strip()
     if candidate and candidate.lower() not in {"nan", "none", "null"}:
-        return candidate, "candidate_key"
+        # Candidate keys can intentionally contain a masked name plus context.
+        # Two different unmasked names may therefore share one candidate key.
+        # Keep the exact row-scoped display key in the hashed seed so those
+        # people never collapse into one entity and lose their inline tag.
+        return f"{display_key}::{candidate}", "candidate_key"
     contact_parts: list[str] = []
     for column in row.index:
         meaning = infer_column_meaning(str(column), pd.Series([row[column]]))
@@ -81,7 +86,7 @@ def _person_identity_seed(row: pd.Series, name_column: str) -> tuple[str, str]:
             contact_parts.append(f"{column}={value}")
     if contact_parts:
         return "|".join(sorted(contact_parts)), "contact_scoped"
-    return str(row[name_column]).strip(), "display_name_scoped"
+    return display_key or str(row[name_column]).strip(), "display_name_scoped"
 
 
 def _is_visible_column(column: object, series: pd.Series, *, include_contact: bool) -> bool:
