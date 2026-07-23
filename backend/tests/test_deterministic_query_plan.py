@@ -9,6 +9,7 @@ from rag.deterministic_query_plan import (
     build_schema_grounded_plan,
     has_unmatched_person_amount_reference,
     has_unmatched_person_field_reference,
+    is_grounded_person_amount_lookup_question,
     is_grounded_person_payment_existence_question,
 )
 from pandas_engine.plan_validator import validate_query_plan
@@ -26,6 +27,68 @@ class DeterministicQueryPlanTest(unittest.TestCase):
                 "\uc804\ud654\ubc88\ud638": ["01011112222", "01033334444", "01033334444"],
                 "\uacb0\uc81c_\ub4f1\ub85d_\ub0a0\uc9dc": ["2025-01-01", None, "2026-01-01"],
             }
+        )
+
+    def test_grounded_person_amount_lookup_is_not_a_global_sum(self):
+        dataframes = {"payments": self.df}
+
+        self.assertTrue(
+            is_grounded_person_amount_lookup_question(
+                "김나다 얼마야",
+                dataframes=dataframes,
+            )
+        )
+        self.assertFalse(
+            is_grounded_person_amount_lookup_question(
+                "없는이름 얼마야",
+                dataframes=dataframes,
+            )
+        )
+
+    def test_person_lookup_uses_only_canonical_person_filter(self):
+        dataframe = pd.DataFrame(
+            {
+                "회원명": ["김현수", "김현민"],
+                "성명_원문": ["김현수", "김현민"],
+                "성명_검색키": ["김현수", "김현민"],
+                "성명_마스킹패턴": ["김*수", "김*현"],
+                "결제_금액": [10_000, 20_000],
+            }
+        )
+
+        plan = build_schema_grounded_plan(
+            "김현수 얼마야?",
+            dataframes={"payments": dataframe},
+            operation_hint="lookup_amount",
+        )
+
+        self.assertIsNotNone(plan)
+        self.assertEqual(
+            [(item.column, item.value) for item in plan.filters],
+            [("회원명", "김현수")],
+        )
+
+    def test_category_lookup_does_not_filter_on_derived_name_mask(self):
+        dataframe = pd.DataFrame(
+            {
+                "회원명": ["임종식", "전기수"],
+                "전공": ["전기과", "기계과"],
+                "성명_마스킹패턴": ["임*식", "전*기"],
+                "결제_금액": [10_000, 20_000],
+            }
+        )
+        dataframe.attrs["source_columns"] = ["회원명", "전공", "결제_금액"]
+
+        plan = build_schema_grounded_plan(
+            "전기과 전체목록 보여줘",
+            dataframes={"payments": dataframe},
+            operation_hint="structured_query",
+        )
+
+        self.assertIsNotNone(plan)
+        self.assertEqual(
+            [(item.column, item.value) for item in plan.filters],
+            [("전공", "전기과")],
         )
 
     def _plan(self, question: str, hint: str):

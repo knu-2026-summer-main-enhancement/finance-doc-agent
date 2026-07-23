@@ -190,6 +190,20 @@ button { color: inherit; }
 .mode-help-popover strong { display: block; color: #7a5614; font-size: 13px; }
 .mode-help-popover p { margin: 7px 0 0; color: #5f5b52; font-size: 12px; line-height: 1.65; }
 .composer { display: flex; align-items: flex-end; gap: 9px; padding: 9px; border: 1px solid #d7d7dc; border-radius: 18px; background: #fff; box-shadow: 0 10px 30px rgba(24,24,27,.08); }
+.question-autocomplete { display: grid; gap: 3px; margin: 0 0 7px; padding: 7px; border: 1px solid #dedee5; border-radius: 15px; background: rgba(255,255,255,.98); box-shadow: 0 16px 42px rgba(24,24,27,.14); }
+.question-autocomplete[hidden] { display: none; }
+.autocomplete-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 9px 5px; color: var(--muted); font-size: 10px; }
+.autocomplete-header strong { color: #52525b; font-size: 11px; letter-spacing: -.01em; }
+.autocomplete-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 9px 10px; border: 0; border-radius: 10px; color: var(--ink); background: transparent; text-align: left; cursor: pointer; transition: background .12s ease, transform .12s ease; }
+.autocomplete-option:hover, .autocomplete-option.active { background: var(--accent-soft); }
+.autocomplete-option.active { transform: translateX(2px); }
+.autocomplete-main { display: flex; align-items: center; min-width: 0; gap: 9px; }
+.autocomplete-icon { display: grid; place-items: center; flex: 0 0 auto; width: 25px; height: 25px; border-radius: 8px; color: #5b4fc7; background: #efedff; font-size: 11px; font-weight: 800; }
+.autocomplete-icon.vector { color: #22647b; background: #e8f5f8; font-size: 9px; }
+.autocomplete-icon.classified { color: #6b5b31; background: #f8f1df; }
+.autocomplete-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.autocomplete-text mark { color: inherit; background: transparent; font-weight: 800; }
+.autocomplete-option small { flex: 0 0 auto; color: var(--muted); font-size: 9px; font-weight: 700; }
 .composer:focus-within { border-color: #aaa1ec; box-shadow: 0 0 0 3px rgba(118,103,232,.09), 0 10px 30px rgba(24,24,27,.08); }
 .composer textarea { width: 100%; max-height: 150px; padding: 9px 4px 9px 6px; border: 0; outline: 0; resize: none; color: var(--ink); background: transparent; line-height: 1.5; }
 .upload-panel {

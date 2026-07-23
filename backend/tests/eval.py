@@ -131,6 +131,19 @@ def _is_clarification_answer(answer: str) -> bool:
     return "여러명" in normalized and "전체이름" in normalized
 
 
+def _person_totals_from_answer(answer: str) -> list[dict[str, int]]:
+    totals = []
+    for amount, payments in re.findall(
+        r":\s*(\d[\d,]*)원\s*\((\d+)건\)",
+        str(answer or ""),
+    ):
+        totals.append({
+            "amount": int(amount.replace(",", "")),
+            "payments": int(payments),
+        })
+    return totals
+
+
 def score_structured_facts(answer: str, expected: dict[str, Any]) -> tuple[bool, list[dict[str, Any]]]:
     """Verify goldset facts against scalar output and deterministic execution evidence.
 
@@ -154,6 +167,18 @@ def score_structured_facts(answer: str, expected: dict[str, Any]) -> tuple[bool,
         expected_people = expected["unique_people"]
         actual_people = _unique_people_from_evidence(answer)
         add("unique_people", expected_people, actual_people, actual_people == expected_people)
+
+    if "person_totals" in expected:
+        expected_totals = sorted(
+            (int(item["amount"]), int(item["payments"]))
+            for item in expected["person_totals"]
+        )
+        actual_items = _person_totals_from_answer(answer)
+        actual_totals = sorted(
+            (item["amount"], item["payments"])
+            for item in actual_items
+        )
+        add("person_totals", expected["person_totals"], actual_items, actual_totals == expected_totals)
 
     for field in (
         "amount", "min_amount", "max_amount", "mode_amount",

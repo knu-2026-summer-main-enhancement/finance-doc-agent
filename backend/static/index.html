@@ -97,9 +97,10 @@
             </div>
           </div>
         </div>
+        <div class="question-autocomplete" id="questionAutocomplete" role="listbox" aria-label="빠른 질문 추천" hidden></div>
         <form class="composer" id="chatForm">
           <button class="quick-attach-button" id="quickAttach" type="button" aria-label="문서 첨부" title="문서 첨부">＋</button>
-          <textarea id="questionInput" rows="1" maxlength="2000" placeholder="문서에 대해 질문하세요."></textarea>
+          <textarea id="questionInput" role="combobox" rows="1" maxlength="2000" placeholder="문서에 대해 질문하세요." autocomplete="off" aria-autocomplete="list" aria-haspopup="listbox" aria-controls="questionAutocomplete" aria-expanded="false"></textarea>
           <button class="quick-mode-button" id="quickModeToggle" type="button" aria-label="AI 문서 검색 전환" title="AI 문서 검색 전환"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button>
           <button class="send-button" id="sendButton" type="submit" aria-label="질문 전송"><span data-send-label>전송</span><span data-send-icon aria-hidden="true">→</span></button>
         </form>

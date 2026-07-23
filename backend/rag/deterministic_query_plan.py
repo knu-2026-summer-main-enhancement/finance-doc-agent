@@ -9,7 +9,7 @@ import pandas as pd
 from pandas_engine.money import parse_money_value
 from pandas_engine.plan_validator import column_data_type
 from pandas_engine.query_plan import FilterCondition, QueryPlan
-from utils.semantic_schema import infer_column_meaning
+from utils.semantic_schema import infer_column_meaning, is_source_column
 from utils.table_parser import is_masked_name, normalize_person_name
 
 
@@ -148,6 +148,7 @@ def _value_filters(df: pd.DataFrame, question: str) -> list[FilterCondition]:
         )
         if (
             str(column).startswith("_")
+            or not is_source_column(df, column)
             or (column_data_type(df, column) != "string" and not is_string_identifier)
         ):
             continue
@@ -397,6 +398,27 @@ def is_grounded_person_payment_existence_question(
     return person is not None and _person_filter(df, person, question) is not None
 
 
+def is_grounded_person_amount_lookup_question(
+    question: str,
+    *,
+    dataframes: Mapping[str, pd.DataFrame],
+) -> bool:
+    """Whether a leading person subject asks for that person's amount."""
+
+    if not _LEADING_PERSON_AMOUNT_LOOKUP.search(str(question or "")) or len(dataframes) != 1:
+        return False
+    _, df = next(iter(dataframes.items()))
+    person = _first(
+        df,
+        lambda item: (
+            item.concept == "entity"
+            and item.role == "entity_name"
+            and item.qualifier == "person"
+        ),
+    )
+    return person is not None and _person_filter(df, person, question) is not None
+
+
 def build_schema_grounded_plan(
     question: str,
     *,
@@ -470,7 +492,21 @@ def build_schema_grounded_plan(
     # One grounded person value is a subject filter; projection columns are never filters.
     if person is not None:
         matched_person = _person_filter(df, person, question)
-        if matched_person is not None and not any(item.column == str(person) for item in filters):
+        if matched_person is not None:
+            # Ingested tables can retain several row-scoped representations of
+            # one person (original, display, search key, mask pattern). Literal
+            # matching those columns independently creates contradictory AND
+            # filters, especially when a mask fragment also occurs in a real
+            # name. The canonical person column is the sole identity filter.
+            person_columns = {
+                str(column)
+                for column in df.columns
+                if (
+                    (meaning := _meaning(df, column)).concept == "entity"
+                    and meaning.qualifier == "person"
+                )
+            }
+            filters = [item for item in filters if item.column not in person_columns]
             filters.append(matched_person)
 
     if operation_hint == "lookup_field":
@@ -537,7 +573,14 @@ def build_schema_grounded_plan(
     ):
         if money is None:
             return None
-        return QueryPlan(status="ready", dataframe=alias, operation="sum", filters=tuple(filters), target=str(money))
+        return QueryPlan(
+            status="ready",
+            dataframe=alias,
+            operation="sum",
+            filters=tuple(filters),
+            target=str(money),
+            result_mode="person_totals" if operation_hint == "lookup_amount" else None,
+        )
     if operation_hint in {"list_records", "filter_records", "structured_query"}:
         direction = "desc" if _DESC_ORDER.search(question) else "asc" if _ASC_ORDER.search(question) else None
         if direction is None and rank_position is not None:

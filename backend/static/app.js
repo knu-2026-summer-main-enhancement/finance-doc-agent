@@ -28,6 +28,7 @@ const elements = {
   modeHelpPopover: document.getElementById("modeHelpPopover"),
   chatForm: document.getElementById("chatForm"),
   questionInput: document.getElementById("questionInput"),
+  questionAutocomplete: document.getElementById("questionAutocomplete"),
   quickAttach: document.getElementById("quickAttach"),
   quickModeToggle: document.getElementById("quickModeToggle"),
   sendButton: document.getElementById("sendButton"),
@@ -58,6 +59,14 @@ const state = {
   contactNamesPromise: null,
   renameSource: "",
   deleteSource: "",
+  suggestionController: null,
+  suggestionCatalogController: null,
+  suggestionTimer: null,
+  suggestionIndex: -1,
+  suggestionCatalogs: new Map(),
+  suggestionCatalog: [],
+  suggestionUsage: new Map(),
+  documentsLoaded: false,
 };
 
 const initialChat = elements.chatArea.innerHTML;
@@ -174,6 +183,7 @@ function toggleDocument(source) {
 }
 
 function updateScope() {
+  hideQuestionSuggestions();
   const selected = [...state.selected];
   elements.allDocuments.classList.toggle("selected", selected.length === 0);
   elements.scopeSummary.textContent = selected.length === 0
@@ -189,9 +199,12 @@ function updateScope() {
     elements.selectedFiles.append(chip);
   });
   renderDocuments();
+  primeQuestionCatalog();
 }
 
 async function loadDocuments() {
+  state.suggestionCatalogs.clear();
+  state.documentsLoaded = false;
   elements.documentList.innerHTML = '<div class="document-loading">문서 목록을 불러오는 중입니다.</div>';
   try {
     const response = await fetch("/documents", { headers: apiHeaders() });
@@ -200,9 +213,11 @@ async function loadDocuments() {
     state.documents = Array.isArray(data.files) ? data.files : [];
     const available = new Set(state.documents.map((item) => item.source));
     state.selected.forEach((source) => { if (!available.has(source)) state.selected.delete(source); });
+    state.documentsLoaded = true;
     updateScope();
   } catch (error) {
     state.documents = [];
+    state.documentsLoaded = true;
     elements.documentList.innerHTML = `<div class="document-empty"></div>`;
     elements.documentList.firstElementChild.textContent = `목록 조회 실패: ${error.message}`;
   }
@@ -671,6 +686,7 @@ async function sendQuestion(question, options = {}) {
     mode: options.mode || (elements.naturalMode.checked ? "natural" : "auto"),
   };
   elements.questionInput.value = "";
+  hideQuestionSuggestions();
   resizeTextarea();
   elements.chatArea.querySelector(".welcome-card")?.remove();
   appendMessage("user", value);
@@ -763,6 +779,213 @@ function resizeTextarea() {
   elements.questionInput.style.height = `${Math.min(elements.questionInput.scrollHeight, 150)}px`;
 }
 
+function hideQuestionSuggestions() {
+  window.clearTimeout(state.suggestionTimer);
+  state.suggestionController?.abort();
+  state.suggestionController = null;
+  elements.questionAutocomplete.hidden = true;
+  elements.questionAutocomplete.replaceChildren();
+  elements.questionInput.setAttribute("aria-expanded", "false");
+  elements.questionInput.removeAttribute("aria-activedescendant");
+  state.suggestionIndex = -1;
+}
+
+function setSuggestionIndex(index) {
+  const options = [...elements.questionAutocomplete.querySelectorAll(".autocomplete-option")];
+  if (!options.length) return;
+  state.suggestionIndex = (index + options.length) % options.length;
+  options.forEach((option, optionIndex) => {
+    const active = optionIndex === state.suggestionIndex;
+    option.classList.toggle("active", active);
+    option.setAttribute("aria-selected", String(active));
+  });
+  elements.questionInput.setAttribute("aria-activedescendant", options[state.suggestionIndex].id);
+  options[state.suggestionIndex].scrollIntoView({ block: "nearest" });
+}
+
+function chooseQuestionSuggestion(text, operation = "") {
+  if (operation) {
+    state.suggestionUsage.set(operation, (state.suggestionUsage.get(operation) || 0) + 1);
+  }
+  elements.questionInput.value = text;
+  resizeTextarea();
+  hideQuestionSuggestions();
+  elements.questionInput.focus();
+}
+
+function appendHighlightedText(container, text, query) {
+  const needle = query.trim();
+  const index = needle ? text.toLocaleLowerCase("ko-KR").indexOf(needle.toLocaleLowerCase("ko-KR")) : -1;
+  if (index < 0) {
+    container.textContent = text;
+    return;
+  }
+  container.append(document.createTextNode(text.slice(0, index)));
+  const mark = document.createElement("mark");
+  mark.textContent = text.slice(index, index + needle.length);
+  container.append(mark, document.createTextNode(text.slice(index + needle.length)));
+}
+
+function renderQuestionSuggestions(suggestions, query = elements.questionInput.value) {
+  elements.questionAutocomplete.replaceChildren();
+  if (suggestions.length) {
+    const header = document.createElement("div");
+    header.className = "autocomplete-header";
+    const title = document.createElement("strong");
+    title.textContent = query.trim() ? "이어서 질문해 보세요" : "검증된 질문";
+    const hint = document.createElement("span");
+    hint.textContent = "↑↓ 이동 · Enter 선택";
+    header.append(title, hint);
+    elements.questionAutocomplete.append(header);
+  }
+  suggestions.forEach((suggestion, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "autocomplete-option";
+    button.id = `questionSuggestion${index}`;
+    button.dataset.text = suggestion.text;
+    button.dataset.operation = suggestion.operation || "";
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", "false");
+    const main = document.createElement("span");
+    main.className = "autocomplete-main";
+    const icon = document.createElement("span");
+    icon.className = `autocomplete-icon ${suggestion.path || "classified"}`;
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = suggestion.path === "fast" ? "⚡" : suggestion.path === "vector" ? "AI" : "↗";
+    const text = document.createElement("span");
+    text.className = "autocomplete-text";
+    appendHighlightedText(text, suggestion.text, query);
+    main.append(icon, text);
+    const label = document.createElement("small");
+    label.textContent = `${suggestion.label} · ${suggestion.path_label || "추천 질문"}`;
+    button.append(main, label);
+    button.addEventListener("pointerdown", (event) => event.preventDefault());
+    button.addEventListener("click", () => chooseQuestionSuggestion(suggestion.text, suggestion.operation));
+    button.addEventListener("mouseenter", () => setSuggestionIndex(index));
+    elements.questionAutocomplete.append(button);
+  });
+  elements.questionAutocomplete.hidden = suggestions.length === 0;
+  elements.questionInput.setAttribute("aria-expanded", String(suggestions.length > 0));
+  state.suggestionIndex = -1;
+}
+
+function suggestionScopeKey() {
+  return [...state.selected].sort((left, right) => left.localeCompare(right, "ko-KR")).join("\u001f");
+}
+
+async function primeQuestionCatalog() {
+  if (!state.documentsLoaded) return [];
+  const scopeKey = suggestionScopeKey();
+  if (state.suggestionCatalogs.has(scopeKey)) {
+    state.suggestionCatalog = state.suggestionCatalogs.get(scopeKey);
+    return state.suggestionCatalog;
+  }
+  state.suggestionCatalogController?.abort();
+  const controller = new AbortController();
+  state.suggestionCatalogController = controller;
+  try {
+    const response = await fetch("/chat/suggestions", {
+      method: "POST",
+      headers: apiHeaders(true),
+      body: JSON.stringify({ query: "", sources: [...state.selected], limit: 50 }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const data = await response.json();
+    if (scopeKey === suggestionScopeKey()) {
+      state.suggestionCatalog = data.suggestions || [];
+      state.suggestionCatalogs.set(scopeKey, state.suggestionCatalog);
+      if (document.activeElement === elements.questionInput && !elements.naturalMode.checked) {
+        showLocalQuestionSuggestions();
+      }
+    }
+  } catch (error) {
+    if (error.name !== "AbortError") state.suggestionCatalog = [];
+  } finally {
+    if (state.suggestionCatalogController === controller) state.suggestionCatalogController = null;
+  }
+  return state.suggestionCatalog;
+}
+
+function normalizedSuggestionText(value) {
+  return String(value || "").normalize("NFKC").toLocaleLowerCase("ko-KR").replace(/[^\p{L}\p{N}*]+/gu, "");
+}
+
+function suggestionTerms(query) {
+  return query.split(/\s+/).filter(Boolean).flatMap((token) => {
+    const normalized = normalizedSuggestionText(token);
+    const withoutParticle = normalized.replace(/(은|는|이|가|을|를|의|도|만)$/u, "");
+    return withoutParticle && withoutParticle !== normalized ? [normalized, withoutParticle] : [normalized];
+  }).filter(Boolean);
+}
+
+function rankLocalSuggestions(query) {
+  const normalizedQuery = normalizedSuggestionText(query);
+  const terms = suggestionTerms(query);
+  return state.suggestionCatalog
+    .map((suggestion, index) => {
+      const searchable = normalizedSuggestionText(`${suggestion.text} ${suggestion.label}`);
+      let score = state.suggestionUsage.get(suggestion.operation) || 0;
+      if (!normalizedQuery) score += suggestion.path === "fast" ? 20 : 10;
+      else if (searchable.startsWith(normalizedQuery)) score += 100;
+      else if (searchable.includes(normalizedQuery)) score += 70;
+      else {
+        const matches = terms.filter((term) => searchable.includes(term)).length;
+        if (!matches) return null;
+        score += matches === terms.length ? 50 : 15 * matches;
+      }
+      return { suggestion, score, index };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, 6)
+    .map((item) => item.suggestion);
+}
+
+function isDynamicSuggestionQuery(query) {
+  return /^(?:[가-힣*]{2,5}|\d{1,3}\s*기|(?:19|20)\d{2}\s*년)$/u.test(query);
+}
+
+function showLocalQuestionSuggestions() {
+  if (elements.naturalMode.checked || state.busy) {
+    hideQuestionSuggestions();
+    return;
+  }
+  const query = elements.questionInput.value.trim();
+  const suggestions = rankLocalSuggestions(query);
+  renderQuestionSuggestions(suggestions, query);
+  if (!suggestions.length && isDynamicSuggestionQuery(query)) scheduleDynamicSuggestions();
+}
+
+async function loadDynamicQuestionSuggestions() {
+  const query = elements.questionInput.value.trim();
+  if (!isDynamicSuggestionQuery(query) || rankLocalSuggestions(query).length) return;
+  state.suggestionController?.abort();
+  const controller = new AbortController();
+  state.suggestionController = controller;
+  try {
+    const response = await fetch("/chat/suggestions", {
+      method: "POST",
+      headers: apiHeaders(true),
+      body: JSON.stringify({ query, sources: [...state.selected], limit: 6 }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const data = await response.json();
+    if (elements.questionInput.value.trim() === query) renderQuestionSuggestions(data.suggestions || [], query);
+  } catch (error) {
+    if (error.name !== "AbortError") hideQuestionSuggestions();
+  } finally {
+    if (state.suggestionController === controller) state.suggestionController = null;
+  }
+}
+
+function scheduleDynamicSuggestions() {
+  window.clearTimeout(state.suggestionTimer);
+  state.suggestionTimer = window.setTimeout(loadDynamicQuestionSuggestions, 280);
+}
+
 function bindSuggestions() {
   elements.chatArea.querySelectorAll(".suggestion").forEach((button) => {
     button.addEventListener("click", () => {
@@ -786,6 +1009,7 @@ function setModeHelpOpen(open) {
 
 function updateNaturalMode() {
   const active = elements.naturalMode.checked;
+  hideQuestionSuggestions();
   elements.queryModeRow.classList.toggle("active", active);
   elements.questionInput.placeholder = active
     ? "질문의 의미와 문맥으로 검색하세요."
@@ -802,8 +1026,37 @@ elements.chatForm.addEventListener("submit", (event) => {
   }
   sendQuestion(elements.questionInput.value);
 });
-elements.questionInput.addEventListener("input", resizeTextarea);
+elements.questionInput.addEventListener("input", () => {
+  resizeTextarea();
+  showLocalQuestionSuggestions();
+});
+elements.questionInput.addEventListener("focus", async () => {
+  await primeQuestionCatalog();
+  showLocalQuestionSuggestions();
+});
 elements.questionInput.addEventListener("keydown", (event) => {
+  const suggestionsOpen = !elements.questionAutocomplete.hidden;
+  if (suggestionsOpen && event.key === "ArrowDown") {
+    event.preventDefault();
+    setSuggestionIndex(state.suggestionIndex + 1);
+    return;
+  }
+  if (suggestionsOpen && event.key === "ArrowUp") {
+    event.preventDefault();
+    setSuggestionIndex(state.suggestionIndex - 1);
+    return;
+  }
+  if (suggestionsOpen && event.key === "Escape") {
+    event.preventDefault();
+    hideQuestionSuggestions();
+    return;
+  }
+  if (suggestionsOpen && event.key === "Enter" && !event.shiftKey && state.suggestionIndex >= 0) {
+    event.preventDefault();
+    const active = elements.questionAutocomplete.querySelector(".autocomplete-option.active");
+    if (active) chooseQuestionSuggestion(active.dataset.text, active.dataset.operation);
+    return;
+  }
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
     elements.chatForm.requestSubmit();
@@ -815,6 +1068,9 @@ elements.uploadToggle.addEventListener("click", () => {
   setUploadPanelOpen(elements.uploadForm.hidden);
 });
 document.addEventListener("pointerdown", (event) => {
+  if (!elements.questionAutocomplete.contains(event.target) && event.target !== elements.questionInput) {
+    hideQuestionSuggestions();
+  }
   if (!elements.renameModal.hidden && event.target === elements.renameModal) {
     closeRenameModal();
   }

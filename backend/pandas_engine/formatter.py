@@ -361,6 +361,17 @@ def _format_query_execution_result(
                 f"동순위를 포함한 {result.evidence.rank_position}번째 순위는 없습니다. "
                 f"조건에 맞는 서로 다른 순위 값은 {result.available_rank_count or 0}개입니다."
             )
+        elif result.operation == "person_totals" and not result.value.empty:
+            amount_column = result.target or result.value.columns[1]
+            lines = [
+                f"{row['인물']}: {_format_number(row[amount_column])}원 "
+                f"({int(row['결제 건수'])}건)"
+                for _, row in result.value.iterrows()
+            ]
+            answer = (
+                "같은 이름을 가진 서로 다른 인물이 있어 각각 계산했습니다.\n"
+                + "\n".join(lines)
+            )
         elif result.operation == "group_sum" and not result.value.empty:
             group_column = result.value.columns[0]
             amount_column = result.target or result.value.columns[-1]

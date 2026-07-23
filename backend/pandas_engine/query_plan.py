@@ -112,7 +112,7 @@ class QueryPlan(_PlanModel):
     filter_logic: Literal["all", "any"] = "all"
     select: tuple[str, ...] = Field(default_factory=tuple, max_length=30)
     target: str | None = None
-    result_mode: Literal["value", "records"] | None = None
+    result_mode: Literal["value", "records", "person_totals"] | None = None
     sort: tuple[SortCondition, ...] = Field(default_factory=tuple, max_length=10)
     distinct_by: tuple[str, ...] = Field(default_factory=tuple, max_length=10)
     group_by: tuple[str, ...] = Field(default_factory=tuple, max_length=10)
@@ -127,6 +127,8 @@ class QueryPlan(_PlanModel):
     @property
     def effective_result_mode(self) -> Literal["value", "records"] | None:
         if self.operation == "list":
+            return "records"
+        if self.operation == "sum" and self.result_mode == "person_totals":
             return "records"
         if self.operation in {"count", "sum", "mean", "median", "mode"}:
             return "value"
@@ -228,7 +230,12 @@ class QueryPlan(_PlanModel):
             raise ValueError(f"{self.operation} requires a target column")
 
         if self.operation in scalar_operations:
-            if self.result_mode not in {None, "value"}:
+            allowed_result_modes = (
+                {None, "value", "person_totals"}
+                if self.operation == "sum"
+                else {None, "value"}
+            )
+            if self.result_mode not in allowed_result_modes:
                 raise ValueError(f"{self.operation} must return a value")
             if self.select or self.sort or self.limit is not None or self.top_n is not None or self.rank_position is not None or self.tie_policy is not None:
                 raise ValueError(

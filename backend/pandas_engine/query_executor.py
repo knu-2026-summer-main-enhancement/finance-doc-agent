@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import re
 from typing import Hashable
 
 import pandas as pd
@@ -261,6 +262,115 @@ def _drop_plan_duplicates(df: pd.DataFrame, plan: QueryPlan) -> pd.DataFrame:
     return df[keep].copy()
 
 
+def _person_total_groups(
+    frame: pd.DataFrame,
+    target_column: Hashable,
+    target: pd.Series,
+) -> pd.DataFrame:
+    """Separate same-display-name people without exposing contact identifiers."""
+
+    valid = target.notna()
+    working = frame.loc[valid].copy()
+    amounts = target.loc[valid]
+    if working.empty:
+        return pd.DataFrame()
+
+    person_columns = [
+        column for column in working.columns if _is_person_name_column(working, column)
+    ]
+    name_column = person_columns[0] if person_columns else None
+    display_names = (
+        working[name_column].fillna("").astype(str).str.strip()
+        if name_column is not None
+        else pd.Series("조회 대상", index=working.index)
+    )
+    contact_columns = []
+    for column in working.columns:
+        meaning = infer_column_meaning(str(column), working[column])
+        if (
+            meaning.qualifier == "contact"
+            or meaning.pii_type in {"phone_number", "email_address"}
+        ):
+            contact_columns.append(column)
+
+    positions = list(range(len(working)))
+    parent = positions.copy()
+
+    def find(position: int) -> int:
+        while parent[position] != position:
+            parent[position] = parent[parent[position]]
+            position = parent[position]
+        return position
+
+    def union(left: int, right: int) -> None:
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    seen_contact: dict[str, int] = {}
+    has_contact: list[bool] = []
+    for position, (_, row) in enumerate(working.iterrows()):
+        row_has_contact = False
+        for column in contact_columns:
+            value = re.sub(r"[\W_]+", "", str(row.get(column, "")).casefold())
+            if not value or value in {"nan", "none", "null"}:
+                continue
+            row_has_contact = True
+            key = f"{column}::{value}"
+            if key in seen_contact:
+                union(position, seen_contact[key])
+            else:
+                seen_contact[key] = position
+        has_contact.append(row_has_contact)
+
+    candidate_values = (
+        working["person_candidate_key"].fillna("").astype(str).str.strip().tolist()
+        if "person_candidate_key" in working.columns
+        else [""] * len(working)
+    )
+    contact_roots_by_candidate: dict[str, set[int]] = {}
+    for position, candidate in enumerate(candidate_values):
+        if candidate and has_contact[position]:
+            contact_roots_by_candidate.setdefault(candidate, set()).add(find(position))
+    contactless_by_candidate: dict[str, int] = {}
+    for position, candidate in enumerate(candidate_values):
+        if not candidate or has_contact[position]:
+            continue
+        roots = contact_roots_by_candidate.get(candidate, set())
+        if len(roots) == 1:
+            union(position, next(iter(roots)))
+        elif candidate in contactless_by_candidate:
+            union(position, contactless_by_candidate[candidate])
+        else:
+            contactless_by_candidate[candidate] = position
+
+    grouped: dict[int, list[int]] = {}
+    for position in positions:
+        grouped.setdefault(find(position), []).append(position)
+    if len(grouped) <= 1:
+        return pd.DataFrame()
+
+    rows: list[dict[str, object]] = []
+    for number, member_positions in enumerate(grouped.values(), start=1):
+        group_amounts = amounts.iloc[member_positions]
+        base_name = next(
+            (
+                display_names.iloc[position]
+                for position in member_positions
+                if display_names.iloc[position]
+            ),
+            "조회 대상",
+        )
+        rows.append({
+            "인물": f"{base_name} {number}",
+            str(target_column): float(group_amounts.sum()),
+            "결제 건수": int(group_amounts.size),
+        })
+    result = pd.DataFrame(rows)
+    result.attrs.update(frame.attrs)
+    return result
+
+
 def _target_series(
     df: pd.DataFrame,
     target: str,
@@ -432,6 +542,26 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
     valid = target.dropna()
     valid_rows = int(valid.size)
     excluded_rows = matched_rows - valid_rows
+
+    if (
+        plan.operation == "sum"
+        and plan.result_mode == "person_totals"
+        and not valid.empty
+    ):
+        person_totals = _person_total_groups(filtered, target_column, target)
+        if not person_totals.empty:
+            return QueryExecutionResult(
+                operation="person_totals",
+                value=person_totals,
+                source_file=source_file,
+                target=str(target_column),
+                target_data_type=target_data_type,
+                matched_rows=matched_rows,
+                valid_rows=valid_rows,
+                excluded_rows=excluded_rows,
+                evidence=replace(evidence, unique_people=int(len(person_totals))),
+                matched_frame=filtered,
+            )
 
     if valid.empty:
         value: object = [] if plan.operation == "mode" else None

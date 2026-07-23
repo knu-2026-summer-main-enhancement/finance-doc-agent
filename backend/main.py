@@ -72,8 +72,10 @@ from rag.deterministic_query_plan import (
     build_schema_grounded_plan,
     has_unmatched_person_amount_reference,
     has_unmatched_person_field_reference,
+    is_grounded_person_amount_lookup_question,
     is_grounded_person_payment_existence_question,
 )
+from rag.question_suggestions import build_question_suggestions
 from rag.question_decision import QuestionDecision
 
 logger = logging.getLogger("uvicorn.error")
@@ -121,7 +123,10 @@ async def _resolve_llm_question(question: str):
     # A plain whole-table list has no semantic ambiguity and should not wait
     # for a local model. File/document inventories use a separate route and do
     # not match this table-record expression.
-    if is_grounded_person_payment_existence_question(question, dataframes=dataframes):
+    if (
+        is_grounded_person_payment_existence_question(question, dataframes=dataframes)
+        or is_grounded_person_amount_lookup_question(question, dataframes=dataframes)
+    ):
         candidate = build_schema_grounded_plan(
             question, dataframes=dataframes, operation_hint="lookup_amount"
         )
@@ -337,6 +342,11 @@ class ChatResponse(BaseModel):
     sources: list[str] = Field(default_factory=list) #출처
     result: dict | None = None
 
+class ChatSuggestionRequest(BaseModel):
+    query: str = ""
+    sources: list[str] = Field(default_factory=list)
+    limit: int = Field(default=6, ge=1, le=50)
+
 class IngestRequest(BaseModel):
     file_path: str #파일 업로드 요청
 
@@ -393,6 +403,23 @@ def chat_detail(reference: str, offset: int = 0, limit: int = 50, _: None = Depe
     if detail is None:
         raise HTTPException(status_code=404, detail="상세 조회 정보가 없거나 만료되었습니다.")
     return detail
+
+
+@app.post("/chat/suggestions")
+def chat_suggestions(
+    req: ChatSuggestionRequest,
+    _: None = Depends(_verify_api_key),
+):
+    if len(req.query) > 200:
+        raise HTTPException(status_code=400, detail="query가 너무 깁니다.")
+    with document_scope(req.sources):
+        dataframes = scoped_mapping(_df_namespace, _df_sources)
+        suggestions = build_question_suggestions(
+            req.query,
+            dataframes=dataframes,
+            limit=req.limit,
+        )
+    return {"suggestions": suggestions}
 
 
 @app.get("/summary") #모든 적재 문서의 요약 정보 반환 

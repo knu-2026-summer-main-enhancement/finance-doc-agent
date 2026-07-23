@@ -242,12 +242,18 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 5
     entities: list[dict[str, Any]] = []
     if isinstance(frame, pd.DataFrame):
         for _, row in frame.head(page_size).iterrows():
-            records.append({
-                str(k): _json_value(v)
-                for k, v in row.items()
-                if is_source_column(row, k)
-                and _is_visible_column(k, pd.Series([v]), include_contact=False)
-            })
+            if result.operation == "person_totals":
+                # Executor-created summaries contain only display label, amount
+                # and payment count; the contact identifiers used to split
+                # people never enter this frame.
+                records.append({str(k): _json_value(v) for k, v in row.items()})
+            else:
+                records.append({
+                    str(k): _json_value(v)
+                    for k, v in row.items()
+                    if is_source_column(row, k)
+                    and _is_visible_column(k, pd.Series([v]), include_contact=False)
+                })
     # Projection intentionally removes system columns from list values.  Build
     # entities from the matching execution rows so references retain row scope.
     entity_frame = result.matched_frame
@@ -262,7 +268,7 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 5
         entities = inline_entities[:page_size]
     total = int(len(frame)) if isinstance(frame, pd.DataFrame) else 0
     calculation = None
-    if result.operation in {"sum", "mean", "median", "mode", "min", "max", "count", "group_sum"}:
+    if result.operation in {"sum", "mean", "median", "mode", "min", "max", "count", "group_sum", "person_totals"}:
         calculation_id = "calc_" + sha256((result.source_file + result.operation + str(result.target)).encode()).hexdigest()[:20]
         contributors = [
             {

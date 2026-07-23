@@ -328,6 +328,47 @@ class QueryExecutorTest(unittest.TestCase):
         self.assertEqual(missing.matched_rows, 3)
         self.assertEqual(present.matched_rows, 1)
 
+    def test_person_total_mode_separates_people_with_same_name(self):
+        self.df = pd.DataFrame(
+            {
+                "이름": ["김현수", "김현수", "김현수", "김현수"],
+                "출연금액": [20_000, 20_000, 30_000, 30_000],
+                "이메일": ["first@example.com", "first@example.com", "second@example.com", "second@example.com"],
+                "전화번호": ["01011112222", "01011112222", "01033334444", "01033334444"],
+                "person_candidate_key": ["김*수::기계과", "김*수::기계과", "김*수::건축과", "김*수::건축과"],
+            }
+        )
+        self.df.attrs["source_columns"] = ["이름", "출연금액", "이메일", "전화번호"]
+        self.df.attrs["semantic_schema"] = {
+            "columns": {
+                "이름": {
+                    "concept": "entity",
+                    "role": "entity_name",
+                    "qualifier": "person",
+                    "data_type": "string",
+                },
+                "출연금액": {"concept": "financial", "role": "amount", "data_type": "money"},
+                "이메일": {"concept": "contact", "qualifier": "contact", "data_type": "string", "pii_type": "email_address"},
+                "전화번호": {"concept": "contact", "qualifier": "contact", "data_type": "string", "pii_type": "phone_number"},
+                "person_candidate_key": {"concept": "identifier", "data_type": "string", "is_derived": True},
+            }
+        }
+        self.dataframes = {"df0": self.df}
+
+        result = self._execute(
+            {
+                "operation": "sum",
+                "filters": [{"column": "이름", "operator": "eq", "value": "김현수"}],
+                "target": "출연금액",
+                "result_mode": "person_totals",
+            }
+        )
+
+        self.assertEqual(result.operation, "person_totals")
+        self.assertEqual(result.value["인물"].tolist(), ["김현수 1", "김현수 2"])
+        self.assertEqual(result.value["출연금액"].tolist(), [40_000.0, 60_000.0])
+        self.assertEqual(result.evidence.unique_people, 2)
+
     def test_invalid_plan_cannot_be_executed(self):
         plan = QueryPlan.model_validate(
             {
