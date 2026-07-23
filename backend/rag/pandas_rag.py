@@ -257,7 +257,29 @@ async def _answer_pandas(
         message = "선택한 문서에서 조회 가능한 표 데이터를 찾을 수 없습니다." if source_scope_active() else "현재 로드된 데이터프레임이 없습니다."
         return message, [], "pandas"
 
+    analysis = analysis or analyze_question(question)
+
     if strategy == "QUERY_PLAN":
+        # R.JSON may deliberately choose QUERY_PLAN for a structured request,
+        # but explicit date ranges already have a schema-aware deterministic
+        # executor. Run it before P.JSON generation so a cross-year month
+        # range cannot be reduced to the first year/month by an LLM plan.
+        if analysis.date_filter is not None:
+            direct_result, direct_sources = _query_pandas_direct(
+                question,
+                aggregation_intents=analysis.aggregation_intents,
+                date_filter=analysis.date_filter,
+            )
+            if isinstance(direct_result, pd.DataFrame):
+                return (
+                    _format_direct_dataframe_with_evidence(
+                        direct_result, question, direct_sources
+                    ),
+                    direct_sources,
+                    "pandas",
+                )
+            return _format_scalar_result(direct_result, question), direct_sources, "pandas"
+
         # 마스킹 이름은 검증된 전용 검색기가 있다. LLM이 단순 이름 조회를
         # structured_query로 오분류해도, 별도 숫자·범위 조건이 없는 경우에만
         # QueryPlan보다 안전한 직접 검색 결과를 우선한다.
@@ -295,8 +317,6 @@ async def _answer_pandas(
             analysis=analysis,
             operation_hint=operation_hint,
         )
-
-    analysis = analysis or analyze_question(question)
 
     # 비교 집계는 그룹 기준을 확정할 전용 실행기가 아직 없으므로 잘못된 단일
     # 집계를 반환하지 않는다. 정상 /chat 경로에서는 Guard가 먼저 안내한다.

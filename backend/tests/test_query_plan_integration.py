@@ -10,7 +10,7 @@ from pandas_engine.plan_validator import validate_query_plan
 from pandas_engine.query_plan import QueryPlan
 from rag.pandas_rag import _answer_pandas
 from rag.query_planner import QueryPlannerError
-from rag.question_analyzer import QuestionAnalysis
+from rag.question_analyzer import QuestionAnalysis, analyze_question
 
 
 class QueryPlanPandasIntegrationTest(unittest.IsolatedAsyncioTestCase):
@@ -109,6 +109,36 @@ class QueryPlanPandasIntegrationTest(unittest.IsolatedAsyncioTestCase):
             operation_hint="lookup_field",
         )
         self.assertIn("10", answer)
+
+    async def test_query_plan_strategy_executes_cross_year_date_range_directly(self):
+        date_df = pd.DataFrame([
+            {"년": 2025, "월": 5, "결제등록날짜": None, "이름": "김하나"},
+            {"년": 2025, "월": 6, "결제등록날짜": "2021-06-01", "이름": "이두리"},
+            {"년": 2025, "월": 12, "결제등록날짜": None, "이름": "박세나"},
+            {"년": 2026, "월": 1, "결제등록날짜": None, "이름": "최도윤"},
+            {"년": 2026, "월": 2, "결제등록날짜": None, "이름": "한지우"},
+        ])
+        _df_namespace["df0"] = date_df
+        _df_sources["df0"] = "결제내역.xlsx"
+        question = "2025년 6월부터 2026년 1월까지 목록"
+        planner = AsyncMock(side_effect=AssertionError("date range must not use P.JSON"))
+
+        with patch(
+            "rag.pandas_rag.generate_validated_query_plan",
+            new=planner,
+        ):
+            answer, sources, route = await _answer_pandas(
+                question,
+                analysis=analyze_question(question),
+                strategy="QUERY_PLAN",
+                operation_hint="structured_query",
+            )
+
+        planner.assert_not_awaited()
+        self.assertEqual(route, "pandas")
+        self.assertEqual(sources, ["결제내역.xlsx"])
+        self.assertIn("총 3건", answer)
+        self.assertIn("2025년 6월~2026년 1월", answer)
 
     async def test_numeric_comparison_skips_masked_name_guessing(self):
         validation = self._validation(

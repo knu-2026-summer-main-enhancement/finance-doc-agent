@@ -316,6 +316,14 @@ class DeterministicQueryPlanTest(unittest.TestCase):
             [("년", 2026), ("월", 1)],
         )
 
+    def test_month_range_defers_to_date_filter_instead_of_using_first_month(self):
+        plan = self._plan(
+            "2025년 6월부터 2026년 1월까지 목록",
+            "structured_query",
+        )
+
+        self.assertIsNone(plan)
+
     def test_person_count_uses_distinct_person_column(self):
         plan = self._plan("기계과 사람 수", "count_records")
 

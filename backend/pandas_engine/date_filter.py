@@ -146,12 +146,57 @@ def resolve_date_column(df: pd.DataFrame, question: str) -> tuple[str | None, li
         return (candidates[0] if candidates else None), candidates
 
     question_text = str(question or "")
+    spec = parse_date_filter(question_text)
+    # A fully specified month range needs one chronological key.  Without an
+    # explicitly named business date header, one complete date/year-month
+    # column is the only candidate that can represent it without reducing the
+    # range to its first year/month component.
+    complete_candidates = [
+        column for column in candidates
+        if _temporal_role(df, column) in {"date", "year_month"}
+    ]
+    normalized_question = re.sub(r"\s+", "", question_text)
+    explicitly_named = [
+        column for column in candidates
+        if len(re.sub(r"\s+", "", column)) >= 2
+        and re.sub(r"\s+", "", column) in normalized_question
+    ]
+    range_ready_complete = []
+    if spec is not None and spec.year is not None:
+        start_key = spec.year * 100 + spec.start_month
+        end_key = (spec.end_year or spec.year) * 100 + spec.end_month
+        for column in complete_candidates:
+            parsed = _to_datetime(df[column])
+            valid = parsed.dropna()
+            if valid.empty:
+                continue
+            keys = valid.dt.year * 100 + valid.dt.month
+            if int(keys.min()) <= start_key and int(keys.max()) >= end_key:
+                range_ready_complete.append(column)
+    component_candidates = [
+        column for column in candidates
+        if _temporal_role(df, column) == "month" and _component_column(df, "year") is not None
+    ]
+    if (
+        spec is not None
+        and (spec.start_month != spec.end_month or spec.year != spec.end_year)
+        and not explicitly_named
+        and len(range_ready_complete) == 1
+    ):
+        return range_ready_complete[0], candidates
+    if (
+        spec is not None
+        and (spec.start_month != spec.end_month or spec.year != spec.end_year)
+        and not explicitly_named
+        and not range_ready_complete
+        and len(component_candidates) == 1
+    ):
+        return component_candidates[0], candidates
     # More detailed data is not automatically more relevant. When a document
     # has both 신청일자 and 지급월, silently preferring the full date would
     # change the user's intended business meaning. Only question evidence may
     # break a tie between multiple temporal columns.
     scores = {column: 0 for column in candidates}
-    normalized_question = re.sub(r"\s+", "", question_text)
     for column in candidates:
         normalized_column = re.sub(r"\s+", "", column)
         if len(normalized_column) >= 2 and normalized_column in normalized_question:

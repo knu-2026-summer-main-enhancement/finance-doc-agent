@@ -62,6 +62,7 @@ from rag.guide import build_guide_response
 from rag.vector import _answer_vector, _stream_vector
 from rag.pandas_rag import _answer_pandas, current_interactive_result
 from pandas_engine.interactive import get_interactive_detail
+from pandas_engine.date_filter import parse_date_filter
 from rag.question_engine import (
     QuestionEngineError,
     compare_shadow_decision,
@@ -120,10 +121,19 @@ async def _resolve_llm_question(question: str):
     normalized = normalized.replace("번쨰", "번째")
     dataframes = scoped_mapping(_df_namespace, _df_sources)
     deterministic_operation = None
+    date_spec = parse_date_filter(question)
     # A plain whole-table list has no semantic ambiguity and should not wait
     # for a local model. File/document inventories use a separate route and do
     # not match this table-record expression.
     if (
+        date_spec is not None
+        and not date_spec.error
+        and date_spec.start_month != date_spec.end_month
+    ):
+        # The schema-aware date filter chooses a usable complete date column
+        # or a year+month component pair before table execution.
+        deterministic_operation = "structured_query"
+    elif (
         is_grounded_person_payment_existence_question(question, dataframes=dataframes)
         or is_grounded_person_amount_lookup_question(question, dataframes=dataframes)
     ):

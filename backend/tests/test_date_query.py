@@ -149,6 +149,37 @@ class DateQueryTest(unittest.TestCase):
 
         self.assertEqual(result["이름"].tolist(), ["김하나", "이두리"])
 
+    def test_cross_year_month_range_prefers_unambiguous_complete_date(self):
+        self._replace_dataframe(pd.DataFrame([
+            {"년": 2025, "월": 5, "결제등록날짜": "2025-05-31", "이름": "김하나"},
+            {"년": 2025, "월": 6, "결제등록날짜": "2025-06-01", "이름": "이두리"},
+            {"년": 2025, "월": 12, "결제등록날짜": "2025-12-31", "이름": "박세나"},
+            {"년": 2026, "월": 1, "결제등록날짜": "2026-01-01", "이름": "최도윤"},
+            {"년": 2026, "월": 2, "결제등록날짜": "2026-02-01", "이름": "한지우"},
+        ]))
+
+        _, (result, _) = self._query("2025년 6월부터 2026년 1월까지 목록 알려줘")
+
+        self.assertEqual(result["이름"].tolist(), ["이두리", "박세나", "최도윤"])
+        evidence = result.attrs["date_filter_evidence"]
+        self.assertEqual(evidence["column"], "결제등록날짜")
+        self.assertEqual(evidence["period"], "2025년 6월~2026년 1월")
+
+    def test_cross_year_range_uses_year_month_components_when_date_column_is_stale(self):
+        self._replace_dataframe(pd.DataFrame([
+            {"년": 2025, "월": 6, "결제등록날짜": "2021-06-01", "이름": "김하나"},
+            {"년": 2025, "월": 12, "결제등록날짜": None, "이름": "이두리"},
+            {"년": 2026, "월": 1, "결제등록날짜": None, "이름": "박세나"},
+            {"년": 2026, "월": 2, "결제등록날짜": None, "이름": "최도윤"},
+        ]))
+
+        _, (result, _) = self._query("2025년 6월부터 2026년 1월까지 목록 알려줘")
+
+        self.assertEqual(result["이름"].tolist(), ["김하나", "이두리", "박세나"])
+        evidence = result.attrs["date_filter_evidence"]
+        self.assertEqual(evidence["column"], "월")
+        self.assertEqual(evidence["year_column"], "년")
+
     def test_year_condition_is_rejected_when_only_month_exists(self):
         self._replace_dataframe(pd.DataFrame([
             {"지급월": 12, "이름": "김하나"},

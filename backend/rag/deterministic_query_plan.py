@@ -7,6 +7,7 @@ from typing import Hashable, Mapping
 import pandas as pd
 
 from pandas_engine.money import parse_money_value
+from pandas_engine.date_filter import parse_date_filter
 from pandas_engine.plan_validator import column_data_type
 from pandas_engine.query_plan import FilterCondition, QueryPlan
 from utils.semantic_schema import infer_column_meaning, is_source_column
@@ -445,6 +446,13 @@ def build_schema_grounded_plan(
     )
     normalized_question = _norm(question)
     filters = _value_filters(df, question)
+
+    # A range such as "2025년 6월부터 2026년 1월까지" cannot be represented
+    # by independent year/month filters: doing so silently means only the
+    # first month. The date-filter executor resolves these ranges instead.
+    date_spec = parse_date_filter(question)
+    if date_spec is not None and date_spec.start_month != date_spec.end_month:
+        return None
 
     requested = _requested_columns(df, question)
     if _MISSING.search(question):
