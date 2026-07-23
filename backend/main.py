@@ -75,7 +75,7 @@ from rag.deterministic_query_plan import (
     is_grounded_person_amount_lookup_question,
     is_grounded_person_payment_existence_question,
 )
-from rag.question_suggestions import build_question_suggestions
+from rag.question_suggestions import build_person_autocomplete_catalog, build_question_suggestions
 from rag.question_decision import QuestionDecision
 
 logger = logging.getLogger("uvicorn.error")
@@ -346,6 +346,7 @@ class ChatSuggestionRequest(BaseModel):
     query: str = ""
     sources: list[str] = Field(default_factory=list)
     limit: int = Field(default=6, ge=1, le=50)
+    catalog: bool = False
 
 class IngestRequest(BaseModel):
     file_path: str #파일 업로드 요청
@@ -417,9 +418,14 @@ def chat_suggestions(
         suggestions = build_question_suggestions(
             req.query,
             dataframes=dataframes,
-            limit=req.limit,
+            limit=req.limit if req.catalog else min(req.limit, 3),
         )
-    return {"suggestions": suggestions}
+        person_catalog = build_person_autocomplete_catalog(dataframes) if req.catalog else {"names": [], "actions": []}
+    return {
+        "suggestions": suggestions,
+        "person_names": person_catalog["names"],
+        "person_actions": person_catalog["actions"],
+    }
 
 
 @app.get("/summary") #모든 적재 문서의 요약 정보 반환 

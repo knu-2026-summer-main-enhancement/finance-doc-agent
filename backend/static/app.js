@@ -59,12 +59,11 @@ const state = {
   contactNamesPromise: null,
   renameSource: "",
   deleteSource: "",
-  suggestionController: null,
   suggestionCatalogController: null,
-  suggestionTimer: null,
   suggestionIndex: -1,
   suggestionCatalogs: new Map(),
   suggestionCatalog: [],
+  personAutocomplete: { names: [], actions: [] },
   suggestionUsage: new Map(),
   documentsLoaded: false,
 };
@@ -780,9 +779,6 @@ function resizeTextarea() {
 }
 
 function hideQuestionSuggestions() {
-  window.clearTimeout(state.suggestionTimer);
-  state.suggestionController?.abort();
-  state.suggestionController = null;
   elements.questionAutocomplete.hidden = true;
   elements.questionAutocomplete.replaceChildren();
   elements.questionInput.setAttribute("aria-expanded", "false");
@@ -827,6 +823,7 @@ function appendHighlightedText(container, text, query) {
 }
 
 function renderQuestionSuggestions(suggestions, query = elements.questionInput.value) {
+  suggestions = suggestions.slice(0, 3);
   elements.questionAutocomplete.replaceChildren();
   if (suggestions.length) {
     const header = document.createElement("div");
@@ -878,7 +875,9 @@ async function primeQuestionCatalog() {
   if (!state.documentsLoaded) return [];
   const scopeKey = suggestionScopeKey();
   if (state.suggestionCatalogs.has(scopeKey)) {
-    state.suggestionCatalog = state.suggestionCatalogs.get(scopeKey);
+    const cached = state.suggestionCatalogs.get(scopeKey);
+    state.suggestionCatalog = cached.suggestions;
+    state.personAutocomplete = cached.personAutocomplete;
     return state.suggestionCatalog;
   }
   state.suggestionCatalogController?.abort();
@@ -888,20 +887,30 @@ async function primeQuestionCatalog() {
     const response = await fetch("/chat/suggestions", {
       method: "POST",
       headers: apiHeaders(true),
-      body: JSON.stringify({ query: "", sources: [...state.selected], limit: 50 }),
+      body: JSON.stringify({ query: "", sources: [...state.selected], limit: 50, catalog: true }),
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(await errorMessage(response));
     const data = await response.json();
     if (scopeKey === suggestionScopeKey()) {
       state.suggestionCatalog = data.suggestions || [];
-      state.suggestionCatalogs.set(scopeKey, state.suggestionCatalog);
+      state.personAutocomplete = {
+        names: Array.isArray(data.person_names) ? data.person_names : [],
+        actions: Array.isArray(data.person_actions) ? data.person_actions : [],
+      };
+      state.suggestionCatalogs.set(scopeKey, {
+        suggestions: state.suggestionCatalog,
+        personAutocomplete: state.personAutocomplete,
+      });
       if (document.activeElement === elements.questionInput && !elements.naturalMode.checked) {
         showLocalQuestionSuggestions();
       }
     }
   } catch (error) {
-    if (error.name !== "AbortError") state.suggestionCatalog = [];
+    if (error.name !== "AbortError") {
+      state.suggestionCatalog = [];
+      state.personAutocomplete = { names: [], actions: [] };
+    }
   } finally {
     if (state.suggestionCatalogController === controller) state.suggestionCatalogController = null;
   }
@@ -939,12 +948,38 @@ function rankLocalSuggestions(query) {
     })
     .filter(Boolean)
     .sort((left, right) => right.score - left.score || left.index - right.index)
-    .slice(0, 6)
+    .slice(0, 3)
     .map((item) => item.suggestion);
 }
 
-function isDynamicSuggestionQuery(query) {
-  return /^(?:[가-힣*]{2,5}|\d{1,3}\s*기|(?:19|20)\d{2}\s*년)$/u.test(query);
+function personNameMatchesPrefix(name, query) {
+  const normalizedName = normalizedSuggestionText(name);
+  const normalizedQuery = normalizedSuggestionText(query);
+  if (!normalizedQuery || !/^[가-힣*]+$/u.test(query)) return false;
+  if (normalizedName.startsWith(normalizedQuery)) return true;
+  return normalizedName.length === normalizedQuery.length
+    && [...normalizedName].every((character, index) => character === "*" || character === [...normalizedQuery][index]);
+}
+
+function rankPersonCompletions(query) {
+  const normalizedQuery = normalizedSuggestionText(query);
+  if (!normalizedQuery) return [];
+  const suggestions = [];
+  for (const name of state.personAutocomplete.names) {
+    for (const action of state.personAutocomplete.actions) {
+      const text = `${name} ${action.suffix}`;
+      // Keep a completion visible while its exact wording is being typed.
+      // Before the action wording starts, match the name prefix so that
+      // entering "김현" can still expand to a complete question.
+      if (
+        !normalizedSuggestionText(text).startsWith(normalizedQuery)
+        && !personNameMatchesPrefix(name, query)
+      ) continue;
+      suggestions.push({ ...action, text });
+      if (suggestions.length === 3) return suggestions;
+    }
+  }
+  return suggestions;
 }
 
 function showLocalQuestionSuggestions() {
@@ -953,37 +988,9 @@ function showLocalQuestionSuggestions() {
     return;
   }
   const query = elements.questionInput.value.trim();
-  const suggestions = rankLocalSuggestions(query);
+  const suggestions = rankPersonCompletions(query);
+  if (!suggestions.length) suggestions.push(...rankLocalSuggestions(query));
   renderQuestionSuggestions(suggestions, query);
-  if (!suggestions.length && isDynamicSuggestionQuery(query)) scheduleDynamicSuggestions();
-}
-
-async function loadDynamicQuestionSuggestions() {
-  const query = elements.questionInput.value.trim();
-  if (!isDynamicSuggestionQuery(query) || rankLocalSuggestions(query).length) return;
-  state.suggestionController?.abort();
-  const controller = new AbortController();
-  state.suggestionController = controller;
-  try {
-    const response = await fetch("/chat/suggestions", {
-      method: "POST",
-      headers: apiHeaders(true),
-      body: JSON.stringify({ query, sources: [...state.selected], limit: 6 }),
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error(await errorMessage(response));
-    const data = await response.json();
-    if (elements.questionInput.value.trim() === query) renderQuestionSuggestions(data.suggestions || [], query);
-  } catch (error) {
-    if (error.name !== "AbortError") hideQuestionSuggestions();
-  } finally {
-    if (state.suggestionController === controller) state.suggestionController = null;
-  }
-}
-
-function scheduleDynamicSuggestions() {
-  window.clearTimeout(state.suggestionTimer);
-  state.suggestionTimer = window.setTimeout(loadDynamicQuestionSuggestions, 280);
 }
 
 function bindSuggestions() {

@@ -3,7 +3,7 @@ import unittest
 import pandas as pd
 
 from rag.deterministic_query_plan import build_schema_grounded_plan
-from rag.question_suggestions import build_question_suggestions
+from rag.question_suggestions import build_person_autocomplete_catalog, build_question_suggestions
 
 
 def _payment_dataframe() -> pd.DataFrame:
@@ -58,6 +58,16 @@ class QuestionSuggestionsTest(unittest.TestCase):
 
         self.assertTrue(any(item["text"] == "김민수 금액 알려줘" for item in exact))
         self.assertFalse(any("김민수" in item["text"] for item in partial))
+
+    def test_person_autocomplete_catalog_has_only_grounded_names_and_actions(self):
+        dataframes = {"payments": _payment_dataframe()}
+
+        catalog = build_person_autocomplete_catalog(dataframes)
+
+        self.assertEqual(catalog["names"], ["김민수", "이서연"])
+        self.assertTrue(catalog["actions"])
+        self.assertTrue(all(action["suffix"] for action in catalog["actions"]))
+        self.assertTrue(all(action["path"] == "fast" for action in catalog["actions"]))
 
     def test_catalog_can_represent_every_eo_operation(self):
         dataframes = {"payments": _payment_dataframe()}

@@ -151,6 +151,40 @@ def _person_values(dataframes: Mapping[str, pd.DataFrame]) -> tuple[str, ...]:
     return result
 
 
+def build_person_autocomplete_catalog(
+    dataframes: Mapping[str, pd.DataFrame],
+) -> dict[str, object]:
+    """Return locally usable, schema-grounded person completion metadata.
+
+    This is fetched once when the document scope changes.  Keystrokes must not
+    cause another request or an LLM invocation.
+    """
+
+    names = _person_values(dataframes)
+    if not names:
+        return {"names": [], "actions": []}
+
+    # Validate the action wording against this schema once.  All returned
+    # names originate from the same person column, so the valid shapes apply
+    # consistently to each of them.
+    sample_name = names[0]
+    actions: list[dict[str, str]] = []
+    for template in _dynamic_templates(sample_name, dataframes):
+        result = _compile_template(template, dataframes)
+        if result is None:
+            continue
+        suffix = result["text"].removeprefix(sample_name).strip()
+        if suffix:
+            actions.append({
+                "suffix": suffix,
+                "operation": result["operation"],
+                "label": result["label"],
+                "path": result["path"],
+                "path_label": result["path_label"],
+            })
+    return {"names": list(names), "actions": actions}
+
+
 def _is_grounded_person_input(query: str, dataframes: Mapping[str, pd.DataFrame]) -> bool:
     entered = normalize_person_name(query)
     for stored in _person_values(dataframes):
