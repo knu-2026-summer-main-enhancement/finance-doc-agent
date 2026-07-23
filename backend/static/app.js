@@ -790,6 +790,7 @@ function collapseEvidence(body) {
 
 function setChatBusy(busy) {
   state.busy = busy;
+  elements.clearChat.disabled = busy;
   elements.sendButton.classList.toggle("stop", busy);
   elements.sendButton.setAttribute("aria-label", busy ? "답변 생성 중단" : "질문 전송");
   elements.sendButton.querySelector("[data-send-label]").textContent = busy ? "중단" : "전송";
@@ -929,6 +930,7 @@ elements.allDocuments.addEventListener("click", () => {
   updateScope();
 });
 elements.clearChat.addEventListener("click", () => {
+  if (state.busy) return;
   elements.chatArea.innerHTML = initialChat;
   bindSuggestions();
 });
