@@ -15,6 +15,7 @@ QueryOperation = Literal[
     "mode",
     "min",
     "max",
+    "group_sum",
 ]
 FilterOperator = Literal[
     "eq",
@@ -114,8 +115,12 @@ class QueryPlan(_PlanModel):
     result_mode: Literal["value", "records"] | None = None
     sort: tuple[SortCondition, ...] = Field(default_factory=tuple, max_length=10)
     distinct_by: tuple[str, ...] = Field(default_factory=tuple, max_length=10)
+    group_by: tuple[str, ...] = Field(default_factory=tuple, max_length=10)
+    group_order: Literal["asc", "desc"] | None = None
     limit: int | None = Field(default=None, ge=1, le=500)
     top_n: int | None = Field(default=None, ge=1, le=100)
+    rank_position: int | None = Field(default=None, ge=1, le=100)
+    tie_policy: Literal["dense"] | None = None
     message: str | None = Field(default=None, max_length=500)
     candidates: tuple[str, ...] = Field(default_factory=tuple, max_length=20)
 
@@ -127,14 +132,20 @@ class QueryPlan(_PlanModel):
             return "value"
         if self.operation in {"min", "max"}:
             return self.result_mode or "value"
+        if self.operation == "group_sum":
+            return "records"
         return None
 
     @property
     def effective_limit(self) -> int | None:
-        return (self.limit or 100) if self.operation == "list" else None
+        # An omitted limit means the caller requested the complete list.
+        # Apply a cap only when the user or planner explicitly supplied one.
+        return self.limit if self.operation == "list" else None
 
     @property
     def effective_top_n(self) -> int | None:
+        if self.operation == "group_sum":
+            return self.top_n or 1
         if self.operation in {"min", "max"} and self.effective_result_mode == "records":
             return self.top_n or 1
         return None
@@ -154,8 +165,12 @@ class QueryPlan(_PlanModel):
                 or self.target is not None
                 or self.sort
                 or self.distinct_by
+                or self.group_by
+                or self.group_order is not None
                 or self.limit is not None
                 or self.top_n is not None
+                or self.rank_position is not None
+                or self.tie_policy is not None
                 or self.result_mode is not None
             ):
                 raise ValueError(f"{self.status} must not include execution fields")
@@ -167,16 +182,47 @@ class QueryPlan(_PlanModel):
             raise ValueError("ready requires an operation")
 
         scalar_operations = {"count", "sum", "mean", "median", "mode"}
-        targeted_operations = {"sum", "mean", "median", "mode", "min", "max"}
+        targeted_operations = {"sum", "mean", "median", "mode", "min", "max", "group_sum"}
 
         if self.operation == "list":
+            if self.group_by or self.group_order is not None:
+                raise ValueError("list must not include grouping fields")
             if self.target is not None:
                 raise ValueError("list must not include a target")
             if self.result_mode not in {None, "records"}:
                 raise ValueError("list must return records")
             if self.top_n is not None:
                 raise ValueError("list uses limit instead of top_n")
+            if self.rank_position is not None:
+                if not self.sort:
+                    raise ValueError("rank_position requires an explicit sort")
+                if self.limit is not None:
+                    raise ValueError("rank_position must not be combined with limit")
+                if self.tie_policy not in {None, "dense"}:
+                    raise ValueError("unsupported list tie policy")
+            elif self.tie_policy is not None:
+                raise ValueError("tie_policy requires rank_position")
             return self
+
+        if self.operation == "group_sum":
+            if not self.target:
+                raise ValueError("group_sum requires a target column")
+            if not self.group_by:
+                raise ValueError("group_sum requires at least one group_by column")
+            if self.result_mode not in {None, "records"}:
+                raise ValueError("group_sum returns ranked group records")
+            if self.select or self.sort or self.distinct_by or self.limit is not None:
+                raise ValueError("group_sum uses group_by, group_order and top_n")
+            if self.rank_position is not None and self.top_n is not None:
+                raise ValueError("group_sum rank_position must not be combined with top_n")
+            if self.rank_position is not None and self.tie_policy not in {None, "dense"}:
+                raise ValueError("unsupported group_sum tie policy")
+            if self.rank_position is None and self.tie_policy is not None:
+                raise ValueError("tie_policy requires rank_position")
+            return self
+
+        if self.group_by or self.group_order is not None:
+            raise ValueError(f"{self.operation} must not include grouping fields")
 
         if self.operation in targeted_operations and not self.target:
             raise ValueError(f"{self.operation} requires a target column")
@@ -184,7 +230,7 @@ class QueryPlan(_PlanModel):
         if self.operation in scalar_operations:
             if self.result_mode not in {None, "value"}:
                 raise ValueError(f"{self.operation} must return a value")
-            if self.select or self.sort or self.limit is not None or self.top_n is not None:
+            if self.select or self.sort or self.limit is not None or self.top_n is not None or self.rank_position is not None or self.tie_policy is not None:
                 raise ValueError(
                     f"{self.operation} must not include record-returning fields"
                 )

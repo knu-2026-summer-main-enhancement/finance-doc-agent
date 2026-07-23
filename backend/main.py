@@ -45,7 +45,7 @@ from core.security import _verify_api_key, _validate_ingest_path
 from core.llm import get_llm_rag
 from datastore.state import _df_namespace, _df_sources, _load_dataframes
 from datastore.schema import _get_df_schema
-from datastore.scope import document_scope
+from datastore.scope import document_scope, scoped_mapping
 from datastore.query import (
     _count_valid_name_rows,
     _extract_total_from_source,
@@ -60,13 +60,22 @@ from rag.router import (
 from rag.guard import check_question, check_question_decision
 from rag.guide import build_guide_response
 from rag.vector import _answer_vector, _stream_vector
-from rag.pandas_rag import _answer_pandas
+from rag.pandas_rag import _answer_pandas, current_interactive_result
+from pandas_engine.interactive import get_interactive_detail
 from rag.question_engine import (
     QuestionEngineError,
     compare_shadow_decision,
     decide_question,
 )
 from utils.table_parser import normalize_person_name
+from rag.deterministic_query_plan import (
+    ambiguous_person_lookup_candidates,
+    build_schema_grounded_plan,
+    has_unmatched_person_amount_reference,
+    has_unmatched_person_field_reference,
+    is_grounded_person_payment_existence_question,
+)
+from rag.question_decision import QuestionDecision
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -103,6 +112,112 @@ def _schedule_shadow_question_engine(
 
 async def _resolve_llm_question(question: str):
     """Return validated LLM operations, engine, and optional PANDAS strategy."""
+
+    normalized = re.sub(r"\s+", "", question)
+    dataframes = scoped_mapping(_df_namespace, _df_sources)
+    deterministic_operation = None
+    # A plain whole-table list has no semantic ambiguity and should not wait
+    # for a local model. File/document inventories use a separate route and do
+    # not match this table-record expression.
+    if is_grounded_person_payment_existence_question(question, dataframes=dataframes):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="lookup_amount"
+        )
+        if candidate is not None:
+            deterministic_operation = "lookup_amount"
+    elif re.fullmatch(
+        r"(?:표의?)?(?:전체|모든|전부)(?:데이터|기록|행|명단|목록|리스트)?"
+        r"(?:보여줘|보여|알려줘|조회해줘|확인해줘)?[?!.]*",
+        normalized,
+    ):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="list_records"
+        )
+        if candidate is not None:
+            deterministic_operation = "list_records"
+    # A missing-value phrase is a filter condition even when it names a field
+    # that can otherwise be returned by a lookup (for example an email).
+    elif re.search(r"(?:비어있|안적|미입력|누락|공백|없(?:는|어|어?))", normalized):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="structured_query"
+        )
+        if candidate is not None:
+            deterministic_operation = "structured_query"
+    # A payment-time request can naturally contain "돈 냈어".  Resolve its
+    # explicit temporal projection before the payment-existence total below.
+    elif any(token in normalized for token in ("등록날짜", "지급일", "날짜", "언제", "시기")):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="lookup_field"
+        )
+        if candidate is not None:
+            deterministic_operation = "lookup_field"
+    elif re.search(r"(?:돈|금액|회비|결제|납부|후원|기부).{0,8}?(?:냈|내었|냈어|냈나요|했어|했나|했나요)", normalized):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="lookup_amount"
+        )
+        if candidate is not None:
+            deterministic_operation = "lookup_amount"
+    elif (
+        any(token in normalized for token in ("전화번호", "이메일"))
+        and re.search(r"(?:얼마|돈|금액|회비|결제|납부|후원|기부)", normalized)
+    ):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="lookup_amount"
+        )
+        if candidate is not None:
+            deterministic_operation = "lookup_amount"
+    elif any(token in normalized for token in ("전화번호", "이메일", "전공", "학과")):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="lookup_field"
+        )
+        if candidate is not None:
+            deterministic_operation = "lookup_field"
+    elif re.search(r"(?:사람|인원|회원).*?(?:몇명|수)|몇명", normalized):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="count_records"
+        )
+        if candidate is not None:
+            deterministic_operation = "count_records"
+    # Ordering and ordinal ranking must take precedence over the generic
+    # money-total shortcut below.  "금액을 큰 순서대로" is a list request,
+    # while "누적 금액이 두 번째로 큰 사람" is a grouped rank request.
+    elif re.search(
+        r"(?:오름차순|내림차순|순서대로|큰순|작은순|많은순|적은순|"
+        r"\d+번째|첫번째|두번째|세번째|네번째|다섯번째|최신|가장이른)",
+        normalized,
+    ):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="structured_query"
+        )
+        if candidate is not None:
+            deterministic_operation = "structured_query"
+    # A grounded person plus a short money noun is a person-scoped total.
+    # The QueryPlan builder keeps explicit average/mode/ranking precedence and
+    # declines this route unless the subject is grounded in the dataframe.
+    elif re.search(r"(?:총합|합계|총액|얼마|금액|돈)", normalized):
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="sum_amount"
+        )
+        if candidate is not None:
+            deterministic_operation = "sum_amount"
+    else:
+        candidate = build_schema_grounded_plan(
+            question, dataframes=dataframes, operation_hint="structured_query"
+        )
+        if candidate is not None:
+            deterministic_operation = "structured_query"
+
+    if deterministic_operation:
+        decision = QuestionDecision.model_validate(
+            {
+                "status": "ready",
+                "requests": [{"source_text": question, "operation": deterministic_operation}],
+                "reason": "스키마와 질문 원문으로 검증 가능한 표 조회입니다.",
+            }
+        )
+        guard_result = check_question_decision(decision)
+        logger.info("[QUESTION_ENGINE] 스키마 기반 분류 | operation=%s", deterministic_operation)
+        return guard_result, "PANDAS", pandas_strategy_for_operations(decision.operations)
 
     decision = await decide_question(
         question,
@@ -192,6 +307,7 @@ class ChatResponse(BaseModel):
     answer: str #답변,
     source: str  #소스,
     sources: list[str] = Field(default_factory=list) #출처
+    result: dict | None = None
 
 class IngestRequest(BaseModel):
     file_path: str #파일 업로드 요청
@@ -326,6 +442,16 @@ def result_1_contact(name: str, _: None = Depends(_verify_api_key)):
     }
 
 
+@app.get("/chat/details/{reference}")
+def chat_detail(reference: str, offset: int = 0, limit: int = 50, _: None = Depends(_verify_api_key)):
+    if offset < 0 or not 1 <= limit <= 100:
+        raise HTTPException(status_code=400, detail="offset/limit 범위가 올바르지 않습니다.")
+    detail = get_interactive_detail(reference, offset=offset, limit=limit)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="상세 조회 정보가 없거나 만료되었습니다.")
+    return detail
+
+
 @app.get("/summary") #모든 적재 문서의 요약 정보 반환 
 def summary(_: None = Depends(_verify_api_key)):
     """모든 적재 문서의 명세 요약: 문서별 목적·인원·총액 + 전체 합산.
@@ -406,6 +532,38 @@ async def chat(
                 and req.mode == "auto"
             )
             if use_llm_engine:
+                scoped_dataframes = scoped_mapping(_df_namespace, _df_sources)
+                candidates = ambiguous_person_lookup_candidates(
+                    req.question,
+                    dataframes=scoped_dataframes,
+                )
+                if candidates:
+                    return ChatResponse(
+                        answer=(
+                            "동일하거나 유사한 이름의 회원이 여러 명입니다. "
+                            "전체 이름을 알려 주세요. 후보: " + ", ".join(candidates)
+                        ),
+                        source="pandas",
+                        sources=[],
+                    )
+                if has_unmatched_person_field_reference(
+                    req.question,
+                    dataframes=scoped_dataframes,
+                ):
+                    return ChatResponse(
+                        answer="\uc870\ud68c\ub41c \uc815\ubcf4\uac00 \uc5c6\uc2b5\ub2c8\ub2e4.",
+                        source="pandas",
+                        sources=[],
+                    )
+                if has_unmatched_person_amount_reference(
+                    req.question,
+                    dataframes=scoped_dataframes,
+                ):
+                    return ChatResponse(
+                        answer="조회된 금액이 없습니다.",
+                        source="pandas",
+                        sources=[],
+                    )
                 try:
                     guard_result, route, pandas_strategy = (
                         await _resolve_llm_question(req.question)
@@ -468,6 +626,7 @@ async def chat(
                         else None
                     ),
                 )
+                interactive_result = current_interactive_result()
             else:
                 answer, sources, actual_route = await _answer_vector(
                     req.question,
@@ -477,7 +636,8 @@ async def chat(
                     ),
                     analysis=guard_result.analysis,
                 )
-            return ChatResponse(answer=answer, source=actual_route, sources=sources)
+                interactive_result = None
+            return ChatResponse(answer=answer, source=actual_route, sources=sources, result=interactive_result if route == "PANDAS" else None)
     except Exception as e:
         logger.exception("[CHAT] 처리 오류 | question=%s", req.question[:50])
         raise HTTPException(status_code=500, detail=str(e))

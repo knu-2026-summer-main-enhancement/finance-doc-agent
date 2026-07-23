@@ -368,6 +368,63 @@ class QueryPlanPandasIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sources, [])
         self.assertIn("안전한 표 조회 계획으로 변환하지 못했습니다", answer)
 
+class QueryPlanSemanticContractTest(unittest.TestCase):
+    def setUp(self):
+        self.df = pd.DataFrame(
+            {
+                "회원명": ["가나다", "가나다", "라마바"],
+                "전화번호": ["010-1111-1111", "010-1111-1111", "010-2222-2222"],
+                "회비구분": ["년회비", "년회비", "평생회비"],
+            }
+        )
+        self.df.attrs["semantic_schema"] = {
+            "columns": {
+                "회원명": {
+                    "concept": "entity", "role": "entity_name", "qualifier": "person",
+                    "data_type": "string",
+                },
+                "전화번호": {"data_type": "string"},
+                "회비구분": {"data_type": "string"},
+            }
+        }
+
+    def test_person_count_is_normalized_to_distinct_person_identifier(self):
+        plan = QueryPlan.model_validate(
+            {
+                "status": "ready", "dataframe": "df0", "operation": "count",
+                "filters": [{"column": "회비구분", "operator": "eq", "value": "년회비"}],
+            }
+        )
+        validation = validate_query_plan(
+            plan,
+            question="회비구분이 년회비인 사람 몇 명이야?",
+            dataframes={"df0": self.df},
+            source_by_alias={"df0": "test.xlsx"},
+        )
+        self.assertTrue(validation.is_valid)
+        self.assertEqual(validation.plan.distinct_by, ("회원명",))
+
+    def test_lookup_field_rejects_requested_field_as_subject_filter(self):
+        plan = QueryPlan.model_validate(
+            {
+                "status": "ready", "dataframe": "df0", "operation": "list",
+                "filters": [{"column": "전화번호", "operator": "eq", "value": "가나다"}],
+                "select": ["전화번호"],
+            }
+        )
+        validation = validate_query_plan(
+            plan,
+            question="가나다 전화번호 뭐야?",
+            dataframes={"df0": self.df},
+            source_by_alias={"df0": "test.xlsx"},
+            operation_hint="lookup_field",
+        )
+        self.assertEqual(validation.status, "invalid")
+        self.assertIn(
+            "return_column_used_as_filter",
+            {issue.code for issue in validation.issues},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

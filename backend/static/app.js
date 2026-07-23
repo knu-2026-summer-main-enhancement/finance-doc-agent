@@ -41,6 +41,11 @@ const elements = {
   deleteCurrentName: document.getElementById("deleteCurrentName"),
   deleteCancel: document.getElementById("deleteCancel"),
   deleteSubmit: document.getElementById("deleteSubmit"),
+  detailDialog: document.getElementById("detailDialog"),
+  detailTitle: document.getElementById("detailTitle"),
+  detailBody: document.getElementById("detailBody"),
+  closeDetail: document.getElementById("closeDetail"),
+  detailMore: document.getElementById("detailMore"),
   toast: document.getElementById("toast"),
 };
 
@@ -541,12 +546,123 @@ async function errorMessage(response) {
   }
 }
 
+function renderInlineSegments(body, segments) {
+  if (!Array.isArray(segments) || !segments.length) {
+    collapseCalculationEvidence(body);
+    linkContactNames(body);
+    return;
+  }
+  body.replaceChildren();
+  segments.forEach((segment) => {
+    if (!segment.detail_ref) {
+      body.append(document.createTextNode(segment.text || ""));
+      return;
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `inline-detail-link ${segment.kind || "detail"}`;
+    button.textContent = segment.text || "상세 보기";
+    button.title = segment.kind === "entity" ? "인물 정보와 납부 기록 보기" : "금액 계산 근거 보기";
+    button.addEventListener("click", () => openDetail(segment.detail_ref));
+    body.append(button);
+  });
+}
+
+function appendDetailFields(container, fields) {
+  Object.entries(fields || {}).forEach(([label, value]) => {
+    const field = document.createElement("div");
+    const name = document.createElement("span");
+    const content = document.createElement("strong");
+    name.textContent = label;
+    content.textContent = value ?? "-";
+    field.append(name, content);
+    container.append(field);
+  });
+}
+
+function renderDetail(detail) {
+  elements.detailBody.replaceChildren();
+  elements.detailTitle.textContent = detail.kind === "entity_detail"
+    ? `${detail.display_name || "인물"} 정보`
+    : detail.kind === "entity_collection_detail" ? `${detail.display_name || "동명이인"} 선택` : "금액 계산 근거";
+
+  if (detail.kind === "entity_detail") {
+    (detail.attributes || []).forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "detail-row";
+      const label = document.createElement("strong");
+      const value = document.createElement("span");
+      label.textContent = item.column;
+      value.textContent = item.value ?? "-";
+      row.append(label, value);
+      elements.detailBody.append(row);
+    });
+    if ((detail.payment_history || []).length) {
+      const title = document.createElement("h3");
+      title.className = "detail-section-title";
+      title.textContent = `납부 기록 ${detail.payment_history.length}건`;
+      elements.detailBody.append(title);
+      detail.payment_history.forEach((record, index) => {
+        const card = document.createElement("div");
+        card.className = "detail-record-card payment-history-card";
+        const number = document.createElement("span");
+        number.className = "detail-record-number";
+        number.textContent = index + 1;
+        const fields = document.createElement("div");
+        fields.className = "detail-record-fields";
+        (record.fields || []).forEach((item) => appendDetailFields(fields, { [item.column]: item.value }));
+        card.append(number, fields);
+        elements.detailBody.append(card);
+      });
+    }
+  } else if (detail.kind === "entity_collection_detail") {
+    (detail.candidates || []).forEach((candidate, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "detail-candidate";
+      button.textContent = `${detail.display_name} ${index + 1} · 상세 보기`;
+      button.addEventListener("click", () => openDetail(candidate.detail_ref));
+      elements.detailBody.append(button);
+    });
+  } else {
+    const summary = document.createElement("div");
+    summary.className = "calculation-summary";
+    appendDetailFields(summary, { 계산: detail.operation, 대상: detail.target, 결과: detail.value, "유효/제외": `${detail.valid_rows ?? 0} / ${detail.excluded_rows ?? 0}` });
+    elements.detailBody.append(summary);
+    (detail.contributors || []).forEach((record, index) => {
+      const card = document.createElement("div");
+      card.className = "detail-record-card";
+      const number = document.createElement("span");
+      number.className = "detail-record-number";
+      number.textContent = (detail.page?.offset || 0) + index + 1;
+      const fields = document.createElement("div");
+      fields.className = "detail-record-fields";
+      appendDetailFields(fields, record);
+      card.append(number, fields);
+      elements.detailBody.append(card);
+    });
+  }
+  elements.detailMore.hidden = !detail.page?.has_more;
+  elements.detailMore.onclick = () => openDetail(detail._reference, detail.page.offset + detail.page.limit);
+  if (!elements.detailDialog.open) elements.detailDialog.showModal();
+}
+
+async function openDetail(reference, offset = 0) {
+  try {
+    const response = await fetch(`/chat/details/${encodeURIComponent(reference)}?offset=${offset}&limit=50`, { headers: apiHeaders() });
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const detail = await response.json();
+    detail._reference = reference;
+    renderDetail(detail);
+  } catch (error) {
+    showToast(error.message || "상세 정보를 불러오지 못했습니다.");
+  }
+}
 async function sendQuestion(question, options = {}) {
   const value = question.trim();
   if (!value || state.busy) return;
 
   await loadContactNames();
-
   const controller = new AbortController();
   state.chatController = controller;
   setChatBusy(true);
@@ -560,73 +676,34 @@ async function sendQuestion(question, options = {}) {
   elements.chatArea.querySelector(".welcome-card")?.remove();
   appendMessage("user", value);
   const loading = appendLoading();
-  let streamedMessage;
-  let streamedBody;
-  const startStreamedMessage = () => {
-    if (streamedMessage) return;
-    loading.remove();
-    streamedMessage = appendMessage(
-      "assistant",
-      "",
-      request.mode === "natural" ? "natural" : "",
-      [],
-      request,
-      true,
-    );
-    streamedBody = streamedMessage.querySelector(".message-body");
-  };
 
   try {
-    const response = await fetch("/chat/stream", {
+    const response = await fetch("/chat", {
       method: "POST",
       headers: apiHeaders(true),
       body: JSON.stringify(request),
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(await errorMessage(response));
-    if (!response.body) throw new Error("응답 스트림을 시작하지 못했습니다.");
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let pendingText = "";
-    while (true) {
-      const { done, value: chunk } = await reader.read();
-      if (done) break;
-      pendingText += decoder.decode(chunk, { stream: true });
-      if (pendingText.trim()) {
-        startStreamedMessage();
-        streamedBody.textContent += pendingText;
-        pendingText = "";
-        streamedMessage.querySelector(".message-actions").hidden = false;
-      }
-      elements.chatArea.scrollTop = elements.chatArea.scrollHeight;
-    }
-    pendingText += decoder.decode();
-    if (!streamedMessage) {
-      startStreamedMessage();
-      streamedBody.textContent = pendingText.trim() || "답변이 비어 있습니다.";
-    } else {
-      streamedBody.textContent += pendingText;
-    }
-    if (!streamedBody.textContent.trim()) {
-      streamedBody.textContent = "답변이 비어 있습니다.";
-    }
-    collapseCalculationEvidence(streamedBody);
-    linkContactNames(streamedBody);
-    streamedMessage.querySelector(".message-actions").hidden = false;
+    const data = await response.json();
+    loading.remove();
+    const message = appendMessage(
+      "assistant",
+      data.answer || "답변이 비어 있습니다.",
+      data.source || "",
+      data.sources || [],
+      request,
+    );
+    renderInlineSegments(message.querySelector(".message-body"), data.result?.inline_segments);
   } catch (error) {
     loading.remove();
-    if (error.name === "AbortError") {
-      if (streamedBody?.textContent.trim()) {
-        streamedBody.textContent += "\n\n[답변 생성을 중단했습니다.]";
-      } else {
-        streamedMessage?.remove();
-        appendMessage("assistant", "답변 생성을 중단했습니다.", "error", [], request);
-      }
-    } else {
-      streamedMessage?.remove();
-      appendMessage("assistant", error.message || "답변 처리 중 오류가 발생했습니다.", "error", [], request);
-    }
+    appendMessage(
+      "assistant",
+      error.name === "AbortError" ? "답변 생성을 중단했습니다." : (error.message || "답변 처리 중 오류가 발생했습니다."),
+      "error",
+      [],
+      request,
+    );
   } finally {
     if (state.chatController === controller) state.chatController = null;
     setChatBusy(false);
@@ -790,6 +867,10 @@ elements.renameForm.addEventListener("submit", submitRenameDocument);
 elements.renameCancel.addEventListener("click", closeRenameModal);
 elements.deleteCancel.addEventListener("click", closeDeleteModal);
 elements.deleteSubmit.addEventListener("click", submitDeleteDocument);
+elements.closeDetail.addEventListener("click", () => elements.detailDialog.close());
+elements.detailDialog.addEventListener("click", (event) => {
+  if (event.target === elements.detailDialog) elements.detailDialog.close();
+});
 elements.modeHelpButton.addEventListener("click", () => {
   setModeHelpOpen(elements.modeHelpPopover.hidden);
 });

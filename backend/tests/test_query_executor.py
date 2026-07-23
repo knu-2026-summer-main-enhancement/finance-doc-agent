@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 import pandas as pd
+from utils.table_parser import normalize_person_name
 
 from pandas_engine.plan_validator import validate_query_plan
 from pandas_engine.query_executor import (
@@ -83,6 +84,35 @@ class QueryExecutorTest(unittest.TestCase):
         self.assertEqual(result.evidence.filtered_rows, 3)
         self.assertEqual(result.evidence.limit, 2)
         self.assertEqual(result.evidence.filters[0].column, "기수")
+
+    def test_default_list_returns_only_source_columns(self):
+        df = self.df.copy()
+        df["표시명"] = df["이름"]
+        df["성명_마스킹여부"] = False
+        df.attrs["source_columns"] = ["이름", "구분", "출연금액", "출연일자", "기수", "비고"]
+        df.attrs["semantic_schema"] = self.df.attrs["semantic_schema"]
+        self.dataframes["df0"] = df
+
+        result = self._execute({
+            "operation": "list",
+            "filters": [{"column": "기수", "operator": "eq", "value": 59}],
+        })
+
+        self.assertEqual(
+            result.value.columns.tolist(),
+            ["이름", "구분", "출연금액", "출연일자", "기수", "비고"],
+        )
+
+    def test_list_dense_rank_returns_all_tied_rows(self):
+        result = self._execute(
+            {
+                "operation": "list",
+                "sort": [{"column": "기수", "direction": "desc"}],
+                "rank_position": 2,
+                "tie_policy": "dense",
+            }
+        )
+        self.assertEqual(result.value["기수"].tolist(), [59, 59])
 
     def test_any_filter_logic_uses_or(self):
         result = self._execute(
@@ -230,6 +260,24 @@ class QueryExecutorTest(unittest.TestCase):
         self.assertEqual(len(result.value), 2)
         self.assertEqual(result.value["이름"].tolist(), ["추＊철", "김철수"])
 
+    def test_group_sum_ranks_totals_instead_of_individual_rows(self):
+        result = self._execute(
+            {
+                "operation": "group_sum",
+                "target": "\ucd9c\uc5f0\uae08\uc561",
+                "group_by": ["\uc774\ub984"],
+                "group_order": "desc",
+                "top_n": 1,
+            }
+        )
+
+        self.assertEqual(
+            result.value["\uc774\ub984"].tolist(),
+            [normalize_person_name(self.df["\uc774\ub984"].iloc[2])],
+        )
+        self.assertEqual(result.value["\ucd9c\uc5f0\uae08\uc561"].tolist(), [2_000_000.0])
+        self.assertEqual(result.evidence.group_by, ("\uc774\ub984",))
+
     def test_date_between_filter_uses_dates_not_strings(self):
         result = self._execute(
             {
@@ -257,6 +305,28 @@ class QueryExecutorTest(unittest.TestCase):
 
         self.assertEqual(result.matched_rows, 1)
         self.assertNotIn("__row_id", result.value.columns)
+
+    def test_null_filter_treats_blank_and_textual_null_as_missing(self):
+        self.df.loc[1, "비고"] = "   "
+        self.df.loc[2, "비고"] = "NULL"
+
+        missing = self._execute(
+            {
+                "operation": "list",
+                "filters": [{"column": "비고", "operator": "is_null"}],
+                "select": ["이름"],
+            }
+        )
+        present = self._execute(
+            {
+                "operation": "list",
+                "filters": [{"column": "비고", "operator": "not_null"}],
+                "select": ["이름"],
+            }
+        )
+
+        self.assertEqual(missing.matched_rows, 3)
+        self.assertEqual(present.matched_rows, 1)
 
     def test_invalid_plan_cannot_be_executed(self):
         plan = QueryPlan.model_validate(

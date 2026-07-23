@@ -27,7 +27,7 @@ class QueryPlanSchemaTest(unittest.TestCase):
         )
 
         self.assertEqual(plan.effective_result_mode, "records")
-        self.assertEqual(plan.effective_limit, 100)
+        self.assertIsNone(plan.effective_limit)
         self.assertEqual(plan.filter_logic, "all")
         self.assertEqual(plan.filters[0].value, 59)
 
@@ -150,7 +150,7 @@ class QueryPlanSchemaTest(unittest.TestCase):
 
         self.assertEqual(
             operation_schema["enum"],
-            ["list", "count", "sum", "mean", "median", "mode", "min", "max"],
+            ["list", "count", "sum", "mean", "median", "mode", "min", "max", "group_sum"],
         )
 
     def test_plan_and_nested_collections_are_immutable(self):

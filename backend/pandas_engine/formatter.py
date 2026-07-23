@@ -14,6 +14,7 @@ from pandas_engine.aggregation import (
 )
 from pandas_engine.money import money_values
 from pandas_engine.query_executor import QueryExecutionResult
+from utils.semantic_schema import is_source_column
 from utils.table_parser import IDENTITY_INTERNAL_COLS
 
 _INTERNAL_COLS = set(IDENTITY_INTERNAL_COLS)
@@ -59,8 +60,12 @@ def _format_number(value: Any) -> str:
 def _display_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
-    cols = [c for c in _DISPLAY_ORDER if c in df.columns and not _is_internal_col(c)]
-    cols += [c for c in df.columns if c not in cols and not _is_internal_col(c)]
+    visible = [
+        c for c in df.columns
+        if not _is_internal_col(c) and is_source_column(df, c)
+    ]
+    cols = [c for c in _DISPLAY_ORDER if c in visible]
+    cols += [c for c in visible if c not in cols]
     return df.loc[:, cols]
 
 
@@ -227,7 +232,9 @@ def _format_list_result(df: pd.DataFrame) -> str:
     if df is None or (hasattr(df, "empty") and df.empty):
         return "조회된 데이터가 없습니다."
     warning = _mask_warning(df)
-    display = _display_df(df)
+    # Keep missing spreadsheet fields user-facing. Pandas' ``NaN`` is an
+    # implementation detail, not a meaningful answer value.
+    display = _display_df(df).fillna("없음")
     header = f"총 {len(display)}건\n"
     date_evidence = df.attrs.get("date_filter_evidence")
     if isinstance(date_evidence, dict) and "items" not in date_evidence:
@@ -321,14 +328,20 @@ def _format_query_plan_evidence(result: QueryExecutionResult) -> str:
         lines.append(f"- 정렬: {sort_text}")
     if evidence.distinct_by:
         lines.append(f"- 중복 제거 기준: {', '.join(evidence.distinct_by)}")
+    if evidence.group_by:
+        lines.append(f"- 그룹 집계 기준: {', '.join(evidence.group_by)}")
     if evidence.limit is not None:
         lines.append(f"- 반환 제한: {evidence.limit:,}개")
     elif evidence.top_n is not None:
         lines.append(f"- 순위 제한: 상위 {evidence.top_n:,}개")
+    if evidence.rank_position is not None:
+        lines.append(f"- 순위: 동순위 포함 {evidence.rank_position:,}번째")
     lines.append(
         f"- 행 수: 원본 {evidence.source_rows:,}개 → "
         f"조건 통과 {evidence.filtered_rows:,}개 → 계산 대상 {result.matched_rows:,}개"
     )
+    if evidence.unique_people is not None:
+        lines.append(f"- 조건 충족 고유 인원: {evidence.unique_people:,}명")
     if result.target:
         lines.append(f"- 대상 컬럼: {result.target}")
     if result.excluded_rows:
@@ -343,9 +356,24 @@ def _format_query_execution_result(
     """Format deterministic QueryPlan output without another LLM call."""
 
     if isinstance(result.value, pd.DataFrame):
-        answer = _format_dataframe_result_for_question(result.value, question)
+        if result.value.empty and result.evidence.rank_position is not None:
+            answer = (
+                f"동순위를 포함한 {result.evidence.rank_position}번째 순위는 없습니다. "
+                f"조건에 맞는 서로 다른 순위 값은 {result.available_rank_count or 0}개입니다."
+            )
+        elif result.operation == "group_sum" and not result.value.empty:
+            group_column = result.value.columns[0]
+            amount_column = result.target or result.value.columns[-1]
+            lines = [
+                f"{row[group_column]} {_format_number(row[amount_column])}"
+                for _, row in result.value.iterrows()
+            ]
+            answer = f"총 {len(lines)}건\n" + "\n".join(lines)
+        else:
+            answer = _format_dataframe_result_for_question(result.value, question)
     elif result.operation == "count":
-        answer = f"총 {int(result.value or 0):,}건입니다."
+        unit = "명" if result.evidence.distinct_by else "건"
+        answer = f"총 {int(result.value or 0):,}{unit}입니다."
     elif result.operation == "mode":
         values = result.value if isinstance(result.value, list) else []
         if not values:
