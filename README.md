@@ -409,22 +409,71 @@ flowchart LR
 - 검증 실패 시 임의 실행 대신 Guide 응답
 - 기존 정규식 결과와 LLM 결과를 비교하는 shadow 모드
 
-## E3. 질문 분류 정확도 검증 계획
+## E3. V4: 검증된 질문의 빠른 분류와 이중 JSON 구조
 
-E3에서는 새로운 분류 규칙을 계속 추가하는 방식보다 실제 질문 데이터를 통해 Q.A와 E-O 쌍의 정확도를 측정하는 방향으로 전환한다.
+### 문제 1. 검증된 질문도 항상 LLM 분류를 거치는 문제
 
-핵심 계획은 다음과 같다.
+V3에서는 질문 분류를 LLM 기반으로 전환했지만, `49기 목록`, `홍길동이 낸 금액`, `2025년 3월 합계`처럼 표의 실제 컬럼과 값만으로 처리할 수 있는 검증된 질문도 LLM 호출을 거칠 수 있었다. 이 구조는 단순한 질문에도 응답 지연과 분류 결과의 변동 가능성을 만든다.
 
-1. 질문 유형별 골드셋과 기대 E-O 쌍 구축
-2. 기존 정규식 분석과 LLM Q.A 결과를 shadow 모드에서 비교
-3. 잘못 분류된 질문의 원인과 최종 실행 경로 기록
-4. 분류 신뢰도가 낮은 경우 임의 실행 대신 Guide로 전환
-5. 복합 질문을 여러 요청으로 분리할 수 있는지 검증
-6. Q.A, G, R이 동일한 분석 결과를 사용하는지 회귀 테스트
+### 문제 2. 질문 분류와 실제 실행 계획의 역할이 혼동되는 문제
+
+질문을 PANDAS와 VECTOR 중 어디로 보낼지 정하는 정보와, 어떤 데이터프레임에서 어떤 필터·집계·정렬을 실행할지 정하는 정보는 서로 다르다. 그러나 둘을 모두 JSON이라고만 부르면 분류 결과가 곧 실행 계획인 것처럼 오해하기 쉽다.
+
+- `R.JSON`: 질문의 의도와 operation을 표현하며 최종 실행 모드를 고르는 **질문 분류 JSON**
+- `P.JSON`: dataframe, filter, select, target, group, sort, limit 등을 표현하는 **실행 계획 JSON**
+
+### 문제 3. 정규식 분류와 LLM 분류의 관계가 불분명한 문제
+
+기존 정규식 기반 Q.A와 LLM 기반 Q.A가 동시에 존재하지만, LLM 모드에서 두 결과가 모두 실제 라우팅을 결정하는 것은 아니다. 정규식 결과는 기존 동작과의 차이를 확인하기 위한 shadow 비교 기준이며, 실제 분류 결과와 구분해서 기록해야 한다.
+
+### 해결
+
+V4에서는 질문을 받으면 `pre-R`가 먼저 `D-P`를 호출한다. `D-P`가 현재 스키마와 메타데이터만으로 안전한 `P.JSON`을 만들 수 있는지를 확인하고, 만들 수 있다면 그 판단을 이용해 `pre-R`가 `R.JSON`을 직접 만든다. 이 경로에서는 `LLM.QA`를 호출하지 않는다.
+
+`D-P`가 `P.JSON`을 만들 수 없는 질문만 `LLM.QA`로 보내 `R.JSON`을 생성한다. 이후에는 두 경로 모두 동일하게 Guard와 Router를 통과한다. Router가 PANDAS를 선택하면 실제 실행 단계에서 `P.JSON`을 생성·검증한 뒤 제한된 연산만 수행하고, VECTOR를 선택하면 문서 근거를 검색해 답변한다.
+
+현재 `pre-R`에서 확인용으로 생성한 `P.JSON`은 실행 단계까지 전달하지 않는다. PANDAS 단계에서 `D-P`가 실제 `P.JSON`을 다시 만들며, 만들지 못하면 LLM Planner가 보완한다. 따라서 첫 번째 `P.JSON`은 빠르고 안전한 분류 가능성을 판단하는 근거이고, 두 번째 `P.JSON`이 검증 후 실제로 실행되는 계획이다.
+
+`RE.QA`는 실제 라우팅 경로와 별도로 실행되는 shadow 비교용 경로다. `RE.QA`와 `LLM.QA`의 operation 차이는 비교 로그에 남기되, LLM 모드의 최종 경로를 `RE.QA`가 덮어쓰지는 않는다.
+
+```mermaid
+flowchart TD
+    Q[질문] --> PR[pre-R]
+    PR --> DP[D-P]
+    DP --> C{P.JSON 생성 가능?}
+
+    C -->|가능| RD[R.JSON 직접 생성<br/>LLM 미사용]
+    C -->|불가능| LQ[LLM.QA]
+    LQ --> RL[R.JSON 생성]
+
+    RD --> G[Guard]
+    RL --> G
+    G -->|차단| GD[Guide]
+    G -->|통과| R[Router]
+
+    R -->|PANDAS| P[PANDAS]
+    R -->|VECTOR| V[VECTOR]
+
+    P --> DP2[D-P]
+    DP2 --> C2{P.JSON 생성 가능?}
+    C2 -->|가능| PV[P.JSON 검증]
+    C2 -->|불가능| LP[LLM Planner]
+    LP --> PG[P.JSON 생성]
+    PG --> PV
+    PV --> EX[제한된 연산 실행]
+
+    V --> VS[근거 검색 후 답변]
+
+    Q -. shadow .-> RE[RE.QA]
+    RE -. operation 비교 .-> LOG[비교 로그]
+    LQ -. operation 비교 .-> LOG
+```
+
+정리하면 `pre-R`는 LLM을 사용할지를 먼저 결정하고, `R.JSON`은 어디로 보낼지를 결정하며, `P.JSON`은 PANDAS가 무엇을 실행할지를 결정한다. 이 구조를 통해 검증된 질문은 빠르게 처리하면서도, 복잡한 질문에는 LLM의 판단 능력을 그대로 사용할 수 있다.
 
 ```mermaid
 flowchart LR
-    E1[V1·V2<br/>Guard·Guide·정규식·E-O] --> E2[V3<br/>LLM Q.A·QueryPlan JSON] --> E3[골드셋<br/>shadow 비교<br/>오분류 검증]
+    E1[V1·V2<br/>RE.QA·Guard·Guide] --> E2[V3<br/>LLM.QA·P.JSON] --> E3[V4<br/>pre-R·D-P·R.JSON·P.JSON]
 ```
 
 ---
