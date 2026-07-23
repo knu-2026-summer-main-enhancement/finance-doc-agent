@@ -348,14 +348,15 @@ def schema_fingerprint(df: pd.DataFrame, source_columns: list[str]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
 
-def _source_columns_for(df: pd.DataFrame) -> list[str]:
+def _source_columns_for(df: pd.DataFrame | pd.Series) -> list[str]:
     explicit = df.attrs.get("source_columns")
     if explicit:
         return [str(column) for column in explicit if not str(column).startswith("__")]
 
     # 구버전 Parquet은 attrs가 저장되지 않는다. 공통 정제가 뒤에 붙인 첫 파생
     # 컬럼을 기준으로 앞부분을 원본 추출 컬럼으로 복원한다.
-    columns = [str(column) for column in df.columns if not str(column).startswith("__")]
+    axis_columns = df.columns if isinstance(df, pd.DataFrame) else df.index
+    columns = [str(column) for column in axis_columns if not str(column).startswith("__")]
     derived_anchors = {
         "성명_원문", "표시명", "entity_type", "_row_index", "row_uid",
         "person_candidate_key",
@@ -367,6 +368,23 @@ def _source_columns_for(df: pd.DataFrame) -> list[str]:
             first_derived = columns.index("source")
         return columns[:first_derived]
     return columns
+
+
+def is_source_column(df: pd.DataFrame | pd.Series, column: object) -> bool:
+    """Whether a column came from the source table rather than enrichment."""
+    key = str(column)
+    if key.startswith("_") or key in SYSTEM_COLUMNS:
+        return False
+    explicit = df.attrs.get("source_columns")
+    if explicit:
+        return key in {str(item) for item in explicit}
+    schema = df.attrs.get("semantic_schema")
+    if isinstance(schema, dict):
+        columns = schema.get("columns")
+        mapping = columns.get(key) if isinstance(columns, dict) else None
+        if isinstance(mapping, dict) and "is_derived" in mapping:
+            return not bool(mapping.get("is_derived"))
+    return key in set(_source_columns_for(df))
 
 
 def _read_json(path: str) -> dict[str, Any] | None:

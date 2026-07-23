@@ -155,6 +155,22 @@ class DeterministicQueryPlanTest(unittest.TestCase):
             "\uae30\uacc4\uacfc \uc5bc\ub9c8", dataframes={"df0": self.df}
         ))
 
+    def test_real_name_matches_only_compatible_masked_name(self):
+        masked = self.df.iloc[[0]].copy()
+        masked["회원명"] = ["추*진"]
+
+        plan = build_schema_grounded_plan(
+            "추교진 얼마", dataframes={"df0": masked}, operation_hint="sum_amount",
+        )
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.filters[0].value, "추*진")
+        self.assertFalse(has_unmatched_person_amount_reference(
+            "추교진 얼마", dataframes={"df0": masked},
+        ))
+        self.assertTrue(has_unmatched_person_amount_reference(
+            "김교진 얼마", dataframes={"df0": masked},
+        ))
+
     def test_absent_leading_person_field_lookup_is_detected_without_name_hardcoding(self):
         self.assertTrue(has_unmatched_person_field_reference(
             "\uc815\uacbd\ucc44 \uc804\ud654\ubc88\ud638 \ubb50\uc57c?", dataframes={"df0": self.df}
@@ -177,6 +193,20 @@ class DeterministicQueryPlanTest(unittest.TestCase):
         self.assertEqual(plan.group_by, ("\ud68c\uc6d0\uba85",))
         self.assertEqual(plan.filters[0].operator, "between")
         self.assertEqual(plan.filters[0].value, (2025, 2026))
+
+    def test_cohort_list_has_exact_filter_and_person_projection(self):
+        df = self.df.copy()
+        df["기수"] = [49, 49, 58]
+
+        plan = build_schema_grounded_plan(
+            "49기 목록", dataframes={"df0": df}, operation_hint="list_records",
+        )
+
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.operation, "list")
+        self.assertEqual(plan.filters[0].column, "기수")
+        self.assertEqual(plan.filters[0].value, 49)
+        self.assertEqual(plan.select, ("회원명",))
 
     def test_year_and_month_amount_query_uses_component_date_columns(self):
         self.df[chr(0xC6D4)] = [1, 1, 2]

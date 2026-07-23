@@ -60,6 +60,17 @@ class InteractiveResultTest(unittest.TestCase):
         self.assertEqual(len(calculation_segments), 1)
         self.assertEqual(calculation_segments[0]["detail_ref"], result["calculation"]["detail_ref"])
 
+    def test_money_link_matches_korean_shorthand_rendering(self):
+        result = build_interactive_result(
+            self._execute("sum", "결제 금액"),
+            answer="결제 금액 합계는 3만원입니다.",
+        )
+        links = [
+            segment for segment in result["inline_segments"]
+            if segment.get("kind") == "calculation"
+        ]
+        self.assertEqual([segment["text"] for segment in links], ["3만원"])
+
     def test_inline_entity_links_are_not_limited_to_transport_page(self):
         df = pd.DataFrame({"회원명": [f"회원{i:02d}" for i in range(55)], "결제 금액": range(55)})
         df.attrs["semantic_schema"] = attach_semantic_schema(
@@ -103,6 +114,8 @@ class InteractiveResultTest(unittest.TestCase):
         df["_ocr_confidence_min"] = [0.81, 0.92]
         df["_ocr_low_confidence_cells"] = ["회원명", ""]
         df["ocrconfidence"] = [0.81, 0.92]
+        df["표시명"] = ["파생 표시명", "파생 표시명"]
+        df.attrs["source_columns"] = ["회원명", "전공", "전화번호", "결제 금액"]
         df.attrs["semantic_schema"] = attach_semantic_schema(
             df, var_name="df_ocr", source_file="ocr.xlsx", dataframe_dir=".",
         )
@@ -115,5 +128,5 @@ class InteractiveResultTest(unittest.TestCase):
         result = build_interactive_result(execution)
         detail = get_interactive_detail(result["entities"][0]["detail_ref"])
         card_columns = {attribute["column"] for attribute in detail["attributes"]}
-        self.assertFalse({"_ocr_confidence_min", "_ocr_low_confidence_cells", "ocrconfidence"} & card_columns)
+        self.assertFalse({"_ocr_confidence_min", "_ocr_low_confidence_cells", "ocrconfidence", "표시명"} & card_columns)
         self.assertFalse({"_ocr_confidence_min", "_ocr_low_confidence_cells", "ocrconfidence"} & set(result["records"][0]))

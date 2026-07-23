@@ -10,6 +10,7 @@ from pandas_engine.money import parse_money_value
 from pandas_engine.plan_validator import column_data_type
 from pandas_engine.query_plan import FilterCondition, QueryPlan
 from utils.semantic_schema import infer_column_meaning
+from utils.table_parser import is_masked_name, normalize_person_name
 
 
 _YEAR = re.compile(r"(?<!\d)((?:19|20)\d{2})\s*년")
@@ -18,6 +19,7 @@ _YEAR_RANGE = re.compile(
     r"((?:19|20)\d{2})\s*년?\s*(?:까지)?"
 )
 _MONTH = re.compile(r"(?<!\d)(1[0-2]|[1-9])\s*월")
+_COHORT = re.compile(r"(?<!\d)(\d{1,3})\s*(?:기|회)(?!\d)")
 _MONEY = re.compile(r"(?<!\d)(\d[\d,]*(?:\s*(?:만원|천원|원))?)(?!\d)")
 _PERSON_COUNT = re.compile(r"(?:사람|인원|회원).*?(?:몇\s*명|수)|몇\s*명")
 _SUM = re.compile(r"(?:총합|합계|총액|얼마(?:야|예|지|냈))")
@@ -150,9 +152,10 @@ def _value_filters(df: pd.DataFrame, question: str) -> list[FilterCondition]:
 def _person_filter(
     df: pd.DataFrame,
     person: Hashable,
-    normalized_question: str,
+    question: str,
 ) -> FilterCondition | None:
     """Ground an exact name or one unambiguous display-name base to a person row."""
+    normalized_question = _norm(question)
     values = df[person].dropna().astype(str).str.strip().unique().tolist()
     exact = [value for value in values if len(_norm(value)) >= 2 and _norm(value) in normalized_question]
     if len(exact) == 1:
@@ -173,6 +176,23 @@ def _person_filter(
             value=base_matches[0],
             source_text=_PERSON_DISPLAY_SUFFIX.sub("", base_matches[0]).strip(),
         )
+
+    masked_matches: list[tuple[str, str]] = []
+    for value in values:
+        stored = normalize_person_name(_PERSON_DISPLAY_SUFFIX.sub("", value).strip())
+        if not is_masked_name(stored):
+            continue
+        for start in range(0, max(0, len(normalized_question) - len(stored) + 1)):
+            candidate = normalized_question[start:start + len(stored)]
+            if not candidate or not all("가" <= char <= "힣" for char in candidate):
+                continue
+            if all(expected == "*" or expected == actual for expected, actual in zip(stored, candidate)):
+                masked_matches.append((value, candidate))
+                break
+    unique_masked = list(dict.fromkeys(masked_matches))
+    if len(unique_masked) == 1:
+        value, candidate = unique_masked[0]
+        return FilterCondition(column=str(person), operator="eq", value=value, source_text=candidate)
     return None
 
 
@@ -191,7 +211,8 @@ def has_unmatched_person_amount_reference(
     match = _LEADING_PERSON_AMOUNT_LOOKUP.search(str(question or ""))
     if not match or not dataframes:
         return False
-    candidate = _norm(match.group(1))
+    raw_candidate = match.group(1)
+    candidate = _norm(raw_candidate)
     if len(candidate) < 2:
         return False
     if candidate in {_norm(token) for token in _NON_PERSON_LEADING_TOKENS}:
@@ -210,6 +231,14 @@ def has_unmatched_person_amount_reference(
             for value in df[person].dropna().astype(str).str.strip().unique():
                 base = _PERSON_DISPLAY_SUFFIX.sub("", value).strip()
                 if candidate in {_norm(value), _norm(base)}:
+                    return False
+                stored = normalize_person_name(base)
+                query_name = normalize_person_name(raw_candidate)
+                if (
+                    is_masked_name(stored)
+                    and len(stored) == len(query_name)
+                    and all(expected == "*" or expected == actual for expected, actual in zip(stored, query_name))
+                ):
                     return False
 
         for column in df.columns:
@@ -236,7 +265,8 @@ def has_unmatched_person_field_reference(
     match = _LEADING_PERSON_FIELD_LOOKUP.search(str(question or ""))
     if not match or not dataframes:
         return False
-    candidate = _norm(match.group(1))
+    raw_candidate = match.group(1)
+    candidate = _norm(raw_candidate)
     if len(candidate) < 2:
         return False
     if candidate in {_norm(token) for token in _NON_PERSON_LEADING_TOKENS}:
@@ -255,6 +285,14 @@ def has_unmatched_person_field_reference(
             for value in df[person].dropna().astype(str).str.strip().unique():
                 base = _PERSON_DISPLAY_SUFFIX.sub("", value).strip()
                 if candidate in {_norm(value), _norm(base)}:
+                    return False
+                stored = normalize_person_name(base)
+                query_name = normalize_person_name(raw_candidate)
+                if (
+                    is_masked_name(stored)
+                    and len(stored) == len(query_name)
+                    and all(expected == "*" or expected == actual for expected, actual in zip(stored, query_name))
+                ):
                     return False
 
         for column in df.columns:
@@ -281,7 +319,8 @@ def ambiguous_person_lookup_candidates(
     match = _LEADING_PERSON_AMOUNT_LOOKUP.search(str(question or "")) or _LEADING_PERSON_FIELD_LOOKUP.search(str(question or ""))
     if not match or not dataframes:
         return ()
-    candidate = _norm(match.group(1))
+    raw_candidate = match.group(1)
+    candidate = _norm(raw_candidate)
     if len(candidate) < 2:
         return ()
 
@@ -301,6 +340,15 @@ def ambiguous_person_lookup_candidates(
             base = _PERSON_DISPLAY_SUFFIX.sub("", value).strip()
             if candidate in {_norm(value), _norm(base)}:
                 return ()
+            stored = normalize_person_name(base)
+            query_name = normalize_person_name(raw_candidate)
+            if (
+                is_masked_name(stored)
+                and len(stored) == len(query_name)
+                and all(expected == "*" or expected == actual for expected, actual in zip(stored, query_name))
+            ):
+                matches.append(value)
+                continue
             if _norm(value).startswith(candidate) or _norm(base).startswith(candidate):
                 matches.append(value)
     unique = tuple(dict.fromkeys(matches))
@@ -333,7 +381,7 @@ def is_grounded_person_payment_existence_question(
             and item.qualifier == "person"
         ),
     )
-    return person is not None and _person_filter(df, person, _norm(question)) is not None
+    return person is not None and _person_filter(df, person, question) is not None
 
 
 def build_schema_grounded_plan(
@@ -356,6 +404,10 @@ def build_schema_grounded_plan(
     temporal = _first(df, lambda item: item.data_type == "date" or item.role in {"date", "registered_date"})
     year = _first(df, lambda item: item.role == "year")
     month = _first(df, lambda item: item.role == "month")
+    cohort = _first(
+        df,
+        lambda item: item.concept == "category" and item.qualifier == "cohort",
+    )
     normalized_question = _norm(question)
     filters = _value_filters(df, question)
 
@@ -379,6 +431,13 @@ def build_schema_grounded_plan(
     month_match = _MONTH.search(question)
     if month_match and month is not None:
         filters.append(FilterCondition(column=str(month), operator="eq", value=int(month_match.group(1)), source_text=month_match.group(0)))
+    cohort_match = _COHORT.search(question)
+    if cohort_match and cohort is not None:
+        filters = [item for item in filters if item.column != str(cohort)]
+        filters.append(FilterCondition(
+            column=str(cohort), operator="eq", value=int(cohort_match.group(1)),
+            source_text=cohort_match.group(0),
+        ))
 
     if money is not None:
         money_literals = [match.group(1) for match in _MONEY.finditer(question)]
@@ -397,7 +456,7 @@ def build_schema_grounded_plan(
 
     # One grounded person value is a subject filter; projection columns are never filters.
     if person is not None:
-        matched_person = _person_filter(df, person, normalized_question)
+        matched_person = _person_filter(df, person, question)
         if matched_person is not None and not any(item.column == str(person) for item in filters):
             filters.append(matched_person)
 

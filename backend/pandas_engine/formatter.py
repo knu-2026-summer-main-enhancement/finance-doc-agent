@@ -14,6 +14,7 @@ from pandas_engine.aggregation import (
 )
 from pandas_engine.money import money_values
 from pandas_engine.query_executor import QueryExecutionResult
+from utils.semantic_schema import is_source_column
 from utils.table_parser import IDENTITY_INTERNAL_COLS
 
 _INTERNAL_COLS = set(IDENTITY_INTERNAL_COLS)
@@ -59,8 +60,12 @@ def _format_number(value: Any) -> str:
 def _display_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
-    cols = [c for c in _DISPLAY_ORDER if c in df.columns and not _is_internal_col(c)]
-    cols += [c for c in df.columns if c not in cols and not _is_internal_col(c)]
+    visible = [
+        c for c in df.columns
+        if not _is_internal_col(c) and is_source_column(df, c)
+    ]
+    cols = [c for c in _DISPLAY_ORDER if c in visible]
+    cols += [c for c in visible if c not in cols]
     return df.loc[:, cols]
 
 

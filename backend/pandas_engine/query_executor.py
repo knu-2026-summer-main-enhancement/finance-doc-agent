@@ -21,7 +21,7 @@ from pandas_engine.query_plan import (
     ScalarValue,
     SortCondition,
 )
-from utils.semantic_schema import SYSTEM_COLUMNS, infer_column_meaning
+from utils.semantic_schema import SYSTEM_COLUMNS, infer_column_meaning, is_source_column
 from utils.table_parser import IDENTITY_INTERNAL_COLS, normalize_person_name
 
 
@@ -228,7 +228,10 @@ def _sort_rows(df: pd.DataFrame, plan: QueryPlan) -> pd.DataFrame:
 
 
 def _visible_columns(df: pd.DataFrame) -> list[Hashable]:
-    return [column for column in df.columns if not _is_internal_column(column)]
+    return [
+        column for column in df.columns
+        if not _is_internal_column(column) and is_source_column(df, column)
+    ]
 
 
 def _select_records(df: pd.DataFrame, plan: QueryPlan) -> pd.DataFrame:

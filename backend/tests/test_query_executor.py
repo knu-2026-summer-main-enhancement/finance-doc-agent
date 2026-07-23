@@ -85,6 +85,24 @@ class QueryExecutorTest(unittest.TestCase):
         self.assertEqual(result.evidence.limit, 2)
         self.assertEqual(result.evidence.filters[0].column, "기수")
 
+    def test_default_list_returns_only_source_columns(self):
+        df = self.df.copy()
+        df["표시명"] = df["이름"]
+        df["성명_마스킹여부"] = False
+        df.attrs["source_columns"] = ["이름", "구분", "출연금액", "출연일자", "기수", "비고"]
+        df.attrs["semantic_schema"] = self.df.attrs["semantic_schema"]
+        self.dataframes["df0"] = df
+
+        result = self._execute({
+            "operation": "list",
+            "filters": [{"column": "기수", "operator": "eq", "value": 59}],
+        })
+
+        self.assertEqual(
+            result.value.columns.tolist(),
+            ["이름", "구분", "출연금액", "출연일자", "기수", "비고"],
+        )
+
     def test_list_dense_rank_returns_all_tied_rows(self):
         result = self._execute(
             {

@@ -12,7 +12,8 @@ from typing import Any
 import pandas as pd
 
 from pandas_engine.query_executor import QueryExecutionResult
-from utils.semantic_schema import SYSTEM_COLUMNS, infer_column_meaning
+from pandas_engine.money import parse_money_value
+from utils.semantic_schema import SYSTEM_COLUMNS, infer_column_meaning, is_source_column
 from utils.table_parser import IDENTITY_INTERNAL_COLS
 
 _PRIVATE = {"contact", "email", "phone"}
@@ -105,7 +106,11 @@ def _payment_history_for_row(row: pd.Series, name_column: str) -> dict[str, Any]
     has_money = False
     for column in row.index:
         key = str(column)
-        if key == name_column or not _is_visible_column(key, pd.Series([row[column]]), include_contact=False):
+        if (
+            key == name_column
+            or not is_source_column(row, key)
+            or not _is_visible_column(key, pd.Series([row[column]]), include_contact=False)
+        ):
             continue
         meaning = infer_column_meaning(key, pd.Series([row[column]]))
         if meaning.data_type == "money" or meaning.concept == "temporal" or meaning.role == "category":
@@ -119,7 +124,8 @@ def _entity_for_row(row: pd.Series) -> dict[str, Any] | None:
     name_column = next(
         (
             str(column) for column in row.index
-            if _is_visible_column(column, pd.Series([row[column]]), include_contact=True)
+            if is_source_column(row, column)
+            and _is_visible_column(column, pd.Series([row[column]]), include_contact=True)
             and infer_column_meaning(str(column), pd.Series([row[column]])).role == "entity_name"
             and infer_column_meaning(str(column), pd.Series([row[column]])).qualifier == "person"
         ),
@@ -135,7 +141,11 @@ def _entity_for_row(row: pd.Series) -> dict[str, Any] | None:
     detail_attributes: list[dict[str, Any]] = []
     for column in row.index:
         key = str(column)
-        if key == name_column or not _is_visible_column(key, pd.Series([row[column]]), include_contact=True):
+        if (
+            key == name_column
+            or not is_source_column(row, key)
+            or not _is_visible_column(key, pd.Series([row[column]]), include_contact=True)
+        ):
             continue
         meaning = infer_column_meaning(key, pd.Series([row[column]]))
         value = _json_value(row[column])
@@ -194,6 +204,19 @@ def _inline_segments(answer: str, entities: list[dict[str, Any]], calculation: d
         suffix = "원" if calculation.get("target", {}).get("data_type") == "money" else ""
         actions.append((formatted + suffix, {"kind": "calculation", "detail_ref": calculation["detail_ref"]}))
         actions.append((formatted, {"kind": "calculation", "detail_ref": calculation["detail_ref"]}))
+        if calculation.get("target", {}).get("data_type") == "money":
+            money_tokens = re.findall(
+                r"(?<![\d,])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*(?:억원|만원|천원|원)",
+                display_answer,
+            )
+            for token in money_tokens:
+                parsed = parse_money_value(token)
+                try:
+                    same_value = parsed is not None and abs(float(parsed) - float(value)) < 0.000001
+                except (TypeError, ValueError):
+                    same_value = False
+                if same_value:
+                    actions.append((token, {"kind": "calculation", "detail_ref": calculation["detail_ref"]}))
     actions.sort(key=lambda item: len(item[0]), reverse=True)
     segments: list[dict[str, Any]] = []
     cursor = 0
@@ -222,7 +245,8 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 5
             records.append({
                 str(k): _json_value(v)
                 for k, v in row.items()
-                if _is_visible_column(k, pd.Series([v]), include_contact=False)
+                if is_source_column(row, k)
+                and _is_visible_column(k, pd.Series([v]), include_contact=False)
             })
     # Projection intentionally removes system columns from list values.  Build
     # entities from the matching execution rows so references retain row scope.
@@ -244,7 +268,8 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 5
             {
                 str(k): _json_value(v)
                 for k, v in row.items()
-                if _is_visible_column(k, pd.Series([v]), include_contact=False)
+                if is_source_column(row, k)
+                and _is_visible_column(k, pd.Series([v]), include_contact=False)
             }
             for _, row in result.matched_frame.iterrows()
         ]
@@ -285,7 +310,8 @@ def build_interactive_dataframe(frame: pd.DataFrame, *, page_size: int = 50, ans
     """Structured view for verified legacy/direct dataframe queries."""
     visible = frame[[
         column for column in frame.columns
-        if _is_visible_column(column, frame[column], include_contact=False)
+        if is_source_column(frame, column)
+        and _is_visible_column(column, frame[column], include_contact=False)
     ]]
     records = [
         {str(k): _json_value(v) for k, v in row.items()}
