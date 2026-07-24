@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from core.llm import get_llm_code
+from core.privacy import question_log_metadata
 from rag.prompts import (
     _QUESTION_ENGINE_REPAIR_TEMPLATE,
     _QUESTION_ENGINE_TEMPLATE,
@@ -192,9 +193,11 @@ def _align_document_inventory_operation(
     payload = decision.model_dump(mode="python")
     payload["requests"] = normalized_requests
     payload.pop("operations", None)
+    question_id, question_chars = question_log_metadata(question)
     logger.warning(
-        "[QUESTION_ENGINE] 문서 목록 operation 계약 보정 | question=%s",
-        question[:80],
+        "[QUESTION_ENGINE] 문서 목록 operation 계약 보정 | "
+        "question_id=%s chars=%d",
+        question_id, question_chars,
     )
     return QuestionDecision.model_validate(payload)
 
@@ -281,8 +284,8 @@ async def decide_question(
     except (ValueError, TypeError, ValidationError) as first_error:
         error_message = _validation_message(first_error)
         logger.warning(
-            "[QUESTION_ENGINE] 첫 응답 규격 오류, 형식 수정 재시도 | err=%s",
-            error_message[:500],
+            "[QUESTION_ENGINE] 첫 응답 규격 오류, 형식 수정 재시도 | error_type=%s",
+            type(first_error).__name__,
         )
 
     repair_prompt = _QUESTION_ENGINE_REPAIR_TEMPLATE.format(
@@ -330,12 +333,11 @@ async def compare_shadow_decision(
             llm=llm,
         )
     except Exception as exc:
+        question_id, question_chars = question_log_metadata(question)
         logger.warning(
             "[QUESTION_ENGINE:SHADOW] 분류 실패, 기존 응답 유지 | "
-            "legacy=%s err=%s question=%s",
-            legacy_route,
-            exc,
-            question[:80],
+            "legacy=%s error_type=%s question_id=%s chars=%d",
+            legacy_route, type(exc).__name__, question_id, question_chars,
         )
         return None
 
@@ -363,11 +365,12 @@ async def compare_shadow_decision(
         operation_matched=operation_matched,
         reason=decision.reason,
     )
+    question_id, question_chars = question_log_metadata(question)
     logger.info(
         "[QUESTION_ENGINE:SHADOW] legacy_ops=%s llm_ops=%s "
         "legacy_engine=%s llm_engine=%s strategy=%s "
         "engine_match=%s operation_match=%s status=%s "
-        "reason=%s question=%s",
+        "reason_chars=%d question_id=%s chars=%d",
         list(comparison.legacy_operations),
         list(comparison.llm_operations),
         comparison.legacy_route,
@@ -376,7 +379,8 @@ async def compare_shadow_decision(
         comparison.engine_matched,
         comparison.operation_matched,
         comparison.status,
-        comparison.reason[:200],
-        question[:80],
+        len(comparison.reason),
+        question_id,
+        question_chars,
     )
     return comparison

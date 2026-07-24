@@ -7,6 +7,7 @@ from typing import Literal
 
 import pandas as pd
 
+from core.privacy import question_log_metadata
 from datastore.state import _df_namespace, _df_sources
 from datastore.scope import scoped_mapping, source_scope_active
 from datastore.query import (
@@ -110,10 +111,10 @@ async def _answer_query_plan(
 ) -> tuple[str, list[str], str]:
     """Generate, validate, and execute the generic structured-query plan."""
 
+    question_id, question_chars = question_log_metadata(question)
     logger.info(
-        "[PANDAS] QueryPlan 생성 중 | hint=%s question=%s",
-        operation_hint or "none",
-        question[:50],
+        "[PANDAS] QueryPlan 생성 중 | hint=%s question_id=%s chars=%d",
+        operation_hint or "none", question_id, question_chars,
     )
     early_plan = prepared_plan or build_schema_grounded_plan(
         question,
@@ -174,7 +175,10 @@ async def _answer_query_plan(
         )
         if validation.plan.candidates:
             message += " 후보: " + ", ".join(validation.plan.candidates)
-        logger.info("[PANDAS] QueryPlan 추가 확인 필요 | message=%s", message[:200])
+        logger.info(
+            "[PANDAS] QueryPlan 추가 확인 필요 | message_chars=%d",
+            len(message),
+        )
         return message, [], "pandas"
 
     if validation.status == "not_applicable":

@@ -1,7 +1,9 @@
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
+import pandas_engine.interactive as interactive
 from pandas_engine.interactive import build_interactive_result, get_interactive_detail
 from pandas_engine.plan_validator import validate_query_plan
 from pandas_engine.query_executor import execute_query_plan
@@ -48,6 +50,32 @@ class InteractiveResultTest(unittest.TestCase):
         self.assertEqual(detail["page"]["total"], 2)
         self.assertEqual(len(detail["contributors"]), 1)
         self.assertFalse({"source", "표시명", "엔티티 타입", "person_candidate_key", "전화번호"} & set(detail["contributors"][0]))
+
+    def test_calculation_detail_serializes_only_requested_contributor_page(self):
+        result = build_interactive_result(self._execute("sum", "결제 금액"), page_size=1)
+        reference = result["calculation"]["detail_ref"]
+        stored = interactive._DETAILS[reference]
+
+        self.assertNotIn("_all_contributors", stored)
+        self.assertIsInstance(stored["_contributor_frame"], pd.DataFrame)
+        first = get_interactive_detail(reference, offset=0, limit=1)
+        second = get_interactive_detail(reference, offset=1, limit=1)
+        self.assertEqual(len(first["contributors"]), 1)
+        self.assertTrue(first["page"]["has_more"])
+        self.assertEqual(len(second["contributors"]), 1)
+        self.assertFalse(second["page"]["has_more"])
+
+    def test_expired_detail_is_removed(self):
+        with patch("pandas_engine.interactive.monotonic", return_value=100.0):
+            result = build_interactive_result(self._execute("sum", "결제 금액"))
+        reference = result["calculation"]["detail_ref"]
+
+        with patch(
+            "pandas_engine.interactive.monotonic",
+            return_value=100.0 + interactive._DETAIL_TTL_SECONDS + 1,
+        ):
+            self.assertIsNone(get_interactive_detail(reference))
+        self.assertNotIn(reference, interactive._DETAILS)
 
     def test_inline_segments_use_structured_references_and_hide_text_evidence(self):
         result = build_interactive_result(

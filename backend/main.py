@@ -45,6 +45,7 @@ from core.config import (
 )
 from core.security import _verify_api_key, _validate_ingest_path
 from core.llm import get_llm_rag
+from core.privacy import question_log_metadata
 from datastore.state import _df_namespace, _df_sources, _load_dataframes
 from datastore.schema import _get_df_schema
 from datastore.scope import document_scope, scoped_mapping
@@ -504,7 +505,11 @@ async def chat(
                     route,
                     guard_result.operations,
                 )
-            logger.info("[ROUTE] %s | mode=%s question=%s", route, req.mode, req.question[:50])
+            question_id, question_chars = question_log_metadata(req.question)
+            logger.info(
+                "[ROUTE] %s | mode=%s question_id=%s chars=%d",
+                route, req.mode, question_id, question_chars,
+            )
             if route == "DOCUMENTS":
                 answer, sources = _document_list_answer(get_all_manifest_entries())
                 actual_route = "documents"
@@ -533,9 +538,16 @@ async def chat(
                 )
                 interactive_result = None
             return ChatResponse(answer=answer, source=actual_route, sources=sources, result=interactive_result if route == "PANDAS" else None)
-    except Exception as e:
-        logger.exception("[CHAT] 처리 오류 | question=%s", req.question[:50])
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        question_id, question_chars = question_log_metadata(req.question)
+        logger.error(
+            "[CHAT] 처리 오류 | question_id=%s chars=%d error_type=%s",
+            question_id, question_chars, type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="답변 처리 중 내부 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+        )
 
 
 @app.post("/chat/stream") #답변 하기 (글씨가 조금씩 써내려져가는 stream 방식)
@@ -603,9 +615,13 @@ async def chat_stream(req: ChatRequest, _: None = Depends(_verify_api_key)):
                 else:
                     async for chunk in _stream_vector(req.question):
                         yield chunk
-        except Exception as e:
-            logger.exception("Stream 처리 오류")
-            yield f"\n[오류] {e}"
+        except Exception as exc:
+            question_id, question_chars = question_log_metadata(req.question)
+            logger.error(
+                "[CHAT_STREAM] 처리 오류 | question_id=%s chars=%d error_type=%s",
+                question_id, question_chars, type(exc).__name__,
+            )
+            yield "\n[오류] 답변 처리 중 내부 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
 
     return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
 

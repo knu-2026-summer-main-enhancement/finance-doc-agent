@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 
+from core.privacy import question_log_metadata
 from datastore.state import (
     _df_namespace, _df_sources, _df_labels,
     _df_schema_cache, _SCHEMA_CACHE_TTL,
@@ -122,5 +123,9 @@ def _get_df_schema_filtered(question: str) -> str:
 
     # 관련 DF만 schema 생성
     schema = _build_schema_for_vars(relevant)
-    logger.info("[SCHEMA_FILTER] %d/%d DFs 선택 | question=%s", len(relevant), len(_df_namespace), question[:40])
+    question_id, question_chars = question_log_metadata(question)
+    logger.info(
+        "[SCHEMA_FILTER] %d/%d DFs 선택 | question_id=%s chars=%d",
+        len(relevant), len(_df_namespace), question_id, question_chars,
+    )
     return schema

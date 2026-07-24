@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -137,6 +138,38 @@ class SemanticSchemaTest(unittest.TestCase):
                 dataframe_state._df_sources.clear()
                 dataframe_state._df_labels.clear()
                 dataframe_state._df_schemas.clear()
+
+    def test_dataframe_loader_keeps_previous_snapshot_during_disk_io(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            open(os.path.join(temp_dir, "df_new.parquet"), "wb").close()
+            previous = pd.DataFrame({"이름": ["기존"]})
+            dataframe_state._df_namespace.clear()
+            dataframe_state._df_namespace["df0"] = previous
+            entered = threading.Event()
+            release = threading.Event()
+
+            def slow_read_parquet(_path):
+                entered.set()
+                release.wait(timeout=2)
+                return pd.DataFrame({"이름": ["신규"]})
+
+            with patch("datastore.state.DATAFRAME_DIR", temp_dir), patch(
+                "datastore.state.pd.read_parquet",
+                side_effect=slow_read_parquet,
+            ):
+                worker = threading.Thread(target=dataframe_state._load_dataframes)
+                worker.start()
+                self.assertTrue(entered.wait(timeout=1))
+                self.assertIs(dataframe_state._df_namespace["df0"], previous)
+                release.set()
+                worker.join(timeout=2)
+
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(dataframe_state._df_namespace["df0"]["이름"].tolist(), ["신규"])
+            dataframe_state._df_namespace.clear()
+            dataframe_state._df_sources.clear()
+            dataframe_state._df_labels.clear()
+            dataframe_state._df_schemas.clear()
 
     def test_drop_removes_table_sidecars_but_keeps_reusable_profiles(self):
         with tempfile.TemporaryDirectory() as temp_dir, patch(

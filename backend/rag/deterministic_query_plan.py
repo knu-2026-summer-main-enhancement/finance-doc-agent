@@ -7,6 +7,7 @@ from typing import Hashable, Mapping
 import pandas as pd
 
 from pandas_engine.money import parse_money_value
+from pandas_engine.aggregation import resolve_amount_column
 from pandas_engine.date_filter import parse_date_filter
 from pandas_engine.plan_validator import column_data_type
 from pandas_engine.query_grounding import parse_grounded_comparisons
@@ -528,7 +529,7 @@ def build_schema_grounded_plan(
         return None
     alias, df = next(iter(dataframes.items()))
     person = _first(df, lambda item: item.concept == "entity" and item.role == "entity_name" and item.qualifier == "person")
-    money = _first(df, lambda item: item.role == "amount" or item.data_type == "money")
+    money = resolve_amount_column(df, question).selected
     temporal = _first(df, lambda item: item.data_type == "date" or item.role in {"date", "registered_date"})
     year = _first(df, lambda item: item.role == "year")
     month = _first(df, lambda item: item.role == "month")

@@ -311,8 +311,8 @@ async def generate_query_plan(
     except (ValueError, TypeError, ValidationError) as first_error:
         first_error_message = _validation_message(first_error)
         logger.warning(
-            "[QUERY_PLAN] 첫 응답 규격 오류, 형식 수정 재시도 | err=%s",
-            first_error_message[:500],
+            "[QUERY_PLAN] 첫 응답 규격 오류, 형식 수정 재시도 | error_type=%s",
+            type(first_error).__name__,
         )
 
     repair_prompt = _QUERY_PLAN_REPAIR_TEMPLATE.format(
@@ -346,8 +346,8 @@ async def generate_query_plan(
         return plan
     except (ValueError, TypeError, ValidationError) as second_error:
         logger.error(
-            "[QUERY_PLAN] 형식 수정 실패 | err=%s",
-            _validation_message(second_error)[:500],
+            "[QUERY_PLAN] 형식 수정 실패 | error_type=%s",
+            type(second_error).__name__,
         )
         raise QueryPlannerError(
             "LLM 응답을 안전한 QueryPlan으로 변환하지 못했습니다.",

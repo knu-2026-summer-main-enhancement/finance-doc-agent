@@ -159,6 +159,20 @@ class StructuredQueryTest(unittest.TestCase):
         self.assertNotIn("경제학과", answer)
         self.assertNotIn("10,000", answer)
 
+    def test_large_plain_list_has_bounded_name_preview(self):
+        rows = pd.DataFrame({
+            "이름": [f"회원{index:03d}" for index in range(250)],
+            "결제금액": [10_000] * 250,
+        })
+
+        answer = _format_dataframe_result_for_question(rows, "전체 목록 보여줘")
+
+        self.assertIn("총 250건", answer)
+        self.assertIn("전체 250명 중 처음 200명 표시", answer)
+        self.assertIn("회원199", answer)
+        self.assertNotIn("회원200", answer)
+        self.assertEqual(answer.count("\n- 회원"), 200)
+
 
 if __name__ == "__main__":
     unittest.main()

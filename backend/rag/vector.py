@@ -11,6 +11,7 @@ from langchain_core.output_parsers import StrOutputParser
 
 from core.config import VECTOR_MIN_RELEVANCE, VECTOR_SEARCH_FETCH_K, VECTOR_SEARCH_K
 from core.llm import get_llm_rag, get_llm_code, get_vectorstore, _fmt_docs
+from core.privacy import question_log_metadata
 from rag.prompts import RAG_PROMPT, DOC_EXPLAIN_RAG_PROMPT, MULTI_QUERY_PROMPT
 from rag.question_analyzer import QuestionAnalysis
 from rag.question_detectors import is_vector_override_question
@@ -144,7 +145,11 @@ async def _retrieve_verified_documents(queries: list[str]) -> list[Any]:
                 if key in qualified and key not in mmr_order:
                     mmr_order.append(key)
         except Exception as exc:
-            logger.warning("[VECTOR] 검색 실패 | query=%s err=%s", query[:40], exc)
+            query_id, query_chars = question_log_metadata(query)
+            logger.warning(
+                "[VECTOR] 검색 실패 | query_id=%s chars=%d error_type=%s",
+                query_id, query_chars, type(exc).__name__,
+            )
 
     if not qualified:
         return []
@@ -189,7 +194,11 @@ async def _answer_vector(
     allow_pandas_fallback: bool = True,
     analysis: QuestionAnalysis | None = None,
 ) -> tuple[str, list[str], str]:
-    logger.info("[VECTOR] 검색 시작 | question=%s", question[:50])
+    question_id, question_chars = question_log_metadata(question)
+    logger.info(
+        "[VECTOR] 검색 시작 | question_id=%s chars=%d",
+        question_id, question_chars,
+    )
     prepared = await prepare_vector_context(question)
     if prepared.immediate_answer:
         return prepared.immediate_answer, prepared.source_files or [], "vector"

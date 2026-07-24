@@ -8,7 +8,7 @@ import pandas as pd
 
 from pandas_engine.money import money_series
 from utils.table_parser import AMOUNT_COL_KEYWORDS, normalize_person_name
-from utils.semantic_schema import semantic_columns
+from utils.semantic_schema import infer_column_meaning, semantic_columns
 
 
 _AGG_COUNT = re.compile(
@@ -102,8 +102,17 @@ class AmountColumnSelection:
 def amount_column_candidates(df: pd.DataFrame) -> list[str]:
     """공통 스키마와 실제 헤더에서 금액 컬럼 후보를 찾는다."""
     mapped = semantic_columns(df, concept="measure", data_type="money")
-    if mapped:
-        return mapped
+    inferred = [
+        str(column)
+        for column in df.columns
+        if (
+            (meaning := infer_column_meaning(str(column), df[column])).role == "amount"
+            or meaning.data_type == "money"
+        )
+    ]
+    semantic = list(dict.fromkeys([*mapped, *inferred]))
+    if semantic:
+        return semantic
     return [
         str(column)
         for column in df.columns

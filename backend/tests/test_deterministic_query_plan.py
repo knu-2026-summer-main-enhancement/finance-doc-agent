@@ -106,6 +106,35 @@ class DeterministicQueryPlanTest(unittest.TestCase):
         self.assertIsNotNone(maximum_plan)
         self.assertEqual(maximum_plan.target, "결제액(원)")
 
+    def test_ambiguous_amount_query_is_independent_of_column_order(self):
+        values = {
+            "성명": ["김현수", "이서연"],
+            "장학금액": [100_000, 200_000],
+            "납부금액": [10_000, 20_000],
+        }
+        orders = (
+            ("성명", "장학금액", "납부금액"),
+            ("성명", "납부금액", "장학금액"),
+        )
+
+        for columns in orders:
+            with self.subTest(columns=columns):
+                dataframe = pd.DataFrame({column: values[column] for column in columns})
+                ambiguous = build_schema_grounded_plan(
+                    "총 금액 얼마야?",
+                    dataframes={"payments": dataframe},
+                    operation_hint="sum_amount",
+                )
+                explicit = build_schema_grounded_plan(
+                    "납부금액 총합 얼마야?",
+                    dataframes={"payments": dataframe},
+                    operation_hint="sum_amount",
+                )
+
+                self.assertIsNone(ambiguous)
+                self.assertIsNotNone(explicit)
+                self.assertEqual(explicit.target, "납부금액")
+
     def test_category_lookup_does_not_filter_on_derived_name_mask(self):
         dataframe = pd.DataFrame(
             {
