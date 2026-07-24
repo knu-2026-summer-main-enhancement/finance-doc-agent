@@ -5,11 +5,13 @@ import threading
 import unicodedata
 from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import date
 from typing import Mapping
 
 import pandas as pd
 
 from rag.deterministic_query_plan import build_schema_grounded_plan
+from pandas_engine.date_filter import date_column_candidates
 from utils.semantic_schema import infer_column_meaning
 from utils.table_parser import is_masked_name, normalize_person_name
 
@@ -183,6 +185,64 @@ def build_person_autocomplete_catalog(
                 "path_label": result["path_label"],
             })
     return {"names": list(names), "actions": actions}
+
+
+def build_date_autocomplete_catalog(
+    dataframes: Mapping[str, pd.DataFrame],
+) -> dict[str, object]:
+    """Return date completion actions only when the selected schema supports them."""
+
+    if len(dataframes) != 1:
+        return {"actions": []}
+    df = next(iter(dataframes.values()))
+    temporal_columns = date_column_candidates(df)
+    year_columns: list[str] = []
+    month_columns: list[str] = []
+    complete_columns: list[str] = []
+    for column in df.columns:
+        if str(column).startswith("_"):
+            continue
+        meaning = infer_column_meaning(str(column), df[column])
+        if meaning.concept != "temporal":
+            continue
+        if meaning.role == "year":
+            year_columns.append(str(column))
+        elif meaning.role == "month":
+            month_columns.append(str(column))
+        elif meaning.role in {"date", "year_month"}:
+            complete_columns.append(str(column))
+
+    # A year/month expression is safe only with one component pair or one
+    # complete calendar column. Multiple unrelated business dates must remain
+    # explicit instead of receiving a potentially misleading completion.
+    supports_year_month = (
+        len(year_columns) == 1 and len(month_columns) == 1
+    ) or (
+        len(complete_columns) == 1
+        and len(temporal_columns) == 1
+    )
+    if not supports_year_month:
+        return {"actions": []}
+
+    prefix = f"{date.today().year}년 1월"
+    templates = (
+        _Template(f"{prefix} 목록 보여줘", "filter_records", "날짜 목록", "list_records", "fast"),
+        _Template(f"{prefix} 금액 총합 알려줘", "sum_amount", "날짜 합계", "sum_amount", "fast"),
+        _Template(f"{prefix} 인원 몇 명이야?", "count_records", "날짜 인원", "count_records", "fast"),
+    )
+    actions: list[dict[str, str]] = []
+    for template in templates:
+        result = _compile_template(template, dataframes)
+        if result is None:
+            continue
+        actions.append({
+            "suffix": result["text"].removeprefix(prefix).strip(),
+            "operation": result["operation"],
+            "label": result["label"],
+            "path": result["path"],
+            "path_label": result["path_label"],
+        })
+    return {"actions": actions}
 
 
 def _is_grounded_person_input(query: str, dataframes: Mapping[str, pd.DataFrame]) -> bool:

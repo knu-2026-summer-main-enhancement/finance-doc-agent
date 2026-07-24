@@ -78,7 +78,7 @@ class DocumentScopeTests(unittest.TestCase):
                 self.assertEqual(route, "pandas")
                 self.assertIn("총 1건", answer)
                 self.assertIn("김철수", answer)
-                self.assertIn("200,000", answer)
+                self.assertNotIn("200,000", answer)
         self.assertEqual(answers[0], answers[1])
 
     def test_full_list_requires_one_document_when_scope_is_ambiguous(self):

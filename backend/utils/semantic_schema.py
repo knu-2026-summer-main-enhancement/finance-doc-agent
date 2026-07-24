@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import unicodedata
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -11,7 +12,7 @@ from typing import Any
 import pandas as pd
 
 
-SCHEMA_VERSION = "2.3"
+SCHEMA_VERSION = "2.4"
 SYSTEM_COLUMNS = (
     "__schema_version",
     "__document_id",
@@ -26,7 +27,8 @@ _PROFILE_DIR_NAME = "_schema_profiles"
 _EMPTY_VALUES = {"", "none", "nan", "nat", "null"}
 _MONEY_VALUE_RE = re.compile(r"^[+-]?\s*(?:₩|krw)?\s*\d[\d,]*(?:\.\d+)?\s*(?:원|만원|천원)?$", re.IGNORECASE)
 _DATE_VALUE_RE = re.compile(
-    r"^(?:19|20)\d{2}[-./년]\s*\d{1,2}[-./월]\s*\d{1,2}(?:일)?$"
+    r"^(?:19|20)\d{2}[-./년]\s*\d{1,2}[-./월]\s*\d{1,2}(?:일)?"
+    r"(?:[T\s]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$"
 )
 _YEAR_MONTH_VALUE_RE = re.compile(r"^(?:19|20)\d{2}(?:[-./년]\s*(?:0?[1-9]|1[0-2])(?:월)?)$")
 _PHONE_VALUE_RE = re.compile(r"^(?=.*[- ])(?:\+?82[- ]?)?0?\d{1,2}[- ]?\d{3,4}[- ]?\d{4}$")
@@ -58,6 +60,19 @@ def make_table_id(document_id: str, table_name: str) -> str:
 
 def _normal_header(column: Any) -> str:
     return re.sub(r"[\s_()\[\]{}]+", "", str(column or "")).casefold()
+
+
+def _amount_header(column: Any) -> str:
+    """Normalize a money header without letting a display unit hide its role."""
+
+    text = unicodedata.normalize("NFKC", str(column or ""))
+    text = re.sub(
+        r"\s*[\(\[\{]\s*(?:KRW|원|천원|만원)\s*[\)\]\}]\s*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return _normal_header(text)
 
 
 def _nonempty_values(series: pd.Series, limit: int = 100) -> list[str]:
@@ -171,6 +186,7 @@ def _amount_qualifier(header: str, values: list[str]) -> tuple[str | None, float
 
 def _deterministic_meaning(column: str, series: pd.Series, is_derived: bool) -> ColumnMeaning:
     header = _normal_header(column)
+    amount_header = _amount_header(column)
     inferred_type = infer_data_type(series)
     values = _nonempty_values(series)
 
@@ -274,7 +290,7 @@ def _deterministic_meaning(column: str, series: pd.Series, is_derived: bool) -> 
 
     if (
         inferred_type == "date"
-        or any(token in header for token in ("일자", "날짜", "지급일", "출연일", "후원일", "입금일", "납입일", "등록일"))
+        or any(token in header for token in ("일자", "날짜", "일시", "지급일", "출연일", "후원일", "입금일", "납입일", "등록일"))
     ):
         return meaning("temporal", "date", "date", qualifier="date")
     if header.endswith(("기간", "시기", "연월")):
@@ -284,16 +300,20 @@ def _deterministic_meaning(column: str, series: pd.Series, is_derived: bool) -> 
         return meaning("category", "category", qualifier="cohort")
     if any(token in header for token in ("학과", "학부", "전공", "계열")):
         return meaning("category", "category", qualifier="department")
+    if header in {"기관명", "단체명", "회사명", "법인명"} or header.endswith("기관"):
+        return meaning("entity", "entity_name", "string", qualifier="organization")
     if (
-        header in {"성명", "이름", "회원명", "학생명", "수혜자명", "기부자", "후원자", "출연자", "표시명", "성명원문", "성명검색키"}
+        header in {
+            "성명", "이름", "회원명", "회원성명", "학생명", "수혜자명",
+            "기부자", "후원자", "출연자", "납부자", "입금자", "결제자",
+            "신청자", "수혜자", "표시명", "성명원문", "성명검색키",
+        }
         or header.endswith("자명")
     ):
         return meaning(
             "entity", "entity_name", "string",
             qualifier="person", sensitivity="personal", pii_type="person_name",
         )
-    if header in {"기관명", "단체명", "회사명", "법인명"} or header.endswith("기관"):
-        return meaning("entity", "entity_name", "string", qualifier="organization")
     if header == "entitytype":
         return meaning("entity", "entity_type", "string")
 
@@ -308,7 +328,7 @@ def _deterministic_meaning(column: str, series: pd.Series, is_derived: bool) -> 
     if header.endswith("비고"):
         return meaning("description", "description", "string", qualifier="note")
 
-    amount = _amount_qualifier(header, values)
+    amount = _amount_qualifier(amount_header, values)
     if amount:
         qualifier, confidence = amount
         return meaning(

@@ -78,6 +78,34 @@ class DeterministicQueryPlanTest(unittest.TestCase):
             [("회원명", "김현수")],
         )
 
+    def test_reordered_variant_headers_support_person_amount_and_date_queries(self):
+        dataframe = pd.DataFrame({
+            "비고": ["첫 행", "둘째 행"],
+            "납부자": ["김현수", "이서연"],
+            "결제액(원)": ["10,000", "20,000"],
+            "결제 일시": ["2026-01-03 10:30:00", "2026-02-01 09:00:00"],
+        })
+
+        amount_plan = build_schema_grounded_plan(
+            "김현수 얼마야?",
+            dataframes={"payments": dataframe},
+            operation_hint="lookup_amount",
+        )
+        maximum_plan = build_schema_grounded_plan(
+            "가장 큰 금액 뭐야?",
+            dataframes={"payments": dataframe},
+            operation_hint="max_amount",
+        )
+
+        self.assertIsNotNone(amount_plan)
+        self.assertEqual(amount_plan.target, "결제액(원)")
+        self.assertEqual(
+            [(item.column, item.value) for item in amount_plan.filters],
+            [("납부자", "김현수")],
+        )
+        self.assertIsNotNone(maximum_plan)
+        self.assertEqual(maximum_plan.target, "결제액(원)")
+
     def test_category_lookup_does_not_filter_on_derived_name_mask(self):
         dataframe = pd.DataFrame(
             {

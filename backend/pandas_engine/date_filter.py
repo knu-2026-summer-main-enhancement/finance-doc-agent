@@ -192,6 +192,21 @@ def resolve_date_column(df: pd.DataFrame, question: str) -> tuple[str | None, li
         and len(component_candidates) == 1
     ):
         return component_candidates[0], candidates
+    # An explicit year and month are already a complete calendar basis, even
+    # when the requested period is a single month. If the schema has one
+    # year/month component pair, prefer it over unrelated date-like columns.
+    # Month-only questions deliberately remain ambiguous.
+    if (
+        spec is not None
+        and spec.year is not None
+        and spec.start_month == spec.end_month
+        and spec.year == spec.end_year
+        and not explicitly_named
+    ):
+        if len(component_candidates) == 1:
+            return component_candidates[0], candidates
+        if len(range_ready_complete) == 1:
+            return range_ready_complete[0], candidates
     # More detailed data is not automatically more relevant. When a document
     # has both 신청일자 and 지급월, silently preferring the full date would
     # change the user's intended business meaning. Only question evidence may

@@ -75,7 +75,11 @@ from rag.deterministic_query_plan import (
     has_unmatched_person_amount_reference,
     has_unmatched_person_field_reference,
 )
-from rag.question_suggestions import build_person_autocomplete_catalog, build_question_suggestions
+from rag.question_suggestions import (
+    build_date_autocomplete_catalog,
+    build_person_autocomplete_catalog,
+    build_question_suggestions,
+)
 from rag.question_decision import QuestionDecision
 from pandas_engine.query_plan import QueryPlan
 
@@ -356,10 +360,12 @@ def chat_suggestions(
             limit=req.limit if req.catalog else min(req.limit, 3),
         )
         person_catalog = build_person_autocomplete_catalog(dataframes) if req.catalog else {"names": [], "actions": []}
+        date_catalog = build_date_autocomplete_catalog(dataframes) if req.catalog else {"actions": []}
     return {
         "suggestions": suggestions,
         "person_names": person_catalog["names"],
         "person_actions": person_catalog["actions"],
+        "date_actions": date_catalog["actions"],
     }
 
 

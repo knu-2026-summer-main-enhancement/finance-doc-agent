@@ -217,6 +217,29 @@ class DateQueryTest(unittest.TestCase):
         self.assertEqual(result["이름"].tolist(), ["이두리"])
         self.assertEqual(result.attrs["date_filter_evidence"]["column"], "지급월")
 
+    def test_explicit_single_year_month_prefers_component_columns(self):
+        self._replace_dataframe(pd.DataFrame([
+            {"년": 2025, "월": 1, "신청일자": "2026-01-10", "이름": "김하나"},
+            {"년": 2026, "월": 1, "신청일자": "2025-01-10", "이름": "이두리"},
+        ]))
+
+        _, (result, _) = self._query("2026년 1월 목록 보여줘")
+
+        self.assertEqual(result["이름"].tolist(), ["이두리"])
+        self.assertEqual(result.attrs["date_filter_evidence"]["column"], "월")
+        self.assertEqual(result.attrs["date_filter_evidence"]["year_column"], "년")
+
+    def test_datetime_header_and_time_values_support_month_query(self):
+        self._replace_dataframe(pd.DataFrame([
+            {"메모": "첫 행", "납부자": "김하나", "결제액(원)": "10,000", "결제 일시": "2026-01-03 10:30:00"},
+            {"메모": "둘째 행", "납부자": "이두리", "결제액(원)": "20,000", "결제 일시": "2026-02-01 09:00:00"},
+        ]))
+
+        _, (result, _) = self._query("2026년 1월 목록 보여줘")
+
+        self.assertEqual(result["납부자"].tolist(), ["김하나"])
+        self.assertEqual(result.attrs["date_filter_evidence"]["column"], "결제 일시")
+
     def test_ambiguous_temporal_columns_require_a_specific_basis(self):
         self._replace_dataframe(pd.DataFrame([
             {"신청일자": "2025-12-01", "지급월": 1, "이름": "김하나"},

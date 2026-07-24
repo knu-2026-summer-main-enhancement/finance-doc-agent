@@ -383,6 +383,29 @@ class SemanticSchemaTest(unittest.TestCase):
 
         self.assertNotEqual(meaning.concept, "temporal")
 
+    def test_common_header_and_value_variants_keep_semantic_roles(self):
+        cases = (
+            ("납부자", pd.Series(["김현수", "이서연"]), "entity", "entity_name"),
+            ("회원 성명", pd.Series(["김현수", "이서연"]), "entity", "entity_name"),
+            ("결제액(원)", pd.Series(["10,000", "20,000"]), "measure", "amount"),
+            (
+                "결제 일시",
+                pd.Series(["2026-01-03 10:30:00", "2026-02-01 09:00:00"]),
+                "temporal",
+                "date",
+            ),
+        )
+
+        for column, values, concept, role in cases:
+            with self.subTest(column=column):
+                meaning = infer_column_meaning(column, values)
+                self.assertEqual((meaning.concept, meaning.role), (concept, role))
+
+    def test_unit_decorated_non_amount_header_is_not_money(self):
+        meaning = infer_column_meaning("지원(원)", pd.Series(["서울", "부산"]))
+
+        self.assertNotEqual(meaning.role, "amount")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,7 +3,12 @@ import unittest
 import pandas as pd
 
 from rag.deterministic_query_plan import build_schema_grounded_plan
-from rag.question_suggestions import build_person_autocomplete_catalog, build_question_suggestions
+from rag.question_suggestions import (
+    build_date_autocomplete_catalog,
+    build_person_autocomplete_catalog,
+    build_question_suggestions,
+)
+from utils.table_parser import _clean_dataframe
 
 
 def _payment_dataframe() -> pd.DataFrame:
@@ -15,6 +20,16 @@ def _payment_dataframe() -> pd.DataFrame:
         "이메일": ["minsu@example.com", "seoyeon@example.com"],
         "학과": ["경제학과", "경영학과"],
     })
+
+
+def _document_dataframe(rows: dict[str, list[object]]) -> pd.DataFrame:
+    dataframe = _clean_dataframe(
+        pd.DataFrame(rows),
+        source_file="test.xlsx",
+        context_prefix="sheet0",
+    )
+    assert dataframe is not None
+    return dataframe
 
 
 class QuestionSuggestionsTest(unittest.TestCase):
@@ -101,6 +116,64 @@ class QuestionSuggestionsTest(unittest.TestCase):
             "document_procedure",
             "document_explain",
         })
+
+    def test_date_catalog_supports_complete_date_column(self):
+        dataframes = {"payments": _document_dataframe({
+            "결제일자": ["2025-01-01", "2026-01-01"],
+            "성명": ["김민수", "이서연"],
+            "납부금액": [10000, 20000],
+        })}
+
+        catalog = build_date_autocomplete_catalog(dataframes)
+
+        self.assertEqual(
+            [action["operation"] for action in catalog["actions"]],
+            ["filter_records", "sum_amount", "count_records"],
+        )
+
+    def test_date_catalog_supports_separate_year_month_columns(self):
+        dataframes = {"payments": _document_dataframe({
+            "연도": [2025, 2026],
+            "지급월": [12, 1],
+            "성명": ["김민수", "이서연"],
+            "납부금액": [10000, 20000],
+        })}
+
+        catalog = build_date_autocomplete_catalog(dataframes)
+
+        self.assertTrue(catalog["actions"])
+
+    def test_date_catalog_omits_amount_action_without_amount_column(self):
+        dataframes = {"payments": _document_dataframe({
+            "처리날짜": ["2025-12-01", "2026-01-01"],
+            "성명": ["김민수", "이서연"],
+        })}
+
+        catalog = build_date_autocomplete_catalog(dataframes)
+        operations = [action["operation"] for action in catalog["actions"]]
+
+        self.assertEqual(operations, ["filter_records", "count_records"])
+
+    def test_date_catalog_rejects_month_only_and_missing_date_schemas(self):
+        month_only = {"payments": _document_dataframe({
+            "지급월": [1, 2],
+            "성명": ["김민수", "이서연"],
+            "납부금액": [10000, 20000],
+        })}
+        no_date = {"payments": _payment_dataframe()}
+
+        self.assertEqual(build_date_autocomplete_catalog(month_only), {"actions": []})
+        self.assertEqual(build_date_autocomplete_catalog(no_date), {"actions": []})
+
+    def test_date_catalog_rejects_ambiguous_complete_date_columns(self):
+        dataframes = {"payments": _document_dataframe({
+            "신청일자": ["2025-01-01"],
+            "지급일자": ["2025-02-01"],
+            "성명": ["김민수"],
+            "납부금액": [10000],
+        })}
+
+        self.assertEqual(build_date_autocomplete_catalog(dataframes), {"actions": []})
 
 
 if __name__ == "__main__":

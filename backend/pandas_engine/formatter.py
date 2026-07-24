@@ -14,7 +14,7 @@ from pandas_engine.aggregation import (
 )
 from pandas_engine.money import money_values
 from pandas_engine.query_executor import QueryExecutionResult
-from utils.semantic_schema import is_source_column
+from utils.semantic_schema import infer_column_meaning, is_source_column
 from utils.table_parser import IDENTITY_INTERNAL_COLS
 
 _INTERNAL_COLS = set(IDENTITY_INTERNAL_COLS)
@@ -25,6 +25,11 @@ _DISPLAY_ORDER = (
 )
 _AMOUNT_QUESTION_RE = re.compile(r"얼마|금액|총액|합계|출연금|지급액|장학금|지원금|수혜금|후원금|기부금")
 _SUM_WORD_RE = re.compile(r"총|합계|전체|누적|합산|모두|다")
+_GENERIC_LIST_RE = re.compile(r"목록|명단|리스트")
+_EXPLICIT_LIST_FIELD_RE = re.compile(
+    r"금액|회비|납부|결제|후원|기부|학과|전공|전화|이메일|연락처|"
+    r"기수|날짜|일자|연도|월별|기관|지급처|발행번호"
+)
 _OPERATION_LABELS = {
     "count": "개수 계산",
     "sum": "합계",
@@ -227,7 +232,7 @@ def _format_pandas_result(result: object) -> str:
     return str(result)
 
 
-def _format_list_result(df: pd.DataFrame) -> str:
+def _format_list_result(df: pd.DataFrame, question: str = "") -> str:
     """DataFrame 명단 결과를 LLM 우회로 직접 포맷."""
     if df is None or (hasattr(df, "empty") and df.empty):
         return "조회된 데이터가 없습니다."
@@ -242,6 +247,27 @@ def _format_list_result(df: pd.DataFrame) -> str:
             f"날짜 기준: {date_evidence.get('period', '')}"
             f" ({date_evidence.get('column', '날짜 컬럼')})\n"
         )
+
+    # A plain list request is primarily asking who matched. Keep every row
+    # (including duplicate names that may represent separate people/payments)
+    # but omit unrelated source columns so long date ranges remain readable.
+    if _GENERIC_LIST_RE.search(question) and not _EXPLICIT_LIST_FIELD_RE.search(question):
+        person_columns = [
+            column
+            for column in display.columns
+            if (
+                (meaning := infer_column_meaning(str(column), df[column])).concept == "entity"
+                and meaning.role == "entity_name"
+                and meaning.qualifier == "person"
+            )
+        ]
+        if person_columns:
+            person_column = max(
+                person_columns,
+                key=lambda column: int(df[column].dropna().nunique()),
+            )
+            names = display[person_column].astype(str).tolist()
+            return warning + header + "\n".join(f"- {name}" for name in names)
     if "source" in display.columns:
         try:
             sort_cols = ["source"]
@@ -679,4 +705,4 @@ def _format_dataframe_result_for_question(df: pd.DataFrame, question: str) -> st
     amount_answer = _format_dataframe_for_amount_question(df, question)
     if amount_answer:
         return amount_answer
-    return _format_list_result(df)
+    return _format_list_result(df, question)

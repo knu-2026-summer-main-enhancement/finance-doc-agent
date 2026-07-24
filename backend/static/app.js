@@ -64,6 +64,7 @@ const state = {
   suggestionCatalogs: new Map(),
   suggestionCatalog: [],
   personAutocomplete: { names: [], actions: [] },
+  dateAutocomplete: { actions: [] },
   suggestionUsage: new Map(),
   documentsLoaded: false,
 };
@@ -878,6 +879,7 @@ async function primeQuestionCatalog() {
     const cached = state.suggestionCatalogs.get(scopeKey);
     state.suggestionCatalog = cached.suggestions;
     state.personAutocomplete = cached.personAutocomplete;
+    state.dateAutocomplete = cached.dateAutocomplete || { actions: [] };
     return state.suggestionCatalog;
   }
   state.suggestionCatalogController?.abort();
@@ -898,9 +900,13 @@ async function primeQuestionCatalog() {
         names: Array.isArray(data.person_names) ? data.person_names : [],
         actions: Array.isArray(data.person_actions) ? data.person_actions : [],
       };
+      state.dateAutocomplete = {
+        actions: Array.isArray(data.date_actions) ? data.date_actions : [],
+      };
       state.suggestionCatalogs.set(scopeKey, {
         suggestions: state.suggestionCatalog,
         personAutocomplete: state.personAutocomplete,
+        dateAutocomplete: state.dateAutocomplete,
       });
       if (document.activeElement === elements.questionInput && !elements.naturalMode.checked) {
         showLocalQuestionSuggestions();
@@ -910,6 +916,7 @@ async function primeQuestionCatalog() {
     if (error.name !== "AbortError") {
       state.suggestionCatalog = [];
       state.personAutocomplete = { names: [], actions: [] };
+      state.dateAutocomplete = { actions: [] };
     }
   } finally {
     if (state.suggestionCatalogController === controller) state.suggestionCatalogController = null;
@@ -982,6 +989,30 @@ function rankPersonCompletions(query) {
   return suggestions;
 }
 
+function dateExpressionPrefix(query) {
+  const value = String(query || "").normalize("NFKC").trim().replace(/\s+/g, " ");
+  const range = value.match(/^((?:19|20)\d{2}\s*년\s*(?:1[0-2]|[1-9])\s*월\s*부터\s*(?:19|20)\d{2}\s*년\s*(?:1[0-2]|[1-9])\s*월\s*까지)/u);
+  if (range) return range[1].replace(/\s+/g, " ");
+  const yearMonth = value.match(/^((?:19|20)\d{2})\s*년\s*(1[0-2]|[1-9])\s*월/u);
+  if (yearMonth) return `${yearMonth[1]}년 ${yearMonth[2]}월`;
+  const year = value.match(/^((?:19|20)\d{2})\s*년?/u);
+  if (year) return `${year[1]}년`;
+  return "";
+}
+
+function rankDateCompletions(query) {
+  const prefix = dateExpressionPrefix(query);
+  if (!prefix) return [];
+  const candidates = state.dateAutocomplete.actions.map((action) => ({
+    ...action,
+    text: `${prefix} ${action.suffix}`,
+  }));
+  const normalizedQuery = normalizedSuggestionText(query);
+  return candidates.filter((candidate) =>
+    normalizedSuggestionText(candidate.text).startsWith(normalizedQuery)
+  ).slice(0, 3);
+}
+
 function showLocalQuestionSuggestions() {
   if (elements.naturalMode.checked || state.busy) {
     hideQuestionSuggestions();
@@ -989,6 +1020,7 @@ function showLocalQuestionSuggestions() {
   }
   const query = elements.questionInput.value.trim();
   const suggestions = rankPersonCompletions(query);
+  if (!suggestions.length) suggestions.push(...rankDateCompletions(query));
   if (!suggestions.length) suggestions.push(...rankLocalSuggestions(query));
   renderQuestionSuggestions(suggestions, query);
 }
