@@ -252,6 +252,10 @@ def _format_list_result(df: pd.DataFrame) -> str:
             display = display.sort_values(by=sort_cols)
         except Exception:
             pass
+    preview_limit = 50
+    if len(display) > preview_limit:
+        header += f"(처음 {preview_limit}건 표시, 나머지는 목록에서 조회)\n"
+        display = display.head(preview_limit)
     return warning + header + display.to_string(index=False)
 
 

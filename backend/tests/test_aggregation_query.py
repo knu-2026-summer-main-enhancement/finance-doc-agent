@@ -50,6 +50,7 @@ class AggregationQueryTest(unittest.TestCase):
 
     def test_sum_accepts_varied_natural_phrases(self):
         questions = (
+            "금액 총합",
             "출연금액 총 얼만지 알려줘",
             "출연금액을 전부 합하면 얼마니?",
             "기부금 전체 금액은?",

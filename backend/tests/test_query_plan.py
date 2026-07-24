@@ -31,6 +31,19 @@ class QueryPlanSchemaTest(unittest.TestCase):
         self.assertEqual(plan.filter_logic, "all")
         self.assertEqual(plan.filters[0].value, 59)
 
+    def test_group_sum_without_explicit_top_n_returns_all_groups(self):
+        plan = QueryPlan.model_validate(
+            {
+                "status": "ready",
+                "dataframe": "df0",
+                "operation": "group_sum",
+                "target": "금액",
+                "group_by": ["전공"],
+            }
+        )
+
+        self.assertIsNone(plan.effective_top_n)
+
     def test_max_can_return_matching_records(self):
         plan = QueryPlan.model_validate(
             {

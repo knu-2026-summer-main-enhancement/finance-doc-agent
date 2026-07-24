@@ -147,7 +147,8 @@ class QueryPlan(_PlanModel):
     @property
     def effective_top_n(self) -> int | None:
         if self.operation == "group_sum":
-            return self.top_n or 1
+            # No explicit top_n means the user requested every group.
+            return self.top_n
         if self.operation in {"min", "max"} and self.effective_result_mode == "records":
             return self.top_n or 1
         return None

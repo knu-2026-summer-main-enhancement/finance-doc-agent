@@ -180,6 +180,22 @@ class DateQueryTest(unittest.TestCase):
         self.assertEqual(evidence["column"], "월")
         self.assertEqual(evidence["year_column"], "년")
 
+    def test_cross_year_range_amount_total_is_aggregated(self):
+        self._replace_dataframe(pd.DataFrame([
+            {"년": 2025, "월": 5, "이름": "김하나", "결제금액": 100},
+            {"년": 2025, "월": 6, "이름": "이두리", "결제금액": 200},
+            {"년": 2025, "월": 12, "이름": "박세나", "결제금액": 300},
+            {"년": 2026, "월": 1, "이름": "최도윤", "결제금액": 400},
+            {"년": 2026, "월": 2, "이름": "한지우", "결제금액": 500},
+        ]))
+
+        _, (result, _) = self._query("2025년 6월부터 2026년 1월까지 금액 총합")
+
+        self.assertEqual(result["operation"], "sum")
+        self.assertEqual(result["value"], 900)
+        self.assertEqual(result["matched_rows"], 3)
+        self.assertEqual(result["date_filter"]["period"], "2025년 6월~2026년 1월")
+
     def test_year_condition_is_rejected_when_only_month_exists(self):
         self._replace_dataframe(pd.DataFrame([
             {"지급월": 12, "이름": "김하나"},

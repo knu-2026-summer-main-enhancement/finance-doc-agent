@@ -243,6 +243,21 @@ class QuestionEngineAsyncTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(decision.operations, ("lookup_field",))
 
+    async def test_whole_table_field_projection_is_not_single_subject_lookup(self):
+        question = "모든 회원의 이름 옆에 전공을 표시해줘"
+        payload = {
+            "status": "ready",
+            "requests": [{"source_text": question, "operation": "lookup_field"}],
+            "reason": "모델이 전체 투영을 단일 대상 조회로 오분류",
+        }
+        decision = await decide_question(
+            question,
+            schema='컬럼: "회원명", "전공"',
+            llm=FakeLLM(json.dumps(payload, ensure_ascii=False)),
+        )
+
+        self.assertEqual(decision.operations, ("structured_query",))
+
     async def test_request_source_text_must_exist_in_original_question(self):
         invalid = {
             "status": "ready",

@@ -359,6 +359,86 @@ class DeterministicQueryPlanTest(unittest.TestCase):
         self.assertEqual(plan.filters[0].column, "이메일")
         self.assertEqual(plan.filters[0].operator, "is_null")
 
+    def test_missing_fee_type_and_registered_date_do_not_expand_filters(self):
+        self.df["회비_구분"] = ["정기", None, "정기"]
+
+        fee_plan = self._plan("회비 종류가 미등록인 내역을 보여줘", "structured_query")
+        date_plan = self._plan("결제 등록일 미등록 기록만 보여줘", "structured_query")
+
+        self.assertIsNotNone(fee_plan)
+        self.assertEqual(
+            [(item.column, item.operator) for item in fee_plan.filters],
+            [("회비_구분", "is_null")],
+        )
+        self.assertIsNotNone(date_plan)
+        self.assertEqual(
+            [(item.column, item.operator) for item in date_plan.filters],
+            [("결제_등록_날짜", "is_null")],
+        )
+
+    def test_year_and_month_group_aliases_build_complete_group_plans(self):
+        self.df["월"] = [1, 1, 2]
+        year_plan = self._plan("해마다 납부액을 모아서 보여줘", "structured_query")
+        month_plan = self._plan("달마다 납부액을 보여줘", "structured_query")
+
+        self.assertIsNotNone(year_plan)
+        self.assertEqual(year_plan.group_by, ("년",))
+        self.assertIsNotNone(month_plan)
+        self.assertEqual(month_plan.group_by, ("월",))
+
+    def test_comparison_filter_and_projection_are_built_together(self):
+        plan = self._plan("10만원 이상 낸 사람의 전공 알려줘", "structured_query")
+
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.operation, "list")
+        self.assertEqual(
+            [(item.column, item.operator, item.value) for item in plan.filters],
+            [("결제_금액", "gte", "10만원")],
+        )
+        self.assertEqual(plan.select, ("회원명", "전공"))
+
+    def test_money_alias_is_a_projection_but_null_filter_is_not(self):
+        amount_plan = self._plan("기계과 회원 이름과 납부액 보여줘", "structured_query")
+        null_plan = self._plan("2025년 가입자 중 이메일 없는 사람 목록", "structured_query")
+
+        self.assertIsNotNone(amount_plan)
+        self.assertEqual(amount_plan.select, ("회원명", "결제_금액"))
+        self.assertIsNotNone(null_plan)
+        self.assertEqual(null_plan.select, ("회원명",))
+
+    def test_cohort_comparison_keeps_operator_and_person_list(self):
+        df = self.df.copy()
+        df["기수"] = [49, 50, 58]
+        plan = build_schema_grounded_plan(
+            "50기 이상 회원 목록", dataframes={"df0": df}, operation_hint="structured_query",
+        )
+
+        self.assertIsNotNone(plan)
+        self.assertEqual(
+            [(item.column, item.operator, item.value) for item in plan.filters],
+            [("기수", "gte", 50)],
+        )
+        self.assertEqual(plan.select, ("회원명",))
+
+    def test_numeric_rank_word_uses_dense_person_total_ranking(self):
+        plan = self._plan("돈을 많이 낸 사람 2위는 누구야?", "structured_query")
+
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.operation, "group_sum")
+        self.assertEqual(plan.group_by, ("회원명",))
+        self.assertEqual(plan.group_order, "desc")
+        self.assertEqual(plan.rank_position, 2)
+        self.assertEqual(plan.tie_policy, "dense")
+
+    def test_group_top_n_keeps_grouping_not_person_ranking(self):
+        plan = self._plan("전공별 납부액 상위 3개 보여줘", "structured_query")
+
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.operation, "group_sum")
+        self.assertEqual(plan.group_by, ("전공",))
+        self.assertEqual(plan.group_order, "desc")
+        self.assertEqual(plan.top_n, 3)
+
     def test_contact_filtered_amount_lookup_returns_sum(self):
         plan = self._plan("second@example.com 이메일을 가진 사람 얼마냈어?", "lookup_amount")
         self.assertIsNotNone(plan)

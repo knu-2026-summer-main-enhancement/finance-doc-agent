@@ -179,6 +179,39 @@ def _entity_for_row(row: pd.Series) -> dict[str, Any] | None:
     }
 
 
+def _person_name_column(frame: pd.DataFrame) -> str | None:
+    """Resolve the person-name column once instead of for every result row."""
+    for column in frame.columns:
+        key = str(column)
+        if not is_source_column(frame, key):
+            continue
+        meaning = infer_column_meaning(key, frame[column])
+        if meaning.role == "entity_name" and meaning.qualifier == "person":
+            return key
+    return None
+
+
+def _visible_records(
+    frame: pd.DataFrame,
+    *,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Serialize visible source fields without re-inferring every cell."""
+    columns = [
+        str(column)
+        for column in frame.columns
+        if is_source_column(frame, column)
+        and _is_visible_column(column, frame[column], include_contact=False)
+    ]
+    selected = frame.loc[:, columns]
+    if limit is not None:
+        selected = selected.head(limit)
+    return [
+        {str(key): _json_value(value) for key, value in record.items()}
+        for record in selected.to_dict(orient="records")
+    ]
+
+
 def _inline_segments(answer: str, entities: list[dict[str, Any]], calculation: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Create UI annotations from structured execution values, not browser text parsing."""
     display_answer = answer.split("\n\n계산 근거:", 1)[0]
@@ -246,44 +279,42 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 5
     records: list[dict[str, Any]] = []
     entities: list[dict[str, Any]] = []
     if isinstance(frame, pd.DataFrame):
-        for _, row in frame.head(page_size).iterrows():
-            if result.operation == "person_totals":
+        if result.operation == "person_totals":
+            for _, row in frame.head(page_size).iterrows():
                 # Executor-created summaries contain only display label, amount
                 # and payment count; the contact identifiers used to split
                 # people never enter this frame.
                 records.append({str(k): _json_value(v) for k, v in row.items()})
-            else:
-                records.append({
-                    str(k): _json_value(v)
-                    for k, v in row.items()
-                    if is_source_column(row, k)
-                    and _is_visible_column(k, pd.Series([v]), include_contact=False)
-                })
+        else:
+            records = _visible_records(frame, limit=page_size)
     # Projection intentionally removes system columns from list values.  Build
     # entities from the matching execution rows so references retain row scope.
     entity_frame = result.matched_frame
     inline_entities: list[dict[str, Any]] = []
     if isinstance(entity_frame, pd.DataFrame):
         seen_entity_ids: set[str] = set()
+        name_column = _person_name_column(entity_frame)
         for _, row in entity_frame.iterrows():
+            # Entity cards are useful only for names present in the rendered
+            # answer. Without an answer, the transport page is the boundary.
+            if name_column:
+                display_name = _json_value(row[name_column])
+                if answer is not None and (
+                    display_name is None or str(display_name) not in answer
+                ):
+                    continue
             entity = _entity_for_row(row)
             if entity and entity["entity_id"] not in seen_entity_ids:
                 seen_entity_ids.add(entity["entity_id"])
                 inline_entities.append(entity)
+                if answer is None and len(inline_entities) >= page_size:
+                    break
         entities = inline_entities[:page_size]
     total = int(len(frame)) if isinstance(frame, pd.DataFrame) else 0
     calculation = None
     if result.operation in {"sum", "mean", "median", "mode", "min", "max", "count", "group_sum", "person_totals"}:
         calculation_id = "calc_" + sha256((result.source_file + result.operation + str(result.target)).encode()).hexdigest()[:20]
-        contributors = [
-            {
-                str(k): _json_value(v)
-                for k, v in row.items()
-                if is_source_column(row, k)
-                and _is_visible_column(k, pd.Series([v]), include_contact=False)
-            }
-            for _, row in result.matched_frame.iterrows()
-        ]
+        contributors = _visible_records(result.matched_frame)
         _DETAILS[calculation_id] = {
             "version": "1", "kind": "calculation_detail", "calculation_id": calculation_id,
             "operation": result.operation,
@@ -319,22 +350,23 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 5
 
 def build_interactive_dataframe(frame: pd.DataFrame, *, page_size: int = 50, answer: str | None = None) -> dict[str, Any]:
     """Structured view for verified legacy/direct dataframe queries."""
-    visible = frame[[
-        column for column in frame.columns
-        if is_source_column(frame, column)
-        and _is_visible_column(column, frame[column], include_contact=False)
-    ]]
-    records = [
-        {str(k): _json_value(v) for k, v in row.items()}
-        for _, row in visible.head(page_size).iterrows()
-    ]
+    records = _visible_records(frame, limit=page_size)
     inline_entities = []
     seen_entity_ids: set[str] = set()
+    name_column = _person_name_column(frame)
     for _, row in frame.iterrows():
+        if name_column:
+            display_name = _json_value(row[name_column])
+            if answer is not None and (
+                display_name is None or str(display_name) not in answer
+            ):
+                continue
         entity = _entity_for_row(row)
         if entity and entity["entity_id"] not in seen_entity_ids:
             seen_entity_ids.add(entity["entity_id"])
             inline_entities.append(entity)
+            if answer is None and len(inline_entities) >= page_size:
+                break
     entities = inline_entities[:page_size]
     payload = {
         "version": "1", "kind": "records", "operation": "list",

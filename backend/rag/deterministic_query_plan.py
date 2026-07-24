@@ -9,6 +9,7 @@ import pandas as pd
 from pandas_engine.money import parse_money_value
 from pandas_engine.date_filter import parse_date_filter
 from pandas_engine.plan_validator import column_data_type
+from pandas_engine.query_grounding import parse_grounded_comparisons
 from pandas_engine.query_plan import FilterCondition, QueryPlan
 from utils.semantic_schema import infer_column_meaning, is_source_column
 from utils.table_parser import is_masked_name, normalize_person_name
@@ -37,7 +38,10 @@ _MIN_VALUE = re.compile(
     r"(?:값|금액|돈|액).{0,8}?(?:가장|제일)\s*(?:작은|낮은))"
 )
 _ROW_COUNT = re.compile(r"(?:몇\s*번|몇\s*회|횟수)")
-_MISSING = re.compile(r"(?:비어\s*있|안\s*적|미입력|누락|공백|없(?:는|어|어?))")
+_MISSING = re.compile(
+    r"(?:비어\s*있|안\s*적|미입력|미등록|누락|공백|"
+    r"등록\s*되지\s*않|등록되지\s*않|없(?:는|어|어?))"
+)
 _PAYMENT_EXISTENCE = re.compile(
     r"(?:돈|금액|회비|결제|납부|후원|기부).{0,8}?(?:냈|내었|냈어|냈나요|했어|했나|했나요)"
 )
@@ -57,23 +61,36 @@ _GROUP_SUM_MINIMUM = re.compile(
     r"(?:가장|제일)\s*(?:돈|금액|회비|결제)?.{0,8}?(?:적게|작게|낮게|최소로).{0,8}?(?:낸|지급한|결제한)?\s*(?:사람|회원|인원|누구(?:야|인지|인가)?)|"
     r"(?:돈|금액|회비|결제).{0,8}?(?:가장|제일)\s*(?:적게|작게|낮게).{0,8}?(?:낸|지급한|결제한)?\s*(?:사람|회원|인원|누구(?:야|인지|인가)?)"
 )
-_ORDINAL = re.compile(r"(?<!\d)(\d+)\s*(?:번째|째)")
+_ORDINAL = re.compile(r"(?<!\d)(\d+)\s*(?:번째|째|위|등)")
 _KOREAN_ORDINAL = re.compile(
     r"(첫|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*"
     r"(?:번째|번\s*[째쨰])"
 )
 _KOREAN_ORDINAL_VALUES = {"첫": 1, "한": 1, "두": 2, "세": 3, "네": 4, "다섯": 5, "여섯": 6, "일곱": 7, "여덟": 8, "아홉": 9, "열": 10}
 _LIMIT = re.compile(r"(?<!\d)(\d+)\s*(?:건|개|명)(?!\d)")
+_RANK_DESC = re.compile(r"(?:상위|top\s*\d*|높은\s*순|많은\s*순|큰\s*순)", re.IGNORECASE)
+_RANK_ASC = re.compile(r"(?:하위|bottom\s*\d*|낮은\s*순|적은\s*순|작은\s*순)", re.IGNORECASE)
+_GROUPING_REQUEST = re.compile(
+    r"(?:별|마다|기준(?:으로|별)?|묶어서|나눠서|모아서|조합)"
+)
 _DESC_ORDER = re.compile(r"(?:내림차순|큰\s*순(?:서(?:대로)?)?|많은\s*순(?:서(?:대로)?)?|높은\s*순(?:서(?:대로)?)?|최신|늦은|가장\s*(?:큰|많은|높은))")
 _ASC_ORDER = re.compile(r"(?:오름차순|작은\s*순(?:서(?:대로)?)?|적은\s*순(?:서(?:대로)?)?|낮은\s*순(?:서(?:대로)?)?|빠른|이른|가장\s*(?:작은|적은|낮은))")
 _PERSON_DISPLAY_SUFFIX = re.compile(r"\s*[\(\[\{][^\]\)\}]*[\]\)\}]\s*$")
-_NON_PERSON_LEADING_TOKENS = {"가장", "제일", "최고", "최저", "사람", "회원", "누구"}
+_NON_PERSON_LEADING_TOKENS = {
+    "가장", "제일", "최고", "최저", "사람", "회원", "회원별",
+    "전체", "전체기록", "모든회원", "각회원", "누구",
+}
 
 # These are user-facing Korean equivalents for a semantic category, not names
 # from any one document. The selected column still has to be inferred from the
 # dataframe schema before it can be used in a plan.
 _SEMANTIC_REQUEST_TERMS = {
     "department": ("학과", "학부", "전공", "계열", "무슨 과"),
+    "amount": ("금액", "납부액", "결제액", "회비", "후원금", "기부금"),
+    "year": ("연도", "해마다", "각 연도", "연도 기준"),
+    "month": ("월별", "달마다", "각 월", "월 기준"),
+    "fee_type": ("회비 구분", "회비 종류", "회비 유형"),
+    "registered_date": ("결제 등록 날짜", "결제 등록일", "등록 날짜", "등록일"),
     # "언제" has no column-name overlap.  Return all available temporal
     # evidence (components and full dates) so a sparse registered-date column
     # cannot hide otherwise valid payment timing information.
@@ -116,17 +133,60 @@ def _requested_columns(df: pd.DataFrame, question: str) -> list[Hashable]:
     for qualifier, terms in _SEMANTIC_REQUEST_TERMS.items():
         if not any(_norm(term) in normalized_question for term in terms):
             continue
+        if (
+            qualifier == "amount"
+            and any(
+                _norm(term) in normalized_question
+                for term in _SEMANTIC_REQUEST_TERMS["fee_type"]
+            )
+            and not any(
+                _norm(term) in normalized_question
+                for term in ("금액", "납부액", "결제액", "후원금", "기부금")
+            )
+        ):
+            # In "회비 구분 미등록", 회비 describes the category header; it
+            # is not a request to filter the payment amount as missing.
+            continue
         requested.extend(
             _columns(
                 df,
                 lambda meaning: (
-                    meaning.concept == "category"
-                    and meaning.role == "category"
-                    and meaning.qualifier == qualifier
+                    (
+                        meaning.concept == "category"
+                        and meaning.role == "category"
+                        and meaning.qualifier == qualifier
+                    )
+                    or (
+                        qualifier == "amount"
+                        and (meaning.role == "amount" or meaning.data_type == "money")
+                    )
+                    or (qualifier == "year" and meaning.role == "year")
+                    or (qualifier == "month" and meaning.role == "month")
+                    or (
+                        qualifier == "registered_date"
+                        and meaning.concept == "temporal"
+                        and meaning.role in {"date", "registered_date"}
+                    )
                 ),
             ),
         )
-        if qualifier == "payment_time":
+        if qualifier == "fee_type":
+            requested.extend(
+                column
+                for column in df.columns
+                if "회비" in _norm(str(column))
+                and any(
+                    token in _norm(str(column))
+                    for token in ("구분", "종류", "유형")
+                )
+            )
+        if (
+            qualifier == "payment_time"
+            and not any(
+                _norm(term) in normalized_question
+                for term in _SEMANTIC_REQUEST_TERMS["registered_date"]
+            )
+        ):
             requested.extend(
                 _columns(
                     df,
@@ -161,6 +221,38 @@ def _value_filters(df: pd.DataFrame, question: str) -> list[FilterCondition]:
         matched = [value for value in unique if len(_norm(value)) >= 2 and _norm(value) in normalized_question]
         if len(matched) == 1:
             filters.append(FilterCondition(column=str(column), operator="eq", value=matched[0], source_text=matched[0]))
+    return filters
+
+
+def _comparison_filters(
+    question: str,
+    *,
+    money: Hashable | None,
+    year: Hashable | None,
+    month: Hashable | None,
+    cohort: Hashable | None,
+) -> list[FilterCondition]:
+    """Ground explicit numeric comparisons to only schema-matched columns."""
+    filters: list[FilterCondition] = []
+    for comparison in parse_grounded_comparisons(question):
+        value_text = str(comparison.value_text)
+        column: Hashable | None = None
+        if comparison.value_kind == "money":
+            column = money
+        elif "기" in value_text:
+            column = cohort
+        elif "년" in value_text:
+            column = year
+        elif "월" in value_text:
+            column = month
+        if column is None:
+            continue
+        filters.append(FilterCondition(
+            column=str(column),
+            operator=comparison.operator,
+            value=comparison.value,
+            source_text=comparison.source_text,
+        ))
     return filters
 
 
@@ -445,7 +537,19 @@ def build_schema_grounded_plan(
         lambda item: item.concept == "category" and item.qualifier == "cohort",
     )
     normalized_question = _norm(question)
-    filters = _value_filters(df, question)
+    broad_projection = bool(re.search(
+        r"(?:전체\s*(?:기록|내역|회원)|모든\s*회원|각\s*회원|회원별)",
+        question,
+    ))
+    complete_grouping = bool(
+        _GROUPING_REQUEST.search(question)
+        and re.search(r"(?:금액|돈|회비|결제|납부|후원|기부)", question)
+    )
+    # These shapes explicitly request the full table or every group. Scanning
+    # every string cell for an implicit value filter is both unnecessary and
+    # expensive on large sheets.
+    skip_literal_filter_scan = broad_projection or complete_grouping
+    filters = [] if skip_literal_filter_scan else _value_filters(df, question)
 
     # A range such as "2025년 6월부터 2026년 1월까지" cannot be represented
     # by independent year/month filters: doing so silently means only the
@@ -482,6 +586,16 @@ def build_schema_grounded_plan(
             source_text=cohort_match.group(0),
         ))
 
+    # Explicit comparisons must keep their operator (for example, "10만원
+    # 이상" is gte, never an exact-money filter).  The helper grounds only
+    # money/year/month/cohort comparisons that have a matching schema role.
+    comparison_filters = _comparison_filters(
+        question, money=money, year=year, month=month, cohort=cohort,
+    )
+    comparison_columns = {item.column for item in comparison_filters}
+    filters = [item for item in filters if item.column not in comparison_columns]
+    filters.extend(comparison_filters)
+
     if money is not None:
         money_literals = [match.group(1) for match in _MONEY.finditer(question)]
         money_literals = [value for value in money_literals if parse_money_value(value) is not None and ("원" in value or parse_money_value(value) >= 10_000)]
@@ -494,11 +608,11 @@ def build_schema_grounded_plan(
             value for value in money_literals
             if _norm(value) not in grounded_non_money_values
         ]
-        if len(money_literals) == 1:
+        if len(money_literals) == 1 and str(money) not in comparison_columns:
             filters.append(FilterCondition(column=str(money), operator="eq", value=money_literals[0], source_text=money_literals[0]))
 
     # One grounded person value is a subject filter; projection columns are never filters.
-    if person is not None:
+    if person is not None and not skip_literal_filter_scan:
         matched_person = _person_filter(df, person, question)
         if matched_person is not None:
             # Ingested tables can retain several row-scoped representations of
@@ -549,9 +663,11 @@ def build_schema_grounded_plan(
         else None
     )
     if rank_position is not None and person is not None and money is not None and re.search(r"(?:사람|회원|인원|누구)", question):
-        if re.search(r"(?:적게|작게|작은|낮게|낮은|최소)", question):
+        if _RANK_ASC.search(question) or re.search(r"(?:적게|작게|작은|낮게|낮은|최소)", question):
             group_order = "asc"
-        elif re.search(r"(?:많이|많은|크게|큰|높게|높은|최대)", question):
+        elif _RANK_DESC.search(question) or re.search(r"(?:많이|많은|크게|큰|높게|높은|최대)", question):
+            group_order = "desc"
+        elif re.search(r"(?:\d+\s*(?:위|등))", question):
             group_order = "desc"
     if group_order is not None and person is not None and money is not None:
         return QueryPlan(
@@ -563,6 +679,37 @@ def build_schema_grounded_plan(
             group_by=(str(person),),
             group_order=group_order,
             **({"rank_position": rank_position, "tie_policy": "dense"} if rank_position else {"top_n": explicit_limit or 1}),
+        )
+    # A plain "전공별 납부액" style request is a complete grouping, not a
+    # top-person ranking.  Its grouping column is explicitly named in the
+    # question and can be resolved from the schema without an LLM plan.
+    group_columns = tuple(
+        str(column) for column in requested
+        if column not in {person, money}
+    )
+    if (
+        money is not None
+        and group_columns
+        and _GROUPING_REQUEST.search(question)
+        and re.search(r"(?:금액|돈|회비|결제|납부|후원|기부)", question)
+    ):
+        group_direction = (
+            "asc" if _RANK_ASC.search(question)
+            else "desc" if _RANK_DESC.search(question)
+            else None
+        )
+        rank_kwargs = (
+            {"rank_position": rank_position, "tie_policy": "dense"}
+            if rank_position is not None and group_direction is not None
+            else {"top_n": explicit_limit}
+            if explicit_limit is not None and group_direction is not None
+            else {}
+        )
+        return QueryPlan(
+            status="ready", dataframe=alias, operation="group_sum",
+            filters=tuple(filters), target=str(money), group_by=group_columns,
+            **({"group_order": group_direction} if group_direction is not None else {}),
+            **rank_kwargs,
         )
     if operation_hint == "count_records" or people_count or _ROW_COUNT.search(question):
         return QueryPlan(status="ready", dataframe=alias, operation="count", filters=tuple(filters), distinct_by=(str(person),) if people_count and person is not None else ())
@@ -596,12 +743,23 @@ def build_schema_grounded_plan(
                 direction = "desc"
             elif re.search(r"(?:작은|적은|낮은|최소)", question):
                 direction = "asc"
-        if operation_hint != "list_records" and not filters and direction is None:
-            return None
+            elif money is not None and re.search(r"(?:\d+\s*(?:위|등))", question):
+                direction = "desc"
+        # Fields used only to state a condition (for example, "이메일 없는
+        # 사람") are not implicit output columns.  Keep the person label for
+        # readable lists and return only explicitly requested projections.
+        filter_columns = {item.column for item in filters}
         select = tuple(dict.fromkeys((
             *((str(person),) if person is not None else ()),
-            *(str(column) for column in requested if column != person),
+            *(str(column) for column in requested if column != person and str(column) not in filter_columns),
         )))
+        if (
+            operation_hint != "list_records"
+            and not filters
+            and direction is None
+            and not (broad_projection and select)
+        ):
+            return None
         sort_column = money if money is not None and re.search(r"(?:금액|돈|회비|결제|납부|후원|기부)", question) else temporal
         if direction is not None and sort_column is not None:
             return QueryPlan(

@@ -53,6 +53,8 @@ operation 정의:
   구어체 질문은 lookup_amount입니다.
 - lookup_field는 대상 하나의 특정 속성값을 묻는 경우입니다. 특정 속성값을 조건으로
   여러 행을 찾는 질문은 filter_records 또는 structured_query입니다.
+- "전체 기록", "모든 회원", "회원별", "각 회원"의 컬럼을 보여 달라는 요청은
+  특정 대상 조회가 아니므로 lookup_field가 아니라 structured_query입니다.
 - 복수 컬럼 조건을 filter_records와 lookup_amount로 분해하지 말고 structured_query
   하나만 반환하세요.
 - 정렬된 상위·하위 N개 목록은 structured_query 하나만 반환하세요.
@@ -249,7 +251,7 @@ JSON 규격:
 {{
   "status": "ready",
   "dataframe": "실제 DataFrame 별칭",
-  "operation": "list|count|sum|mean|median|mode|min|max",
+  "operation": "list|count|sum|mean|median|mode|min|max|group_sum",
   "filters": [
     {{
       "column": "실제 컬럼명",
@@ -365,11 +367,12 @@ Python 코드, Markdown, 설명문 없이 수정된 JSON 객체 하나만 반환
 
 최소 수정 규칙:
 - 허용 상태: ready, clarification, not_applicable
-- 허용 연산: list, count, sum, mean, median, mode, min, max
+- 허용 연산: list, count, sum, mean, median, mode, min, max, group_sum
 - list는 target 없이 행 반환
 - count, sum, mean, median, mode는 result_mode와 select를 사용하지 않음
 - sum, mean, median, mode, min, max는 target 필수
 - min, max에서 행 반환이 필요할 때만 result_mode=records 사용
+- group_sum은 target 금액 컬럼과 하나 이상의 group_by 컬럼을 사용
 - 이전 응답에 없던 dataframe, 컬럼, 필터 값은 새로 만들지 않음
 - 각 필터의 source_text는 사용자 질문에서 그대로 복사한 가장 짧은 근거 구절
 - 숫자·단위·비교 표현은 source_text에서 환산하거나 변경하지 않음

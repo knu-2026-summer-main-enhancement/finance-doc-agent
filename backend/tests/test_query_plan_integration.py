@@ -455,6 +455,27 @@ class QueryPlanSemanticContractTest(unittest.TestCase):
             {issue.code for issue in validation.issues},
         )
 
+    def test_rejects_result_limit_not_grounded_in_question(self):
+        plan = QueryPlan.model_validate(
+            {
+                "status": "ready", "dataframe": "df0", "operation": "list",
+                "select": ["회원명", "전화번호"], "limit": 22,
+            }
+        )
+        validation = validate_query_plan(
+            plan,
+            question="모든 회원의 이름 옆에 전화번호를 표시해줘",
+            dataframes={"df0": self.df},
+            source_by_alias={"df0": "test.xlsx"},
+            operation_hint="structured_query",
+        )
+
+        self.assertEqual(validation.status, "invalid")
+        self.assertIn(
+            "ungrounded_limit",
+            {issue.code for issue in validation.issues},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

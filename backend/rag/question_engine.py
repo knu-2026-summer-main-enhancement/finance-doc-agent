@@ -28,6 +28,9 @@ _EXPLICIT_DOCUMENT_INVENTORY = re.compile(
     r"(?:문서|파일)\s*(?:목록|리스트)|"
     r"(?:무슨|어떤)\s*(?:문서|파일))",
 )
+_BROAD_FIELD_PROJECTION = re.compile(
+    r"(?:전체\s*(?:기록|내역|회원)|모든\s*회원|각\s*회원|회원별)"
+)
 
 
 class QuestionEngineError(RuntimeError):
@@ -196,6 +199,39 @@ def _align_document_inventory_operation(
     return QuestionDecision.model_validate(payload)
 
 
+def _align_broad_field_projection_operation(
+    decision: QuestionDecision,
+    question: str,
+) -> QuestionDecision:
+    """Keep whole-table field projections out of the single-subject lookup contract."""
+
+    if (
+        decision.status != "ready"
+        or not decision.requests
+        or not _BROAD_FIELD_PROJECTION.search(question)
+    ):
+        return decision
+
+    requests = []
+    changed = False
+    for request in decision.requests:
+        operation = request.operation
+        if operation == "lookup_field":
+            operation = "structured_query"
+            changed = True
+        requests.append(
+            {"source_text": request.source_text, "operation": operation}
+        )
+    if not changed:
+        return decision
+
+    payload = decision.model_dump(mode="python")
+    payload["requests"] = requests
+    payload.pop("operations", None)
+    logger.info("[QUESTION_ENGINE] 전체 필드 투영 operation 보정")
+    return QuestionDecision.model_validate(payload)
+
+
 def _validation_message(error: Exception) -> str:
     if isinstance(error, ValidationError):
         parts = []
@@ -229,11 +265,14 @@ async def decide_question(
     raw = await model.ainvoke(prompt)
     responses.append(_response_text(raw))
     try:
-        return _align_document_inventory_operation(
-            _validate_request_evidence(
-                parse_question_decision(
-                    raw,
-                    fallback_retrieval_query=clean_question,
+        return _align_broad_field_projection_operation(
+            _align_document_inventory_operation(
+                _validate_request_evidence(
+                    parse_question_decision(
+                        raw,
+                        fallback_retrieval_query=clean_question,
+                    ),
+                    clean_question,
                 ),
                 clean_question,
             ),
@@ -254,11 +293,14 @@ async def decide_question(
     repaired = await model.ainvoke(repair_prompt)
     responses.append(_response_text(repaired))
     try:
-        return _align_document_inventory_operation(
-            _validate_request_evidence(
-                parse_question_decision(
-                    repaired,
-                    fallback_retrieval_query=clean_question,
+        return _align_broad_field_projection_operation(
+            _align_document_inventory_operation(
+                _validate_request_evidence(
+                    parse_question_decision(
+                        repaired,
+                        fallback_retrieval_query=clean_question,
+                    ),
+                    clean_question,
                 ),
                 clean_question,
             ),

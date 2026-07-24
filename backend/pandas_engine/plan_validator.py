@@ -573,6 +573,43 @@ def _validate_numeric_filter_grounding(
     return issues
 
 
+def _validate_result_limit_grounding(
+    plan: QueryPlan,
+    question: str,
+) -> list[PlanValidationIssue]:
+    """Reject result caps invented by the planner rather than stated by the user."""
+
+    issues: list[PlanValidationIssue] = []
+    normalized = re.sub(r"\s+", "", question)
+    if plan.limit is not None:
+        evidence = re.search(
+            rf"(?<!\d){plan.limit}(?!\d)(?:개|건|명|행|개만|건만|명만)?",
+            normalized,
+        )
+        if evidence is None:
+            issues.append(
+                _issue(
+                    "ungrounded_limit",
+                    f"질문에 없는 반환 제한이 조회 계획에 포함됐습니다: {plan.limit}",
+                    field="limit",
+                )
+            )
+    if plan.top_n is not None:
+        evidence = re.search(
+            rf"(?<!\d){plan.top_n}(?!\d)(?:개|건|명|위|번째|개만|건만|명만)?",
+            normalized,
+        )
+        if evidence is None:
+            issues.append(
+                _issue(
+                    "ungrounded_top_n",
+                    f"질문에 없는 그룹 제한이 조회 계획에 포함됐습니다: {plan.top_n}",
+                    field="top_n",
+                )
+            )
+    return issues
+
+
 def validate_query_plan(
     plan: QueryPlan,
     *,
@@ -735,6 +772,7 @@ def validate_query_plan(
                 actual_columns,
             )
         )
+        issues.extend(_validate_result_limit_grounding(plan, question))
 
     if issues:
         return PlanValidationResult(
