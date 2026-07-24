@@ -84,25 +84,10 @@
 
       <footer class="composer-wrap">
         <div class="selected-files" id="selectedFiles"></div>
-        <div class="query-mode-row" id="queryModeRow">
-          <label class="natural-mode-option" for="naturalMode">
-            <input id="naturalMode" type="checkbox">
-            <span class="mode-switch" aria-hidden="true"><i></i></span>
-            <span>AI 문서 검색</span>
-          </label>
-          <div class="mode-help-wrap" id="modeHelpWrap">
-            <button class="mode-help-button" id="modeHelpButton" type="button" aria-expanded="false" aria-controls="modeHelpPopover" aria-label="AI 문서 검색 주의사항">i</button>
-            <div class="mode-help-popover" id="modeHelpPopover" role="note" hidden>
-              <strong>주의</strong>
-              <p>AI 문서 검색은 의미가 비슷한 내용을 찾는 보조 기능으로, 답변이 부정확할 수 있습니다. 자동 분류가 잘못될 때만 사용하고 정확한 계산에는 사용하지 마세요.</p>
-            </div>
-          </div>
-        </div>
         <div class="question-autocomplete" id="questionAutocomplete" role="listbox" aria-label="빠른 질문 추천" hidden></div>
         <form class="composer" id="chatForm">
           <button class="quick-attach-button" id="quickAttach" type="button" aria-label="문서 첨부" title="문서 첨부">＋</button>
           <textarea id="questionInput" role="combobox" rows="1" maxlength="2000" placeholder="문서에 대해 질문하세요." autocomplete="off" aria-autocomplete="list" aria-haspopup="listbox" aria-controls="questionAutocomplete" aria-expanded="false"></textarea>
-          <button class="quick-mode-button" id="quickModeToggle" type="button" aria-label="AI 문서 검색 전환" title="AI 문서 검색 전환"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button>
           <button class="send-button" id="sendButton" type="submit" aria-label="질문 전송"><span data-send-label>전송</span><span data-send-icon aria-hidden="true">→</span></button>
         </form>
         <p class="composer-note">금액·인원·통계 외의 문서 검색은 핵심 키워드 중심 입력 권장 · 중요한 금액은 계산 근거와 원문 확인</p>
@@ -153,6 +138,6 @@
     <button class="secondary-button" id="detailMore" type="button" hidden>더 보기</button>
   </dialog>
   <div class="toast" id="toast" role="status"></div>
-  <script src="/static/app.js?v=20260723-9" defer></script>
+  <script src="/static/app.js?v=20260724-1" defer></script>
 </body>
 </html>

@@ -24,16 +24,10 @@ const elements = {
   clearChat: document.getElementById("clearChat"),
   chatArea: document.getElementById("chatArea"),
   selectedFiles: document.getElementById("selectedFiles"),
-  queryModeRow: document.getElementById("queryModeRow"),
-  naturalMode: document.getElementById("naturalMode"),
-  modeHelpWrap: document.getElementById("modeHelpWrap"),
-  modeHelpButton: document.getElementById("modeHelpButton"),
-  modeHelpPopover: document.getElementById("modeHelpPopover"),
   chatForm: document.getElementById("chatForm"),
   questionInput: document.getElementById("questionInput"),
   questionAutocomplete: document.getElementById("questionAutocomplete"),
   quickAttach: document.getElementById("quickAttach"),
-  quickModeToggle: document.getElementById("quickModeToggle"),
   sendButton: document.getElementById("sendButton"),
   renameModal: document.getElementById("renameModal"),
   renameForm: document.getElementById("renameForm"),
@@ -726,7 +720,7 @@ async function sendQuestion(question, options = {}) {
     question: value,
     request_id: requestId,
     sources: options.sources ? [...options.sources] : [...state.selected],
-    mode: options.mode || (elements.naturalMode.checked ? "natural" : "auto"),
+    mode: "auto",
   };
   elements.questionInput.value = "";
   hideQuestionSuggestions();
@@ -837,7 +831,6 @@ function setChatBusy(busy) {
   elements.sendButton.setAttribute("aria-label", busy ? "답변 생성 중단" : "질문 전송");
   elements.sendButton.querySelector("[data-send-label]").textContent = busy ? "중단" : "전송";
   elements.sendButton.querySelector("[data-send-icon]").textContent = busy ? "■" : "→";
-  elements.naturalMode.disabled = busy;
 }
 
 function stopChat() {
@@ -1029,7 +1022,7 @@ async function primeQuestionCatalog() {
         personAutocomplete: state.personAutocomplete,
         dateAutocomplete: state.dateAutocomplete,
       });
-      if (document.activeElement === elements.questionInput && !elements.naturalMode.checked) {
+      if (document.activeElement === elements.questionInput) {
         showLocalQuestionSuggestions();
       }
     }
@@ -1128,7 +1121,7 @@ function remotePersonPrefix(query) {
 }
 
 function scheduleRemotePersonSearch(query) {
-  if (state.personAutocomplete.mode !== "remote" || elements.naturalMode.checked || state.busy) return;
+  if (state.personAutocomplete.mode !== "remote" || state.busy) return;
   const prefix = remotePersonPrefix(query);
   if (!prefix) {
     state.personSuggestionController?.abort();
@@ -1254,7 +1247,7 @@ function rankUnifiedSuggestions(query) {
 }
 
 function showLocalQuestionSuggestions() {
-  if (elements.naturalMode.checked || state.busy) {
+  if (state.busy) {
     hideQuestionSuggestions();
     return;
   }
@@ -1282,33 +1275,10 @@ function setUploadPanelOpen(open) {
   elements.uploadToggle.setAttribute("aria-label", open ? "문서 업로드 닫기" : "문서 업로드 열기");
 }
 
-function setModeHelpOpen(open) {
-  elements.modeHelpPopover.hidden = !open;
-  elements.modeHelpButton.setAttribute("aria-expanded", String(open));
-}
-
-function updateNaturalMode() {
-  const active = elements.naturalMode.checked;
-  hideQuestionSuggestions();
-  elements.queryModeRow.classList.toggle("active", active);
-  elements.questionInput.placeholder = active
-    ? "질문의 의미와 문맥으로 검색하세요."
-    : (document.documentElement.classList.contains("ui-v3")
-      ? "질문을 입력하세요..."
-      : "문서에 대해 질문하세요.");
-}
-
-function setNaturalMode(active) {
-  if (active && !elements.naturalMode.checked) {
-    const confirmed = window.confirm(
-      "주의: AI 문서 검색은 의미가 비슷한 내용을 바탕으로 답변하므로 부정확하거나 틀린 답변을 만들 수 있습니다.\n\n"
-      + "금액·인원·통계 계산이나 원본 확인이 필요한 질문에는 사용하지 마세요. 그래도 AI 문서 검색을 켤까요?",
-    );
-    if (!confirmed) return false;
-  }
-  elements.naturalMode.checked = active;
-  updateNaturalMode();
-  return true;
+function updateQuestionPlaceholder() {
+  elements.questionInput.placeholder = document.documentElement.classList.contains("ui-v3")
+    ? "질문을 입력하세요..."
+    : "문서에 대해 질문하세요.";
 }
 
 elements.chatForm.addEventListener("submit", (event) => {
@@ -1379,9 +1349,6 @@ document.addEventListener("pointerdown", (event) => {
   ) {
     setUploadPanelOpen(false);
   }
-  if (!elements.modeHelpPopover.hidden && !elements.modeHelpWrap.contains(event.target)) {
-    setModeHelpOpen(false);
-  }
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
@@ -1397,19 +1364,7 @@ document.addEventListener("keydown", (event) => {
       setUploadPanelOpen(false);
       elements.uploadToggle.focus();
     }
-    if (!elements.modeHelpPopover.hidden) {
-      setModeHelpOpen(false);
-      elements.modeHelpButton.focus();
-    }
   }
-});
-elements.naturalMode.addEventListener("change", () => {
-  if (elements.naturalMode.checked) {
-    elements.naturalMode.checked = false;
-    setNaturalMode(true);
-    return;
-  }
-  updateNaturalMode();
 });
 elements.renameForm.addEventListener("submit", submitRenameDocument);
 elements.renameCancel.addEventListener("click", closeRenameModal);
@@ -1418,9 +1373,6 @@ elements.deleteSubmit.addEventListener("click", submitDeleteDocument);
 elements.closeDetail.addEventListener("click", () => elements.detailDialog.close());
 elements.detailDialog.addEventListener("click", (event) => {
   if (event.target === elements.detailDialog) elements.detailDialog.close();
-});
-elements.modeHelpButton.addEventListener("click", () => {
-  setModeHelpOpen(elements.modeHelpPopover.hidden);
 });
 elements.uploadFile.addEventListener("change", () => selectUploadFile(elements.uploadFile.files[0]));
 elements.uploadForm.addEventListener("submit", uploadDocument);
@@ -1464,13 +1416,9 @@ elements.quickAttach.addEventListener("click", () => {
   elements.sidebar.classList.add("open");
   setUploadPanelOpen(true);
 });
-elements.quickModeToggle.addEventListener("click", () => {
-  setNaturalMode(!elements.naturalMode.checked);
-});
-
 bindSuggestions();
 loadDocuments();
-updateNaturalMode();
+updateQuestionPlaceholder();
 const composerResizeObserver = new ResizeObserver(syncMobileComposerInset);
 composerResizeObserver.observe(document.querySelector(".composer-wrap"));
 window.addEventListener("resize", syncMobileComposerInset);
