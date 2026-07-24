@@ -311,9 +311,9 @@ V2.1에서는 질문 속 표현을 정규식으로 감지하여 집계 의도를
 
 이를 통해 단순 PANDAS 분기보다 구체적인 실행 유형을 결정할 수 있게 되었다.
 
-### V2.2. 질문 분석기와 E-O 쌍 도입
+### V2.2. Regex Question Analyzer와 Engine-Operation Pair 도입
 
-V2.2에서는 질문을 Guard와 Router가 각각 따로 해석하지 않도록 **질문 분석기**를 추가했다.
+V2.2에서는 질문을 Guard와 Router가 각각 따로 해석하지 않도록 **Regex Question Analyzer**를 추가했다.
 
 기존 구조는 다음과 같았다.
 
@@ -324,17 +324,17 @@ V2.2에서는 질문을 Guard와 Router가 각각 따로 해석하지 않도록 
 변경된 구조는 다음과 같다.
 
 ```text
-질문 → 질문 분석기 → Guard → Router
+질문 → Regex Question Analyzer → Guard → Router
 ```
 
-질문 분석기는 질문마다 **E-O 쌍**을 만든다.
+Regex Question Analyzer는 질문마다 **Engine-Operation Pair**를 만든다.
 
-- **E, Engine**: 실제로 수행해야 할 작업
-- **O, Operation**: 작업을 실행할 경로
+- **Engine**: 질문이 요구하는 실제 작업 유형
+- **Operation**: 작업을 실행할 PANDAS·VECTOR 경로
 
 예시는 다음과 같다.
 
-| 질문 | E: Engine | O: Operation |
+| 질문 | Engine | Operation |
 |---|---|---|
 | `전체 명단 보여줘` | 리스트 조회 | PANDAS |
 | `홍길동 학과 알려줘` | 단순 이름 조회 | PANDAS |
@@ -342,28 +342,28 @@ V2.2에서는 질문을 Guard와 Router가 각각 따로 해석하지 않도록 
 | `출연금액 총합은?` | 총합 계산 | PANDAS |
 | `장학금 지급 기준은?` | 문서 기준 설명 | VECTOR |
 
-요청한 표기 기준에 따라 질문 분석기는 **Q.A**, Guard는 **G**, Router는 **R**, VECTOR와 PANDAS 분기는 각각 원 안의 **V**, **P**로 표현한다.
+구조도에서도 축약 기호 대신 각 구성 요소의 역할을 그대로 표시한다.
 
 ```mermaid
 flowchart LR
-    Q[질문] --> QA[Q.A]
-    QA --> EO[E-O 쌍]
-    EO --> G[G]
-    G -->|통과| R[R]
+    Q[질문] --> RQA[Regex Question Analyzer]
+    RQA --> EO[Engine-Operation Pair]
+    EO --> G[Guard]
+    G -->|통과| R[Router]
     G -->|모호·복합·너무 짧음| GUIDE[Guide]
-    R --> V((V))
-    R --> P((P))
-    P --> PD[기본 조회]
-    P --> PG[코드 생성]
+    R --> V((VECTOR))
+    R --> P((PANDAS))
+    P --> PD[Deterministic Lookup]
+    P --> PG[Python Code Generation]
 ```
 
-이 구조의 핵심은 Guard와 Router가 질문을 다시 해석하지 않고, Q.A가 만든 하나의 E-O 쌍을 공유한다는 점이다.
+이 구조의 핵심은 Guard와 Router가 질문을 다시 해석하지 않고, Regex Question Analyzer가 만든 하나의 Engine-Operation Pair를 공유한다는 점이다.
 
 ## E2. V3: LLM 기반 질문 분석과 안전한 JSON 실행
 
 ### 문제 1. 너무 강해진 정규식
 
-V2.1과 V2.2에서 정규식을 계속 강화하면서 표현 하나가 여러 규칙에 동시에 걸리거나, 사용자의 실제 의도와 다른 E-O 쌍으로 분류되는 사례가 늘어났다.
+V2.1과 V2.2에서 정규식을 계속 강화하면서 표현 하나가 여러 규칙에 동시에 걸리거나, 사용자의 실제 의도와 다른 Engine-Operation Pair로 분류되는 사례가 늘어났다.
 
 예를 들어 `가장 많이 받은 사람의 학과를 알려줘`는 최댓값 계산과 필드 조회가 함께 필요하다. 단순 키워드 규칙은 `가장 많이`만 보고 최댓값 계산으로 끝내거나, `학과`만 보고 이름 조회로 잘못 분류할 수 있다.
 
@@ -378,35 +378,35 @@ PANDAS 분기의 기본 조회는 비교적 안정적이었지만, 기본 조회
 - 잘못된 비교 연산과 정렬
 - 임의 Python 코드 실행 위험
 
-### 해결 1. Q.A를 정규식에서 LLM 분류로 전환
+### 해결 1. Regex Question Analyzer를 LLM Question Analyzer로 전환
 
-V3에서는 Q.A가 단순 정규식으로 E-O 쌍을 결정하는 대신, LLM이 허용된 질문 유형 중 하나를 구조화된 JSON으로 반환하도록 변경했다.
+V3에서는 Regex Question Analyzer가 Engine-Operation Pair를 결정하던 방식을 LLM Question Analyzer가 허용된 질문 유형을 Routing Decision JSON으로 반환하는 방식으로 변경했다.
 
 LLM은 자유롭게 `PANDAS` 또는 `VECTOR`라는 문자열을 선택하는 것이 아니라, `lookup_field`, `sum`, `max`, `document_criteria`처럼 허용된 operation만 선택한다. 이후 Guard와 Router가 이 operation을 실제 실행 경로로 변환한다.
 
 ```mermaid
 flowchart LR
-    Q[질문 + 압축 스키마] --> QA[Q.A<br/>LLM 질문 분류]
-    QA --> EO[E-O 쌍 JSON]
-    EO --> C[계약 검증]
-    C --> G[G]
-    G --> R[R]
-    R --> V((V))
-    R --> P((P))
+    Q[질문 + 압축 스키마] --> LQA[LLM Question Analyzer]
+    LQA --> RD[Routing Decision JSON]
+    RD --> C[Contract Validation]
+    C --> G[Guard]
+    G --> R[Router]
+    R --> V((VECTOR))
+    R --> P((PANDAS))
 ```
 
-### 해결 2. Python 코드 대신 QueryPlan JSON 생성
+### 해결 2. Python 코드 대신 Query Execution Plan JSON 생성
 
-PANDAS의 코드 생성 경로도 Python 코드를 직접 생성하는 방식에서, 허용된 연산만 담는 QueryPlan JSON 방식으로 변경했다.
+PANDAS의 코드 생성 경로도 Python 코드를 직접 생성하는 방식에서, 허용된 연산만 담는 Query Execution Plan JSON 방식으로 변경했다.
 
 ```mermaid
 flowchart LR
-    P((P)) --> D[기본 조회]
-    P --> QP[QueryPlan JSON 생성]
-    QP --> V1[JSON 규격 검증]
-    V1 --> V2[문서·컬럼·자료형 검증]
-    V2 --> V3[질문 숫자·단위·조건 대조]
-    V3 --> X[제한된 연산 실행]
+    P((PANDAS)) --> D[Deterministic Lookup]
+    P --> QP[Query Execution Plan JSON 생성]
+    QP --> V1[Contract Validation]
+    V1 --> V2[Schema and Type Validation]
+    V2 --> V3[Question Constraint Validation]
+    V3 --> X[Restricted Execution]
 ```
 
 현재 허용되는 대표 연산은 `list`, `count`, `sum`, `mean`, `median`, `mode`, `min`, `max`다.
@@ -432,12 +432,12 @@ V3에서는 질문 분류를 LLM 기반으로 전환했지만, `49기 목록`, `
 
 질문을 PANDAS와 VECTOR 중 어디로 보낼지 정하는 정보와, 어떤 데이터프레임에서 어떤 필터·집계·정렬을 실행할지 정하는 정보는 서로 다르다. 그러나 둘을 모두 JSON이라고만 부르면 분류 결과가 곧 실행 계획인 것처럼 오해하기 쉽다.
 
-- `질문 분류 JSON`: 질문의 의도와 operation을 표현하며 최종 실행 모드를 고르는 **질문 분류 JSON**
-- `실행 계획 JSON`: dataframe, filter, select, target, group, sort, limit 등을 표현하는 **실행 계획 JSON**
+- `Routing Decision JSON`: 질문의 의도와 operation을 표현하며 최종 실행 모드를 고르는 **Routing Decision JSON**
+- `Query Execution Plan JSON`: dataframe, filter, select, target, group, sort, limit 등을 표현하는 **Query Execution Plan JSON**
 
 ### 문제 3. 정규식 분류와 LLM 분류의 관계가 불분명한 문제
 
-기존 정규식 기반 Q.A와 LLM 기반 Q.A가 동시에 존재하지만, LLM 모드에서 두 결과가 모두 실제 라우팅을 결정하는 것은 아니다. 정규식 결과는 기존 동작과의 차이를 확인하기 위한 shadow 비교 기준이며, 실제 분류 결과와 구분해서 기록해야 한다.
+Regex Question Analyzer와 LLM Question Analyzer가 동시에 존재하지만, LLM 모드에서 두 결과가 모두 실제 라우팅을 결정하는 것은 아니다. 정규식 결과는 기존 동작과의 차이를 확인하기 위한 shadow 비교 기준이며, 실제 분류 결과와 구분해서 기록해야 한다.
 
 ### 해결
 
@@ -445,37 +445,37 @@ V3에서는 질문 분류를 LLM 기반으로 전환했지만, `49기 목록`, `
 
 | 표기 | 의미 | 역할 |
 |---|---|---|
-| `빠른 후보 분류기` | 빠른 질문 표현 판별 | 질문에서 자주 쓰는 표현을 먼저 확인하고, LLM 없이 처리할 수 있는지 시험하는 최초 진입점 |
-| `스키마 기반 계획 생성기` | 스키마 검증 실행 계획 생성 | 정규식이 제안한 operation 후보를 실제 스키마·메타데이터·원본 값에 대입해 안전한 `실행 계획 JSON`을 만들 수 있는지 검증하는 결정론적 Planner |
-| `정규식 질문 분석기` | 정규식 기반 질문 분석 | 기존의 전체 정규식 질문 분석기. 현재 LLM 모드에서는 실제 경로를 결정하지 않고 `LLM 질문 분석기`와 결과를 비교하는 shadow 기준으로 사용 |
-| `LLM 질문 분석기` | LLM 기반 질문 분석 | `빠른 후보 분류기`와 `스키마 기반 계획 생성기`만으로 확정할 수 없는 질문을 해석해 `질문 분류 JSON`을 만드는 LLM 기반 질문 분석기 |
-| `질문 분류 JSON` | 질문 분류 정보 | 질문의 operation과 상태를 담아 Guard와 Router가 PANDAS·VECTOR·GUIDE 중 경로를 결정하도록 하는 질문 분류 JSON |
-| `실행 계획 JSON` | 실행 작업 명세 | 사용할 dataframe, filter, select, target, group, sort, limit 등 PANDAS가 실제로 수행할 작업을 담은 실행 계획 JSON |
+| `Fast Pattern Router` | Fast operation candidate detection | 질문에서 자주 쓰는 표현을 먼저 확인하고, LLM 없이 처리할 수 있는지 시험하는 최초 진입점 |
+| `Schema-Grounded Planner` | Schema-validated query planning | operation 후보를 실제 스키마·메타데이터·원본 값에 대입해 안전한 `Query Execution Plan JSON`을 만들 수 있는지 검증하는 deterministic planner |
+| `Regex Question Analyzer` | Regex-based question analysis | 기존의 전체 정규식 질문 분석기. 현재 LLM 모드에서는 실제 경로를 결정하지 않고 `LLM Question Analyzer`와 결과를 비교하는 shadow 기준으로 사용 |
+| `LLM Question Analyzer` | LLM-based question analysis | 빠른 결정론적 경로로 확정할 수 없는 질문을 해석해 `Routing Decision JSON`을 만드는 질문 분석기 |
+| `Routing Decision JSON` | Routing decision contract | 질문의 operation과 상태를 담아 Guard와 Router가 PANDAS·VECTOR·GUIDE 중 경로를 결정하도록 하는 분류 계약 |
+| `Query Execution Plan JSON` | Restricted execution contract | 사용할 dataframe, filter, select, target, group, sort, limit 등 PANDAS가 실제로 수행할 작업을 담은 실행 계약 |
 | `operation` | 질문 작업 유형 | `lookup_amount`, `lookup_field`, `count_records`, `list_records`, `sum_amount`, `structured_query`처럼 질문이 요구하는 작업을 나타내는 값 |
 
-여기서 `빠른 후보 분류기`의 일부 정규식과 `정규식 질문 분석기`는 같은 것이 아니다. `빠른 후보 분류기`의 정규식은 자주 사용하는 질문에서 **operation 후보 하나를 빠르게 제안**하는 좁은 입구이고, `정규식 질문 분석기`는 V1·V2에서 사용하던 기존 정규식 분석 전체를 가리킨다. 현재 LLM 모드에서 `정규식 질문 분석기`는 실제 답변 경로가 아니라 비교용으로 남아 있다.
+여기서 `Fast Pattern Router`의 일부 정규식과 `Regex Question Analyzer`는 같은 것이 아니다. `Fast Pattern Router`의 정규식은 자주 사용하는 질문에서 **operation 후보 하나를 빠르게 제안**하는 좁은 입구이고, `Regex Question Analyzer`는 V1·V2에서 사용하던 기존 정규식 분석 전체를 가리킨다. 현재 LLM 모드에서 `Regex Question Analyzer`는 실제 답변 경로가 아니라 비교용으로 남아 있다.
 
 #### 검증된 operation 후보를 먼저 시험하는 구조
 
-`빠른 후보 분류기`는 자주 사용하는 질문 표현을 정규식으로 확인해 operation 후보를 먼저 만든다. 하지만 정규식이 맞아 보인다는 이유만으로 그 후보를 확정하지 않는다. 후보를 `스키마 기반 계획 생성기`에 전달하고, `스키마 기반 계획 생성기`가 현재 데이터 구조에서 유효한 `실행 계획 JSON`을 실제로 만들었을 때만 해당 operation을 채택한다.
+`Fast Pattern Router`는 자주 사용하는 질문 표현을 정규식으로 확인해 operation 후보를 먼저 만든다. 하지만 정규식이 맞아 보인다는 이유만으로 그 후보를 확정하지 않는다. 후보를 `Schema-Grounded Planner`에 전달하고, `Schema-Grounded Planner`가 현재 데이터 구조에서 유효한 `Query Execution Plan JSON`을 실제로 만들었을 때만 해당 operation을 채택한다.
 
 ```text
-정규식 = operation 후보 제안
-스키마 기반 계획 생성기    = 실제 데이터와 스키마를 이용한 검증
+Fast Pattern Router      = operation 후보 제안
+Schema-Grounded Planner  = 실제 데이터와 스키마를 이용한 검증
 ```
 
-따라서 이 구조는 “`실행 계획 JSON`을 만들 가능성이 높아 보이면 정규식으로 보낸다”가 아니라, “정규식으로 operation 후보를 고른 뒤 `스키마 기반 계획 생성기`가 `실행 계획 JSON` 생성에 성공한 경우에만 LLM 없는 경로를 확정한다”가 정확한 설명이다.
+따라서 이 구조는 “`Query Execution Plan JSON`을 만들 가능성이 높아 보이면 정규식으로 보낸다”가 아니라, “정규식으로 operation 후보를 고른 뒤 `Schema-Grounded Planner`가 `Query Execution Plan JSON` 생성에 성공한 경우에만 LLM 없는 경로를 확정한다”가 정확한 설명이다.
 
 예를 들어 `김철수가 낸 금액 알려줘`라는 질문은 다음 순서로 처리된다.
 
-1. `빠른 후보 분류기`가 `돈`, `금액`, `냈어`와 같은 표현을 감지한다.
+1. `Fast Pattern Router`가 `돈`, `금액`, `냈어`와 같은 표현을 감지한다.
 2. `lookup_amount`를 operation 후보로 만든다.
-3. `스키마 기반 계획 생성기`가 실제 표에 사람 이름 컬럼과 금액 컬럼이 있는지 확인한다.
+3. `Schema-Grounded Planner`가 실제 표에 사람 이름 컬럼과 금액 컬럼이 있는지 확인한다.
 4. 질문의 이름이 원본 값 또는 허용된 마스킹 이름과 대응하는지 확인한다.
-5. 조건을 만족하는 `실행 계획 JSON` 생성에 성공하면 operation 후보를 확정한다.
-6. 생성에 실패하면 정규식 후보를 버리고 `LLM 질문 분석기`가 `질문 분류 JSON`을 만들도록 넘긴다.
+5. 조건을 만족하는 `Query Execution Plan JSON` 생성에 성공하면 operation 후보를 확정한다.
+6. 생성에 실패하면 정규식 후보를 버리고 `LLM Question Analyzer`가 `Routing Decision JSON`을 만들도록 넘긴다.
 
-operation이 확정된 경우 `질문 분류 JSON`은 LLM이 생성하지 않는다. Python 코드가 검증된 operation과 질문 원문을 `QuestionDecision` 형식에 넣어 직접 조립한다.
+operation이 확정된 경우 `Routing Decision JSON`은 LLM이 생성하지 않는다. Python 코드가 검증된 operation과 질문 원문을 `QuestionDecision` 형식에 넣어 직접 조립한다.
 
 ```json
 {
@@ -490,26 +490,26 @@ operation이 확정된 경우 `질문 분류 JSON`은 LLM이 생성하지 않는
 }
 ```
 
-즉, 이때의 `질문 분류 JSON`은 LLM이 새로 판단한 결과가 아니라 `스키마 기반 계획 생성기`로 검증된 operation을 기존 Guard·Router 계약에 맞게 포장한 결과다.
+즉, 이때의 `Routing Decision JSON`은 LLM이 새로 판단한 결과가 아니라 `Schema-Grounded Planner`로 검증된 operation을 기존 Guard·Router 계약에 맞게 포장한 결과다.
 
-V4에서는 질문을 받으면 `빠른 후보 분류기`가 먼저 `스키마 기반 계획 생성기`를 호출한다. `스키마 기반 계획 생성기`가 현재 스키마와 메타데이터만으로 안전한 `실행 계획 JSON`을 만들 수 있는지를 확인하고, 만들 수 있다면 그 판단을 이용해 `빠른 후보 분류기`가 `질문 분류 JSON`을 직접 만든다. 이 경로에서는 `LLM 질문 분석기`를 호출하지 않는다.
+V4에서는 질문을 받으면 `Fast Pattern Router`가 먼저 `Schema-Grounded Planner`를 호출한다. `Schema-Grounded Planner`가 현재 스키마와 메타데이터만으로 안전한 `Query Execution Plan JSON`을 만들 수 있는지를 확인하고, 만들 수 있다면 그 판단을 이용해 `Fast Pattern Router`가 `Routing Decision JSON`을 직접 만든다. 이 경로에서는 `LLM Question Analyzer`를 호출하지 않는다.
 
-`스키마 기반 계획 생성기`가 `실행 계획 JSON`을 만들 수 없는 질문만 `LLM 질문 분석기`로 보내 `질문 분류 JSON`을 생성한다. 이후에는 두 경로 모두 동일하게 Guard와 Router를 통과한다. Router가 PANDAS를 선택하면 실제 실행 단계에서 `실행 계획 JSON`을 생성·검증한 뒤 제한된 연산만 수행하고, VECTOR를 선택하면 문서 근거를 검색해 답변한다.
+`Schema-Grounded Planner`가 `Query Execution Plan JSON`을 만들 수 없는 질문만 `LLM Question Analyzer`로 보내 `Routing Decision JSON`을 생성한다. 이후에는 두 경로 모두 동일하게 Guard와 Router를 통과한다. Router가 PANDAS를 선택하면 실제 실행 단계에서 `Query Execution Plan JSON`을 생성·검증한 뒤 제한된 연산만 수행하고, VECTOR를 선택하면 문서 근거를 검색해 답변한다.
 
-현재 `빠른 후보 분류기`에서 확인용으로 생성한 `실행 계획 JSON`은 실행 단계까지 전달하지 않는다. PANDAS 단계에서 `스키마 기반 계획 생성기`가 실제 `실행 계획 JSON`을 다시 만들며, 만들지 못하면 LLM 실행 계획 생성기가 보완한다. 따라서 첫 번째 `실행 계획 JSON`은 빠르고 안전한 분류 가능성을 판단하는 근거이고, 두 번째 `실행 계획 JSON`이 검증 후 실제로 실행되는 계획이다.
+현재 `Fast Pattern Router`에서 확인용으로 생성한 `Query Execution Plan JSON`은 실행 단계까지 전달하지 않는다. PANDAS 단계에서 `Schema-Grounded Planner`가 실제 `Query Execution Plan JSON`을 다시 만들며, 만들지 못하면 LLM Query Planner가 보완한다. 따라서 첫 번째 `Query Execution Plan JSON`은 빠르고 안전한 분류 가능성을 판단하는 근거이고, 두 번째 `Query Execution Plan JSON`이 검증 후 실제로 실행되는 계획이다.
 
-`정규식 질문 분석기`는 실제 라우팅 경로와 별도로 실행되는 shadow 비교용 경로다. `정규식 질문 분석기`와 `LLM 질문 분석기`의 operation 차이는 비교 로그에 남기되, LLM 모드의 최종 경로를 `정규식 질문 분석기`가 덮어쓰지는 않는다.
+`Regex Question Analyzer`는 실제 라우팅 경로와 별도로 실행되는 shadow 비교용 경로다. `Regex Question Analyzer`와 `LLM Question Analyzer`의 operation 차이는 비교 로그에 남기되, LLM 모드의 최종 경로를 `Regex Question Analyzer`가 덮어쓰지는 않는다.
 
 ```mermaid
 flowchart TD
-    Q[질문] --> PR[빠른 후보 분류기]
+    Q[질문] --> PR[Fast Pattern Router]
     PR --> OP[정규식으로<br/>operation 후보 제안]
-    OP --> DP[스키마 기반 계획 생성기]
-    DP --> C{실행 계획 JSON 생성 가능?}
+    OP --> DP[Schema-Grounded Planner]
+    DP --> C{Query Execution Plan JSON 생성 가능?}
 
-    C -->|가능| RD[질문 분류 JSON 직접 생성<br/>LLM 미사용]
-    C -->|불가능| LQ[LLM 질문 분석기]
-    LQ --> RL[질문 분류 JSON 생성]
+    C -->|가능| RD[Routing Decision JSON 직접 생성<br/>LLM 미사용]
+    C -->|불가능| LQ[LLM Question Analyzer]
+    LQ --> RL[Routing Decision JSON 생성]
 
     RD --> G[Guard]
     RL --> G
@@ -519,39 +519,92 @@ flowchart TD
     R -->|PANDAS| P[PANDAS]
     R -->|VECTOR| V[VECTOR]
 
-    P --> DP2[스키마 기반 계획 생성기]
-    DP2 --> C2{실행 계획 JSON 생성 가능?}
-    C2 -->|가능| PV[실행 계획 JSON 검증]
-    C2 -->|불가능| LP[LLM 실행 계획 생성기]
-    LP --> PG[실행 계획 JSON 생성]
+    P --> DP2[Schema-Grounded Planner]
+    DP2 --> C2{Query Execution Plan JSON 생성 가능?}
+    C2 -->|가능| PV[Query Execution Plan JSON 검증]
+    C2 -->|불가능| LP[LLM Query Planner]
+    LP --> PG[Query Execution Plan JSON 생성]
     PG --> PV
     PV --> EX[제한된 연산 실행]
 
     V --> VS[근거 검색 후 답변]
 
-    Q -. shadow .-> RE[정규식 질문 분석기]
+    Q -. shadow .-> RE[Regex Question Analyzer]
     RE -. operation 비교 .-> LOG[비교 로그]
     LQ -. operation 비교 .-> LOG
 ```
 
-정리하면 `빠른 후보 분류기`는 LLM을 사용할지를 먼저 결정하고, `질문 분류 JSON`은 어디로 보낼지를 결정하며, `실행 계획 JSON`은 PANDAS가 무엇을 실행할지를 결정한다. 이 구조를 통해 검증된 질문은 빠르게 처리하면서도, 복잡한 질문에는 LLM의 판단 능력을 그대로 사용할 수 있다.
+정리하면 `Fast Pattern Router`는 LLM을 사용할지를 먼저 결정하고, `Routing Decision JSON`은 어디로 보낼지를 결정하며, `Query Execution Plan JSON`은 PANDAS가 무엇을 실행할지를 결정한다. 이 구조를 통해 검증된 질문은 빠르게 처리하면서도, 복잡한 질문에는 LLM의 판단 능력을 그대로 사용할 수 있다.
 
 쉽게 비유하면 모의고사 간단하게 쳐보고 점수가 잘나오면 바로 시험장으로 가서 시험을 보는 느낌이다.
 
 ```mermaid
 flowchart LR
-    E1[V1·V2<br/>정규식 질문 분석기·Guard·Guide] --> E2[V3<br/>LLM 질문 분석기·실행 계획 JSON] --> E3[V4<br/>빠른 후보 분류기·스키마 기반 계획 생성기·질문 분류 JSON·실행 계획 JSON]
+    E1[V1·V2<br/>Regex Question Analyzer·Guard·Guide] --> E2[V3<br/>LLM Question Analyzer·Routing Decision JSON·Query Execution Plan JSON]
+    E2 --> E3[V4<br/>Fast Pattern Router·Schema-Grounded Planner]
+    E3 --> E4[V5<br/>Person Reference Check·Single Schema-Grounded Planner·Prepared Plan Reuse]
 ```
 
-## E4. 골드셋 기반 세부 정확도 보완 계획
+## E4. V5: Single Schema-Grounded Planning Boundary
 
-### V5. 결정론적 질문 경로 단일화
+### 문제 1. Fast Pattern Router와 Schema-Grounded Planner의 책임 중복
 
-V5에서는 V4의 `빠른 후보 분류기 → 스키마 기반 계획 생성기` 두 단계에 나뉘어 있던 빠른 분류 책임을 `스키마 기반 계획 생성기`로 합친다. `스키마 기반 계획 생성기`가 질문 표현과 실제 스키마를 함께 확인해 operation 후보와 안전한 `실행 계획 JSON`을 만들고, 성공했을 때만 Python 코드가 `질문 분류 JSON`을 직접 조립한다. 교차 월 날짜 범위도 여기서 `structured_query`로 판정하고 기존 날짜 전용 실행기로 넘긴다. 이때 만들어진 `실행 계획 JSON`은 `QuestionResolution`으로 PANDAS까지 전달해 다시 생성하지 않고 Validator 검증 후 실행한다.
+V4에서는 Fast Pattern Router가 operation 후보를 고르고 Schema-Grounded Planner가 실행 가능성을 검증했다. 실제 코드에서는 두 단계가 같은 질문 표현과 우선순위를 반복해서 다루기 때문에, 규칙을 수정할 때 두 위치의 순서가 달라질 가능성이 있었다.
 
-이름이 여러 원본 인물과 대응하면 `스키마 기반 계획 생성기`·`LLM 질문 분석기`보다 먼저 후보 선택을 안내하고, 존재하지 않는 이름은 원본 이름 또는 허용된 마스킹 비교에서만 미조회로 처리한다. `스키마 기반 계획 생성기`가 계획을 만들지 못한 질문만 `LLM 질문 분석기`가 `질문 분류 JSON`을 생성하며, `정규식 질문 분석기`는 shadow 비교용으로만 유지한다.
+### 문제 2. 검증에 사용한 Query Execution Plan JSON의 재생성
 
-E4에서는 현재 라우팅 구조를 크게 변경하기보다 `Result_1.xlsx` 골드셋을 반복 실행하면서 라우팅·계획·실행 결과를 원본 데이터와 비교하고, 날짜·금액·이름·목록 조건처럼 남아 있는 사소한 오차를 회귀 테스트와 함께 수정할 계획이다.
+V4의 빠른 경로에서 만든 첫 번째 Query Execution Plan JSON은 분류 가능성을 확인하는 데만 사용했다. 이후 PANDAS가 같은 계획을 다시 만들었기 때문에 불필요한 계산이 발생하고, 첫 번째 판단과 실제 실행 계획이 달라질 여지가 있었다.
+
+### 문제 3. 이름·날짜 경계 처리와 회귀 검증의 분산
+
+동명이인, 존재하지 않는 이름, 마스킹 이름, 교차 월 날짜 범위는 Planner나 LLM보다 먼저 일관되게 처리해야 한다. 이 경계가 여러 위치에 흩어지면 같은 질문이 API 경로에 따라 다르게 처리될 수 있다.
+
+### 해결 1. Schema-Grounded Planner로 빠른 판단 단일화
+
+V5에서는 Fast Pattern Router의 operation 후보 선택과 Schema-Grounded Planner의 스키마 검증을 하나의 `Schema-Grounded Planner` 경계로 합쳤다. 이 Planner가 operation과 Query Execution Plan JSON을 함께 만들며, 안전한 계획을 만들지 못한 질문만 LLM Question Analyzer로 전달한다. 교차 월 날짜 범위는 `structured_query`로 분류하되 독립된 연·월 필터 계획을 만들지 않고 Date Range Executor로 넘긴다.
+
+### 해결 2. Prepared Query Execution Plan 재사용
+
+Schema-Grounded Planner가 만든 계획은 `QuestionResolution`에 보존해 PANDAS까지 전달한다. PANDAS는 전달받은 계획을 다시 생성하지 않고 Plan Validator로 검증한 뒤 Restricted Query Executor에서 그대로 실행한다. LLM Question Analyzer 경로처럼 준비된 계획이 없는 경우에만 Schema-Grounded Planner와 LLM Query Planner가 실행 계획 생성을 보완한다.
+
+### 해결 3. Person Reference Check와 경계 회귀 테스트
+
+동명이인 후보와 존재하지 않는 이름은 Schema-Grounded Planner와 LLM Question Analyzer보다 먼저 `Person Reference Check`에서 처리한다. Regex Question Analyzer는 실제 경로를 바꾸지 않는 Shadow Analyzer로만 유지한다. 교차 월 범위, Planner 실패 후 LLM 전환, 이름 선차단, Prepared Plan 재사용을 각각 회귀 테스트로 고정하고 골드셋의 날짜·금액·이름·목록 오차는 이 구조 위에서 계속 보완한다.
+
+```mermaid
+flowchart TD
+    Q[질문] --> PC[Person Reference Check]
+    PC -->|동명이인·미조회| PA[Candidate Guide or No Result]
+    PC -->|조회 가능| SGP[Schema-Grounded Planner]
+
+    SGP --> T{Planning Result}
+    T -->|Prepared Plan| RD[Routing Decision JSON]
+    T -->|Date Range Route| DR[Routing Decision JSON<br/>structured_query]
+    T -->|No Safe Plan| LQA[LLM Question Analyzer]
+    LQA --> RL[Routing Decision JSON]
+
+    RD --> G[Guard]
+    DR --> G
+    RL --> G
+    G -->|차단| GUIDE[Guide]
+    G -->|통과| R[Router]
+
+    R -->|VECTOR| V[VECTOR Evidence Search]
+    R -->|PANDAS| P{PANDAS Execution Input}
+
+    P -->|Prepared Plan| PV[Plan Validator]
+    PV --> X[Restricted Query Executor]
+    P -->|Date Range Route| DX[Date Range Executor]
+    P -->|Routing Only| SGP2[Schema-Grounded Planner]
+    SGP2 -->|Plan Ready| PV
+    SGP2 -->|No Plan| LQP[LLM Query Planner]
+    LQP --> PV
+
+    Q -. shadow .-> RQA[Regex Question Analyzer]
+    RQA -. comparison only .-> LOG[Shadow Comparison Log]
+```
+
+현재 V5의 핵심 흐름은 `Person Reference Check → Schema-Grounded Planner → Routing Decision JSON → Guard → Router → 실행기`다. Fast Pattern Router는 V4 설명에만 남는 이전 단계이며 V5 실제 경로에서는 제거되었다.
 
 ---
 
@@ -632,7 +685,7 @@ E3에서는 답변 문장을 읽는 데서 끝나지 않고, 사용자가 답변
 
 ## E4. 검증된 후속 질문 자동 반환 계획
 
-E4에서는 현재 질문과 응답에서 확인된 인물·금액·컬럼 정보를 기준으로, LLM을 거치지 않고 빠르게 실행할 수 있는 검증된 후속 질문을 자동 반환할 계획이다. 예를 들어 이름이 확인되면 `이 인물의 전체 기록`, `납부 금액`, `소속 정보`처럼 실제 스키마와 `스키마 기반 계획 생성기`로 실행 가능성이 검증된 질문만 추천하며, 문서별 이름이나 정답을 하드코딩하지 않는다.
+E4에서는 현재 질문과 응답에서 확인된 인물·금액·컬럼 정보를 기준으로, LLM을 거치지 않고 빠르게 실행할 수 있는 검증된 후속 질문을 자동 반환할 계획이다. 예를 들어 이름이 확인되면 `이 인물의 전체 기록`, `납부 금액`, `소속 정보`처럼 실제 스키마와 `Schema-Grounded Planner`로 실행 가능성이 검증된 질문만 추천하며, 문서별 이름이나 정답을 하드코딩하지 않는다.
 
 ```mermaid
 flowchart LR
@@ -657,35 +710,38 @@ flowchart TD
     DB1 --> Q[사용자 질문]
     DB2 --> Q
 
-    Q --> PR[빠른 후보 분류기]
-    PR --> OP[정규식으로 operation 후보 제안]
-    OP --> DP[스키마 기반 계획 생성기]
-    DP --> PC{실행 계획 JSON 생성 가능?}
-    PC -->|가능| RJ[질문 분류 JSON 직접 생성]
-    PC -->|불가능| LQ[LLM 질문 분석기]
-    LQ --> RJ2[질문 분류 JSON 생성]
+    Q --> NRC[Person Reference Check]
+    NRC -->|조회 가능| DP[Schema-Grounded Planner]
+    NRC -->|동명이인·미조회| NR[Candidate Guide or No Result]
+    DP --> PC{Planning Result}
+    PC -->|Prepared Plan| RJ[Routing Decision JSON 직접 생성]
+    PC -->|Date Range Route| RJ
+    PC -->|No Safe Plan| LQ[LLM Question Analyzer]
+    LQ --> RJ2[Routing Decision JSON 생성]
 
     RJ --> G[Guard]
     RJ2 --> G
     G -->|모호·복합·미지원| GUIDE[Guide]
     G -->|실행 가능| R[Router]
 
-    R --> V((V))
-    R --> P((P))
+    R --> V((VECTOR))
+    R --> P((PANDAS))
 
     V --> VS[관련 문서 근거 검색]
     VS --> VA[근거 제한 LLM 답변]
 
-    P --> PD[스키마 기반 계획 생성]
-    PD --> PC2{실행 계획 JSON 생성 가능?}
-    PC2 -->|가능| PV[실행 계획 JSON 검증]
-    PC2 -->|불가능| PQ[LLM 실행 계획 생성기 보완]
-    PQ --> PJ[실행 계획 JSON 생성]
-    PJ --> PV
-    PV --> PE[제한 실행]
+    P --> PI{Execution Input}
+    PI -->|Prepared Plan| PV[Plan Validator]
+    PI -->|Date Range Route| DE[Date Range Executor]
+    PI -->|Routing Only| PD[Schema-Grounded Planner]
+    PD -->|Plan Ready| PV
+    PD -->|No Plan| PQ[LLM Query Planner]
+    PQ --> PV
+    PV --> PE[Restricted Query Executor]
 
     VA --> A[구조화된 답변 + 출처]
     PE --> A
+    DE --> A
     A --> IC[인물 카드]
     A --> MR[금액·납부·지급 기록]
     IC --> OR[원본 컬럼·행 확인]
@@ -697,7 +753,7 @@ flowchart TD
 이 흐름에서 각 Part의 역할은 명확히 분리된다.
 
 - **Part 1 문서 적재**는 원본 컬럼과 행의 연결을 보존해 다시 조회할 수 있는 데이터를 만든다.
-- **Part 2 질문 분류**는 자주 쓰는 질문을 `빠른 후보 분류기`와 `스키마 기반 계획 생성기`로 먼저 검증하고, 필요한 질문만 `LLM 질문 분석기`로 보내 실행 경로를 결정한다.
+- **Part 2 질문 분류**는 `Person Reference Check`와 단일 `Schema-Grounded Planner`로 검증 가능한 질문을 먼저 처리하고, 안전한 계획을 만들지 못한 질문만 `LLM Question Analyzer`로 보낸다.
 - **Part 3 질문 답변**은 결과와 출처뿐 아니라 인물 카드와 금액의 원본 기록을 구조화된 응답으로 제공한다.
 - **E4 계획**은 골드셋 기반 세부 보완, 운영 문서 형식 확장, 검증된 후속 질문 자동 반환으로 이어진다.
 
@@ -721,12 +777,12 @@ flowchart TD
 | 문서 적재 | `utils/ingest.py` | 파일 형식별 적재 진입점 |
 | 표 공통 처리 | `table_ingest_pipeline.py` | DataFrame형 표의 공통 정제·저장 |
 | 의미 스키마 | `semantic_schema.py` | 원본 컬럼의 의미·단위·날짜 추론 |
-| 질문 분석 | `question_analyzer.py`, `question_engine.py` | `정규식 질문 분석기`와 `LLM 질문 분석기`의 질문 operation 분석 |
-| 빠른 실행 판단 | `deterministic_query_plan.py` | `빠른 후보 분류기`가 제안한 operation으로 스키마 기반 `실행 계획 JSON` 생성 가능 여부 확인 |
+| 질문 분석 | `question_analyzer.py`, `question_engine.py` | `Regex Question Analyzer`와 `LLM Question Analyzer`의 질문 operation 분석 |
+| 빠른 실행 판단 | `deterministic_query_plan.py` | `Schema-Grounded Planner`가 operation 후보 선택과 `Query Execution Plan JSON` 생성을 한 경계에서 검증 |
 | 질문 검수 | `guard.py`, `guide.py` | 모호·복합·미지원 질문 차단과 안내 |
-| 실행 분기 | `main.py`, `router.py` | `질문 분류 JSON`을 기준으로 VECTOR, PANDAS, DOCUMENTS, GUIDE 선택 |
+| 실행 분기 | `main.py`, `router.py` | `Routing Decision JSON`을 기준으로 VECTOR, PANDAS, DOCUMENTS, GUIDE 선택 |
 | PANDAS 기본 조회 | `datastore/query.py`, `aggregation.py` | 이름·명단·금액·날짜 조회 |
-| PANDAS 계획 조회 | `query_plan.py`, `plan_validator.py`, `query_executor.py` | `실행 계획 JSON` 생성·검증·제한 실행 |
+| PANDAS 계획 조회 | `query_plan.py`, `plan_validator.py`, `query_executor.py` | `Query Execution Plan JSON` 생성·검증·제한 실행 |
 | 대화형 결과 | `pandas_engine/interactive.py`, `main.py` | 인물·금액·계산 근거와 페이지 조회용 구조화 데이터 제공 |
 | 웹 UI | `static/app.js`, `static/index.html`, `static/style.css` | 답변의 인물 카드와 금액 기록을 원본 컬럼 기준으로 표시 |
 | VECTOR 검색 | `vector.py`, `prompts.py` | 근거 검색과 LLM 답변 |
@@ -742,7 +798,7 @@ flowchart TD
 | Part | 핵심 검증 항목 |
 |---|---|
 | 문서 적재 | 셀 OCR 정확도, 병합 셀 복원, 날짜·금액 스키마 정확도, 원본 컬럼·행 연결 보존 |
-| 질문 분류 | operation 정확도, `질문 분류 JSON`·`실행 계획 JSON` 검증, Guard 감지율, Router 분기 정확도 |
+| 질문 분류 | operation 정확도, `Routing Decision JSON`·`Query Execution Plan JSON` 검증, Guard 감지율, Router 분기 정확도 |
 | 질문 답변 | 명단 누락 여부, 계산 정확도, 출처 일치 여부, 인물 카드·금액 기록의 원본 행 일치 여부 |
 
 현재 자동화 테스트는 질문 분석, Guard, Router, QueryPlan, 집계, 날짜, 문서 범위, 이름 검색, 스키마, 병합 셀, 이미지 OCR을 포함한다. 또한 `Result_1.xlsx`를 원본으로 만든 골드셋을 별도 서버에서 반복 실행해 라우팅 실패, 계획 실패, 실행 실패, 평가기 오판을 구분하고 원본 데이터와 결과를 대조한다. E4에서는 이 결과를 바탕으로 날짜·금액·이름·목록 조건의 세부 오차를 회귀 테스트와 함께 계속 보완한다.
@@ -768,9 +824,9 @@ QUESTION_ENGINE_MODE=legacy
 
 `QUESTION_ENGINE_MODE`는 다음 세 모드를 지원한다.
 
-- `legacy`: 기존 정규식 Question Analyzer 사용
-- `shadow`: 기존 결과로 실행하면서 LLM 질문 분석기 결과를 비교
-- `llm`: `빠른 후보 분류기`와 `스키마 기반 계획 생성기`가 검증 가능한 질문은 빠르게 분류하고, 나머지는 LLM 질문 분석기의 구조화 operation을 실제 라우팅에 사용
+- `legacy`: 기존 Regex Question Analyzer 사용
+- `shadow`: 기존 결과로 실행하면서 LLM Question Analyzer 결과를 비교
+- `llm`: `Person Reference Check`와 `Schema-Grounded Planner`가 검증 가능한 질문은 빠르게 분류하고, 나머지는 LLM Question Analyzer의 구조화 operation을 실제 라우팅에 사용
 
 ### 인프라 실행
 
