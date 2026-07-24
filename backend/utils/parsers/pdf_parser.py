@@ -24,6 +24,31 @@ OCR_DPI  = 300
 OCR_LANG = "kor+eng"
 
 
+def _extract_table_with_confirmed_spans(table) -> list[list[str | None]]:
+    """Expand only cells whose PDF geometry physically spans later rows."""
+
+    values = table.extract()
+    rows = table.rows
+    for row_index, row in enumerate(rows):
+        for column_index, cell in enumerate(row.cells):
+            if cell is not None or values[row_index][column_index] is not None:
+                continue
+            current_top = row.bbox[1]
+            current_bottom = row.bbox[3]
+            for previous_index in range(row_index - 1, -1, -1):
+                previous_cell = rows[previous_index].cells[column_index]
+                if previous_cell is None:
+                    continue
+                spans_current_row = (
+                    previous_cell[1] < current_top
+                    and previous_cell[3] >= current_bottom
+                )
+                if spans_current_row:
+                    values[row_index][column_index] = values[previous_index][column_index]
+                break
+    return values
+
+
 def _extract_page_texts(file_path: str) -> dict[int, str]:
     page_texts: dict[int, str] = {}
     scanned_pages: list[int] = []
@@ -103,13 +128,14 @@ def ingest_pdf_hybrid(file_path: str, file_hash: str, category: str) -> int:
     with pdfplumber.open(file_path) as pdf:
         for page_num, page in enumerate(pdf.pages, start=1):
             try:
-                tables = page.extract_tables()
+                tables = page.find_tables()
             except Exception:
                 logger.exception("PDF 표 추출 실패 | page=%d", page_num)
                 continue
 
-            for t_idx, table in enumerate(tables):
+            for t_idx, table_object in enumerate(tables):
                 try:
+                    table = _extract_table_with_confirmed_spans(table_object)
                     df = _parse_table(table, source_file=source_file, context_prefix=f"p{page_num}t{table_count}")
                     if df is None:
                         continue

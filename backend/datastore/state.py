@@ -26,13 +26,12 @@ def _load_dataframes():
     """dataframes/ 폴더의 Parquet 파일을 모두 메모리에 로드한다.
     변수명은 df0, df1, df2 ... 형태로 단순화해 LLM이 잘못 잘라 쓰는 것을 방지한다."""
     global _df_namespace, _df_sources, _df_labels, _df_schemas, _df_schema_cache
-    _df_namespace.clear()
-    _df_sources.clear()
-    _df_labels.clear()
-    _df_schemas.clear()
-    _df_schema_cache = None
-
     if not os.path.exists(DATAFRAME_DIR):
+        _df_namespace.clear()
+        _df_sources.clear()
+        _df_labels.clear()
+        _df_schemas.clear()
+        _df_schema_cache = None
         return
 
     entries = []
@@ -65,13 +64,30 @@ def _load_dataframes():
         except Exception as e:
             logger.warning("DataFrame 로드 실패 | file=%s err=%s", fname, e)
 
+    next_namespace: dict[str, pd.DataFrame] = {}
+    next_sources: dict[str, str] = {}
+    next_labels: dict[str, str] = {}
+    next_schemas: dict[str, dict] = {}
     # df0, df1, df2 ... 로 단순 명명 — LLM이 긴 파일명 기반 변수명을 잘못 잘라 쓰는 문제 방지
     for i, (df, source, label, semantic_schema) in enumerate(entries):
         alias = f"df{i}"
-        _df_namespace[alias] = df
-        _df_sources[alias]   = source
-        _df_labels[alias]    = label
+        next_namespace[alias] = df
+        next_sources[alias] = source
+        next_labels[alias] = label
         if semantic_schema:
-            _df_schemas[alias] = semantic_schema
+            next_schemas[alias] = semantic_schema
+
+    # Keep the previous complete snapshot visible while disk I/O is in
+    # progress. Imported modules retain references to these dictionaries, so
+    # replace their contents only after the next snapshot is fully prepared.
+    _df_namespace.clear()
+    _df_namespace.update(next_namespace)
+    _df_sources.clear()
+    _df_sources.update(next_sources)
+    _df_labels.clear()
+    _df_labels.update(next_labels)
+    _df_schemas.clear()
+    _df_schemas.update(next_schemas)
+    _df_schema_cache = None
 
     logger.info("DataFrame %d개 로드 완료", len(_df_namespace))

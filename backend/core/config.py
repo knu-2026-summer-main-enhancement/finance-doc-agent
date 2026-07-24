@@ -11,6 +11,9 @@ COLLECTION_NAME     = os.getenv("COLLECTION_NAME", "scholarship_rules")
 VECTOR_MIN_RELEVANCE = float(os.getenv("VECTOR_MIN_RELEVANCE", "0.35"))
 VECTOR_SEARCH_K      = max(1, int(os.getenv("VECTOR_SEARCH_K", "8")))
 VECTOR_SEARCH_FETCH_K = max(VECTOR_SEARCH_K, int(os.getenv("VECTOR_SEARCH_FETCH_K", "30")))
+QUESTION_ENGINE_MODE = os.getenv("QUESTION_ENGINE_MODE", "legacy").strip().lower()
+if QUESTION_ENGINE_MODE not in {"legacy", "shadow", "llm"}:
+    QUESTION_ENGINE_MODE = "legacy"
 DATA_FOLDER         = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 API_KEY             = os.getenv("API_KEY", "")
 INGEST_ALLOWED_BASE = os.path.realpath(os.getenv("INGEST_ALLOWED_BASE", DATA_FOLDER))

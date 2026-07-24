@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import unicodedata
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -11,7 +12,7 @@ from typing import Any
 import pandas as pd
 
 
-SCHEMA_VERSION = "2.2"
+SCHEMA_VERSION = "2.4"
 SYSTEM_COLUMNS = (
     "__schema_version",
     "__document_id",
@@ -26,7 +27,8 @@ _PROFILE_DIR_NAME = "_schema_profiles"
 _EMPTY_VALUES = {"", "none", "nan", "nat", "null"}
 _MONEY_VALUE_RE = re.compile(r"^[+-]?\s*(?:₩|krw)?\s*\d[\d,]*(?:\.\d+)?\s*(?:원|만원|천원)?$", re.IGNORECASE)
 _DATE_VALUE_RE = re.compile(
-    r"^(?:19|20)\d{2}[-./년]\s*\d{1,2}[-./월]\s*\d{1,2}(?:일)?$"
+    r"^(?:19|20)\d{2}[-./년]\s*\d{1,2}[-./월]\s*\d{1,2}(?:일)?"
+    r"(?:[T\s]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$"
 )
 _YEAR_MONTH_VALUE_RE = re.compile(r"^(?:19|20)\d{2}(?:[-./년]\s*(?:0?[1-9]|1[0-2])(?:월)?)$")
 _PHONE_VALUE_RE = re.compile(r"^(?=.*[- ])(?:\+?82[- ]?)?0?\d{1,2}[- ]?\d{3,4}[- ]?\d{4}$")
@@ -58,6 +60,19 @@ def make_table_id(document_id: str, table_name: str) -> str:
 
 def _normal_header(column: Any) -> str:
     return re.sub(r"[\s_()\[\]{}]+", "", str(column or "")).casefold()
+
+
+def _amount_header(column: Any) -> str:
+    """Normalize a money header without letting a display unit hide its role."""
+
+    text = unicodedata.normalize("NFKC", str(column or ""))
+    text = re.sub(
+        r"\s*[\(\[\{]\s*(?:KRW|원|천원|만원)\s*[\)\]\}]\s*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return _normal_header(text)
 
 
 def _nonempty_values(series: pd.Series, limit: int = 100) -> list[str]:
@@ -108,6 +123,23 @@ def _value_match_ratio(values: list[str], pattern: re.Pattern[str]) -> float:
     return sum(bool(pattern.fullmatch(value)) for value in values) / len(values)
 
 
+def _integer_range_ratio(values: list[str], minimum: int, maximum: int) -> float:
+    """Return the ratio of values representing integers in the given range."""
+
+    if not values:
+        return 0.0
+    matched = 0
+    for value in values:
+        normalized = re.sub(r"\s*(?:년|월|일)\s*$", "", value).strip()
+        try:
+            number = float(normalized)
+        except (TypeError, ValueError):
+            continue
+        if number.is_integer() and minimum <= int(number) <= maximum:
+            matched += 1
+    return matched / len(values)
+
+
 def _is_row_sequence(values: list[str]) -> bool:
     if len(values) < 2:
         return False
@@ -154,6 +186,7 @@ def _amount_qualifier(header: str, values: list[str]) -> tuple[str | None, float
 
 def _deterministic_meaning(column: str, series: pd.Series, is_derived: bool) -> ColumnMeaning:
     header = _normal_header(column)
+    amount_header = _amount_header(column)
     inferred_type = infer_data_type(series)
     values = _nonempty_values(series)
 
@@ -237,30 +270,50 @@ def _deterministic_meaning(column: str, series: pd.Series, is_derived: bool) -> 
     if header.endswith("번호"):
         return meaning("identifier", "identifier_value", "string")
 
+    if values and _value_match_ratio(values, _YEAR_MONTH_VALUE_RE) >= 0.8:
+        return meaning("temporal", "year_month", "year_month", qualifier="year_month")
+
+    # A component is classified only when both its header and actual values
+    # agree. This prevents columns such as 학년 or 영업일 from becoming dates.
+    if (
+        (header == "년" or header.endswith(("연도", "년도")))
+        and _integer_range_ratio(values, 1900, 2100) >= 0.8
+    ):
+        return meaning("temporal", "year", "number", qualifier="year")
+    if (
+        (header == "월" or (header.endswith("월") and not header.endswith("연월")))
+        and _integer_range_ratio(values, 1, 12) >= 0.8
+    ):
+        return meaning("temporal", "month", "number", qualifier="month")
+    if header == "일" and _integer_range_ratio(values, 1, 31) >= 0.8:
+        return meaning("temporal", "day", "number", qualifier="day")
+
     if (
         inferred_type == "date"
-        or any(token in header for token in ("일자", "날짜", "지급일", "출연일", "후원일", "입금일", "납입일", "등록일"))
+        or any(token in header for token in ("일자", "날짜", "일시", "지급일", "출연일", "후원일", "입금일", "납입일", "등록일"))
     ):
-        return meaning("temporal", "date", "date")
-    if values and _value_match_ratio(values, _YEAR_MONTH_VALUE_RE) >= 0.8:
-        return meaning("temporal", "period", "year_month")
-    if header.endswith(("기간", "시기", "연월", "월", "연도", "년도")):
-        return meaning("temporal", "period")
+        return meaning("temporal", "date", "date", qualifier="date")
+    if header.endswith(("기간", "시기", "연월")):
+        return meaning("temporal", "period", inferred_type, qualifier="period")
 
     if header == "기수" or header.endswith("회차"):
         return meaning("category", "category", qualifier="cohort")
     if any(token in header for token in ("학과", "학부", "전공", "계열")):
         return meaning("category", "category", qualifier="department")
+    if header in {"기관명", "단체명", "회사명", "법인명"} or header.endswith("기관"):
+        return meaning("entity", "entity_name", "string", qualifier="organization")
     if (
-        header in {"성명", "이름", "학생명", "수혜자명", "기부자", "후원자", "출연자", "표시명", "성명원문", "성명검색키"}
+        header in {
+            "성명", "이름", "회원명", "회원성명", "학생명", "수혜자명",
+            "기부자", "후원자", "출연자", "납부자", "입금자", "결제자",
+            "신청자", "수혜자", "표시명", "성명원문", "성명검색키",
+        }
         or header.endswith("자명")
     ):
         return meaning(
             "entity", "entity_name", "string",
             qualifier="person", sensitivity="personal", pii_type="person_name",
         )
-    if header in {"기관명", "단체명", "회사명", "법인명"} or header.endswith("기관"):
-        return meaning("entity", "entity_name", "string", qualifier="organization")
     if header == "entitytype":
         return meaning("entity", "entity_type", "string")
 
@@ -275,7 +328,7 @@ def _deterministic_meaning(column: str, series: pd.Series, is_derived: bool) -> 
     if header.endswith("비고"):
         return meaning("description", "description", "string", qualifier="note")
 
-    amount = _amount_qualifier(header, values)
+    amount = _amount_qualifier(amount_header, values)
     if amount:
         qualifier, confidence = amount
         return meaning(
@@ -315,14 +368,15 @@ def schema_fingerprint(df: pd.DataFrame, source_columns: list[str]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
 
-def _source_columns_for(df: pd.DataFrame) -> list[str]:
+def _source_columns_for(df: pd.DataFrame | pd.Series) -> list[str]:
     explicit = df.attrs.get("source_columns")
     if explicit:
         return [str(column) for column in explicit if not str(column).startswith("__")]
 
     # 구버전 Parquet은 attrs가 저장되지 않는다. 공통 정제가 뒤에 붙인 첫 파생
     # 컬럼을 기준으로 앞부분을 원본 추출 컬럼으로 복원한다.
-    columns = [str(column) for column in df.columns if not str(column).startswith("__")]
+    axis_columns = df.columns if isinstance(df, pd.DataFrame) else df.index
+    columns = [str(column) for column in axis_columns if not str(column).startswith("__")]
     derived_anchors = {
         "성명_원문", "표시명", "entity_type", "_row_index", "row_uid",
         "person_candidate_key",
@@ -334,6 +388,23 @@ def _source_columns_for(df: pd.DataFrame) -> list[str]:
             first_derived = columns.index("source")
         return columns[:first_derived]
     return columns
+
+
+def is_source_column(df: pd.DataFrame | pd.Series, column: object) -> bool:
+    """Whether a column came from the source table rather than enrichment."""
+    key = str(column)
+    if key.startswith("_") or key in SYSTEM_COLUMNS:
+        return False
+    explicit = df.attrs.get("source_columns")
+    if explicit:
+        return key in {str(item) for item in explicit}
+    schema = df.attrs.get("semantic_schema")
+    if isinstance(schema, dict):
+        columns = schema.get("columns")
+        mapping = columns.get(key) if isinstance(columns, dict) else None
+        if isinstance(mapping, dict) and "is_derived" in mapping:
+            return not bool(mapping.get("is_derived"))
+    return key in set(_source_columns_for(df))
 
 
 def _read_json(path: str) -> dict[str, Any] | None:

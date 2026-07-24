@@ -1,17 +1,72 @@
 from __future__ import annotations
 
 import logging
-import math
 import os
+from collections.abc import Iterable
+from typing import Any
 
 import pandas as pd
 
-from utils.table_parser import _parse_table, sanitize_table_name
-from utils.text_utils import _table_to_text_chunks, _make_doc_overview_chunk
-from utils.parquet_store import save_dataframe, drop_dataframe_files
-from utils.chroma_store import save_to_chroma
+from utils.table_ingest_pipeline import ingest_dataframe_sheets
+from utils.table_parser import sanitize_table_name
 
 logger = logging.getLogger("ingest")
+
+
+def _confirmed_merged_ranges(
+    workbook: Any,
+    sheet_name: str,
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Return physical XLSX merge ranges as zero-based frame coordinates."""
+
+    engine_book = getattr(workbook, "book", None)
+    if engine_book is None or sheet_name not in engine_book.sheetnames:
+        return ()
+    worksheet = engine_book[sheet_name]
+    if not hasattr(worksheet, "merged_cells"):
+        return ()
+    return tuple(
+        (
+            merged.min_row - 1,
+            merged.min_col - 1,
+            merged.max_row - 1,
+            merged.max_col - 1,
+        )
+        for merged in worksheet.merged_cells.ranges
+    )
+
+
+def _expand_confirmed_merged_cells(
+    frame: pd.DataFrame,
+    ranges: Iterable[tuple[int, int, int, int]],
+) -> pd.DataFrame:
+    """Expand only merge ranges explicitly recorded in the XLSX file."""
+
+    if frame.empty:
+        return frame
+    result = frame.copy()
+    row_count, column_count = result.shape
+    for min_row, min_col, max_row, max_col in ranges:
+        if min_row >= row_count or min_col >= column_count:
+            continue
+        value = result.iat[min_row, min_col]
+        for row in range(min_row, min(max_row + 1, row_count)):
+            for column in range(min_col, min(max_col + 1, column_count)):
+                result.iat[row, column] = value
+    return result
+
+
+def _iter_xlsx_sheets(workbook: Any):
+    for index, sheet_name in enumerate(workbook.sheet_names):
+        raw_frame = workbook.parse(sheet_name, header=None)
+        yield (
+            index,
+            sheet_name,
+            _expand_confirmed_merged_cells(
+                raw_frame,
+                _confirmed_merged_ranges(workbook, sheet_name),
+            ),
+        )
 
 
 def ingest_xlsx(
@@ -31,62 +86,27 @@ def ingest_xlsx(
     doc_label   = label_override or os.path.splitext(source_file)[0]
     df_prefix    = var_prefix_override or f"df_{base_name}"
 
-    drop_dataframe_files(df_prefix)
-
-    xl = pd.ExcelFile(file_path, engine="openpyxl")
-    sheets = xl.sheet_names
-    all_chunk_records: list[dict] = []
-    parsed_tables: list[pd.DataFrame] = []
-
-    for i, sheet_name in enumerate(sheets):
-        raw_df = xl.parse(sheet_name, header=None)
-        if raw_df.empty:
-            logger.info("빈 시트 건너뜀 | sheet=%s", sheet_name)
-            continue
-
-        raw_table = [
-            [None if (v is None or (isinstance(v, float) and math.isnan(v))) else v
-             for v in row]
-            for row in raw_df.values.tolist()
-        ]
-        df = _parse_table(
-            raw_table,
+    # Pandas opens openpyxl workbooks in read-only mode by default, which hides
+    # the physical merged-cell ranges required for evidence-based expansion.
+    with pd.ExcelFile(
+        file_path,
+        engine="openpyxl",
+        engine_kwargs={"read_only": False},
+    ) as workbook:
+        sheet_names = workbook.sheet_names
+        sheet_frames = _iter_xlsx_sheets(workbook)
+        return ingest_dataframe_sheets(
+            sheet_frames,
+            sheet_count=len(sheet_names),
             source_file=source_file,
-            context_prefix=f"s{i}",
-        )
-        if df is None:
-            logger.warning("XLSX 파싱 결과 없음 | sheet=%s", sheet_name)
-            continue
-
-        parsed_tables.append(df)
-        var_name = f"{df_prefix}_s{i}" if len(sheets) > 1 else df_prefix
-        label    = f"{doc_label} - {sheet_name}" if len(sheets) > 1 else doc_label
-        save_dataframe(
-            df,
-            var_name,
-            source_file,
-            label,
-            file_hash=file_hash,
+            doc_label=doc_label,
+            dataframe_prefix=df_prefix,
             source_type=file_type_override or "xlsx",
+            chroma_file_path=chroma_file_path_override or file_path,
+            file_hash=file_hash,
+            category=category,
+            chroma_source_override=(
+                source_file if source_override else None
+            ),
+            log_prefix="XLSX",
         )
-        logger.info("[XLSX] '%s' 저장 완료 | sheet=%s rows=%d", var_name, sheet_name, len(df))
-
-        all_chunk_records.extend(_table_to_text_chunks(df, doc_label))
-
-    if parsed_tables:
-        overview = _make_doc_overview_chunk(doc_label, source_file, parsed_tables)
-        if overview:
-            all_chunk_records.insert(0, overview)
-
-    if all_chunk_records and file_hash:
-        count = save_to_chroma(
-            chroma_file_path_override or file_path,
-            all_chunk_records,
-            file_hash,
-            category,
-            source_override=source_file if source_override else None,
-            file_type_override=file_type_override,
-        )
-        logger.info("[XLSX] Chroma 저장 완료 | chunks=%d", count)
-        return count
-    return 0

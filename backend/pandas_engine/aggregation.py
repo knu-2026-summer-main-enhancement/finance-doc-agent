@@ -8,7 +8,7 @@ import pandas as pd
 
 from pandas_engine.money import money_series
 from utils.table_parser import AMOUNT_COL_KEYWORDS, normalize_person_name
-from utils.semantic_schema import semantic_columns
+from utils.semantic_schema import infer_column_meaning, semantic_columns
 
 
 _AGG_COUNT = re.compile(
@@ -18,7 +18,7 @@ _AGG_COUNT = re.compile(
     re.IGNORECASE,
 )
 _AGG_SUM_EXPLICIT = re.compile(
-    r"총\s*(?:액|금액|합계)|전체\s*(?:금액|합계)|합계\s*(?:금액|액)?|합산|"
+    r"총\s*(?:합(?:계)?|액|금액)|전체\s*(?:금액|합계)|합계\s*(?:금액|액)?|합산|"
     r"(?:모두|모든|전부|다).{0,15}?(?:합하면|합한|더하면|더한|합산|합친)|"
     r"(?:합하면|합한|더하면|더한|합산하면|합친).{0,12}?(?:얼마|금액|값)|"
     r"총\s*(?:얼마(?:야|인지|니|인가)?|얼만지)|모두\s*얼마(?:야|인지|니|인가)?",
@@ -102,8 +102,17 @@ class AmountColumnSelection:
 def amount_column_candidates(df: pd.DataFrame) -> list[str]:
     """공통 스키마와 실제 헤더에서 금액 컬럼 후보를 찾는다."""
     mapped = semantic_columns(df, concept="measure", data_type="money")
-    if mapped:
-        return mapped
+    inferred = [
+        str(column)
+        for column in df.columns
+        if (
+            (meaning := infer_column_meaning(str(column), df[column])).role == "amount"
+            or meaning.data_type == "money"
+        )
+    ]
+    semantic = list(dict.fromkeys([*mapped, *inferred]))
+    if semantic:
+        return semantic
     return [
         str(column)
         for column in df.columns

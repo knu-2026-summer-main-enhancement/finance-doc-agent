@@ -13,6 +13,8 @@ from pandas_engine.aggregation import (
     resolve_amount_column,
 )
 from pandas_engine.money import money_values
+from pandas_engine.query_executor import QueryExecutionResult
+from utils.semantic_schema import infer_column_meaning, is_source_column
 from utils.table_parser import IDENTITY_INTERNAL_COLS
 
 _INTERNAL_COLS = set(IDENTITY_INTERNAL_COLS)
@@ -23,6 +25,11 @@ _DISPLAY_ORDER = (
 )
 _AMOUNT_QUESTION_RE = re.compile(r"얼마|금액|총액|합계|출연금|지급액|장학금|지원금|수혜금|후원금|기부금")
 _SUM_WORD_RE = re.compile(r"총|합계|전체|누적|합산|모두|다")
+_GENERIC_LIST_RE = re.compile(r"목록|명단|리스트")
+_EXPLICIT_LIST_FIELD_RE = re.compile(
+    r"금액|회비|납부|결제|후원|기부|학과|전공|전화|이메일|연락처|"
+    r"기수|날짜|일자|연도|월별|기관|지급처|발행번호"
+)
 _OPERATION_LABELS = {
     "count": "개수 계산",
     "sum": "합계",
@@ -58,8 +65,12 @@ def _format_number(value: Any) -> str:
 def _display_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
-    cols = [c for c in _DISPLAY_ORDER if c in df.columns and not _is_internal_col(c)]
-    cols += [c for c in df.columns if c not in cols and not _is_internal_col(c)]
+    visible = [
+        c for c in df.columns
+        if not _is_internal_col(c) and is_source_column(df, c)
+    ]
+    cols = [c for c in _DISPLAY_ORDER if c in visible]
+    cols += [c for c in visible if c not in cols]
     return df.loc[:, cols]
 
 
@@ -221,12 +232,14 @@ def _format_pandas_result(result: object) -> str:
     return str(result)
 
 
-def _format_list_result(df: pd.DataFrame) -> str:
+def _format_list_result(df: pd.DataFrame, question: str = "") -> str:
     """DataFrame 명단 결과를 LLM 우회로 직접 포맷."""
     if df is None or (hasattr(df, "empty") and df.empty):
         return "조회된 데이터가 없습니다."
     warning = _mask_warning(df)
-    display = _display_df(df)
+    # Keep missing spreadsheet fields user-facing. Pandas' ``NaN`` is an
+    # implementation detail, not a meaningful answer value.
+    display = _display_df(df).fillna("없음")
     header = f"총 {len(display)}건\n"
     date_evidence = df.attrs.get("date_filter_evidence")
     if isinstance(date_evidence, dict) and "items" not in date_evidence:
@@ -234,6 +247,34 @@ def _format_list_result(df: pd.DataFrame) -> str:
             f"날짜 기준: {date_evidence.get('period', '')}"
             f" ({date_evidence.get('column', '날짜 컬럼')})\n"
         )
+
+    # A plain list request is primarily asking who matched. Keep every row
+    # (including duplicate names that may represent separate people/payments)
+    # but omit unrelated source columns so long date ranges remain readable.
+    if _GENERIC_LIST_RE.search(question) and not _EXPLICIT_LIST_FIELD_RE.search(question):
+        person_columns = [
+            column
+            for column in display.columns
+            if (
+                (meaning := infer_column_meaning(str(column), df[column])).concept == "entity"
+                and meaning.role == "entity_name"
+                and meaning.qualifier == "person"
+            )
+        ]
+        if person_columns:
+            person_column = max(
+                person_columns,
+                key=lambda column: int(df[column].dropna().nunique()),
+            )
+            names = display[person_column].astype(str).tolist()
+            name_preview_limit = 200
+            if len(names) > name_preview_limit:
+                header += (
+                    f"(전체 {len(names)}명 중 처음 "
+                    f"{name_preview_limit}명 표시)\n"
+                )
+                names = names[:name_preview_limit]
+            return warning + header + "\n".join(f"- {name}" for name in names)
     if "source" in display.columns:
         try:
             sort_cols = ["source"]
@@ -244,6 +285,10 @@ def _format_list_result(df: pd.DataFrame) -> str:
             display = display.sort_values(by=sort_cols)
         except Exception:
             pass
+    preview_limit = 50
+    if len(display) > preview_limit:
+        header += f"(처음 {preview_limit}건 표시, 나머지는 목록에서 조회)\n"
+        display = display.head(preview_limit)
     return warning + header + display.to_string(index=False)
 
 
@@ -272,6 +317,140 @@ def _format_scalar_result(result: object, question: str) -> str:
             return f"금액은 {result}입니다."
         return result
     return str(result)
+
+
+_PLAN_OPERATOR_LABELS = {
+    "eq": "=",
+    "ne": "≠",
+    "gt": ">",
+    "gte": "≥",
+    "lt": "<",
+    "lte": "≤",
+    "contains": "포함",
+    "in": "목록 포함",
+    "between": "범위",
+    "is_null": "값 없음",
+    "not_null": "값 있음",
+}
+
+
+def _format_plan_value(value: object) -> str:
+    if isinstance(value, tuple):
+        return " ~ ".join(str(item) for item in value)
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _format_query_plan_evidence(result: QueryExecutionResult) -> str:
+    evidence = result.evidence
+    lines = ["조회 근거:", f"- 문서: {evidence.source_file}"]
+    if evidence.filters:
+        conditions = []
+        for condition in evidence.filters:
+            operator = _PLAN_OPERATOR_LABELS.get(condition.operator, condition.operator)
+            value = _format_plan_value(condition.value)
+            conditions.append(
+                f"{condition.column} {operator}" + (f" {value}" if value else "")
+            )
+        connector = " AND " if evidence.filter_logic == "all" else " OR "
+        lines.append(f"- 적용 조건: {connector.join(conditions)}")
+    else:
+        lines.append("- 적용 조건: 없음")
+    if evidence.sort:
+        sort_text = ", ".join(
+            f"{condition.column} {'오름차순' if condition.direction == 'asc' else '내림차순'}"
+            for condition in evidence.sort
+        )
+        lines.append(f"- 정렬: {sort_text}")
+    if evidence.distinct_by:
+        lines.append(f"- 중복 제거 기준: {', '.join(evidence.distinct_by)}")
+    if evidence.group_by:
+        lines.append(f"- 그룹 집계 기준: {', '.join(evidence.group_by)}")
+    if evidence.limit is not None:
+        lines.append(f"- 반환 제한: {evidence.limit:,}개")
+    elif evidence.top_n is not None:
+        lines.append(f"- 순위 제한: 상위 {evidence.top_n:,}개")
+    if evidence.rank_position is not None:
+        lines.append(f"- 순위: 동순위 포함 {evidence.rank_position:,}번째")
+    lines.append(
+        f"- 행 수: 원본 {evidence.source_rows:,}개 → "
+        f"조건 통과 {evidence.filtered_rows:,}개 → 계산 대상 {result.matched_rows:,}개"
+    )
+    if evidence.unique_people is not None:
+        lines.append(f"- 조건 충족 고유 인원: {evidence.unique_people:,}명")
+    if result.target:
+        lines.append(f"- 대상 컬럼: {result.target}")
+    if result.excluded_rows:
+        lines.append(f"- 형식 오류·빈 값 제외: {result.excluded_rows:,}개")
+    return "\n".join(lines)
+
+
+def _format_query_execution_result(
+    result: QueryExecutionResult,
+    question: str,
+) -> str:
+    """Format deterministic QueryPlan output without another LLM call."""
+
+    if isinstance(result.value, pd.DataFrame):
+        if result.value.empty and result.evidence.rank_position is not None:
+            answer = (
+                f"동순위를 포함한 {result.evidence.rank_position}번째 순위는 없습니다. "
+                f"조건에 맞는 서로 다른 순위 값은 {result.available_rank_count or 0}개입니다."
+            )
+        elif result.operation == "person_totals" and not result.value.empty:
+            amount_column = result.target or result.value.columns[1]
+            lines = [
+                f"{row['인물']}: {_format_number(row[amount_column])}원 "
+                f"({int(row['결제 건수'])}건)"
+                for _, row in result.value.iterrows()
+            ]
+            answer = (
+                "같은 이름을 가진 서로 다른 인물이 있어 각각 계산했습니다.\n"
+                + "\n".join(lines)
+            )
+        elif result.operation == "group_sum" and not result.value.empty:
+            group_column = result.value.columns[0]
+            amount_column = result.target or result.value.columns[-1]
+            lines = [
+                f"{row[group_column]} {_format_number(row[amount_column])}"
+                for _, row in result.value.iterrows()
+            ]
+            answer = f"총 {len(lines)}건\n" + "\n".join(lines)
+        else:
+            answer = _format_dataframe_result_for_question(result.value, question)
+    elif result.operation == "count":
+        unit = "명" if result.evidence.distinct_by else "건"
+        answer = f"총 {int(result.value or 0):,}{unit}입니다."
+    elif result.operation == "mode":
+        values = result.value if isinstance(result.value, list) else []
+        if not values:
+            answer = "조회된 데이터가 없습니다."
+        else:
+            suffix = "원" if result.target_data_type == "money" else ""
+            joined = ", ".join(f"{_format_number(value)}{suffix}" for value in values)
+            answer = f"{result.target or '대상 컬럼'} 최빈값은 {joined}입니다."
+    elif result.value is None:
+        answer = "조회된 데이터가 없습니다."
+    else:
+        operation_label = {
+            "sum": "합계",
+            "mean": "평균",
+            "median": "중앙값",
+            "min": "최솟값",
+            "max": "최댓값",
+        }.get(result.operation, result.operation)
+        value = result.value
+        if isinstance(value, pd.Timestamp):
+            formatted_value = value.strftime("%Y-%m-%d")
+        else:
+            formatted_value = _format_number(value)
+        suffix = "원" if result.target_data_type == "money" else ""
+        answer = (
+            f"{result.target or '대상 컬럼'} {operation_label}은 "
+            f"{formatted_value}{suffix}입니다."
+        )
+    return answer + "\n\n" + _format_query_plan_evidence(result)
 
 # ---------------------------------------------------------------------------
 # 구조적 보강: 금액/기관/마스킹 답변 템플릿 일반화
@@ -533,4 +712,4 @@ def _format_dataframe_result_for_question(df: pd.DataFrame, question: str) -> st
     amount_answer = _format_dataframe_for_amount_question(df, question)
     if amount_answer:
         return amount_answer
-    return _format_list_result(df)
+    return _format_list_result(df, question)
