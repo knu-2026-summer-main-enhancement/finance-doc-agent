@@ -433,7 +433,7 @@ html.ui-v3 .question-autocomplete.visible {
 }
 
 /* AI 문서 검색은 자동 라우팅으로 처리하므로 수동 전환 UI를 노출하지 않는다. */
-.composer-wrap > .query-mode-row { display: none; }
+html.ui-v3 .composer-wrap > .query-mode-row { display: none; }
 
 @media (max-width: 820px) {
   .app-shell { display: block; height: 100dvh; overflow: hidden; }
