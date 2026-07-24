@@ -256,7 +256,7 @@ function linkContactNames(body) {
   const textNodes = [];
   let node;
   while ((node = walker.nextNode())) {
-    if (node.parentElement?.closest(".contact-name")) continue;
+    if (node.parentElement?.closest(".contact-name, button")) continue;
     if (matcher.test(node.textContent)) textNodes.push(node);
     matcher.lastIndex = 0;
   }
@@ -564,9 +564,21 @@ async function errorMessage(response) {
   }
 }
 
-function renderInlineSegments(body, segments) {
+function evidenceMatch(text) {
+  const evidenceTypes = [
+    { marker: "계산 근거:", label: "계산 근거" },
+    { marker: "조회 근거:", label: "조회 근거" },
+  ];
+  return evidenceTypes
+    .map((type) => ({ ...type, index: text.indexOf(type.marker) }))
+    .filter((type) => type.index >= 0)
+    .sort((left, right) => left.index - right.index)[0];
+}
+
+function renderInlineSegments(body, segments, fullAnswer = "") {
   if (!Array.isArray(segments) || !segments.length) {
-    collapseCalculationEvidence(body);
+    collapseEvidence(body);
+    linkContactNames(body);
     return;
   }
   body.replaceChildren();
@@ -583,6 +595,14 @@ function renderInlineSegments(body, segments) {
     button.addEventListener("click", () => openDetail(segment.detail_ref));
     body.append(button);
   });
+  // Interactive segments omit calculation evidence, so restore the original
+  // text before turning the evidence into the shared collapsible section.
+  const originalEvidence = evidenceMatch(fullAnswer);
+  if (originalEvidence && !evidenceMatch(body.textContent)) {
+    body.append(document.createTextNode(`\n\n${fullAnswer.slice(originalEvidence.index)}`));
+  }
+  collapseEvidence(body);
+  linkContactNames(body);
 }
 
 function appendDetailFields(container, fields) {
@@ -675,11 +695,11 @@ async function openDetail(reference, offset = 0) {
     showToast(error.message || "상세 정보를 불러오지 못했습니다.");
   }
 }
-
 async function sendQuestion(question, options = {}) {
   const value = question.trim();
   if (!value || state.busy) return;
 
+  await loadContactNames();
   const controller = new AbortController();
   state.chatController = controller;
   setChatBusy(true);
@@ -694,6 +714,7 @@ async function sendQuestion(question, options = {}) {
   elements.chatArea.querySelector(".welcome-card")?.remove();
   appendMessage("user", value);
   const loading = appendLoading();
+
   try {
     const response = await fetch("/chat", {
       method: "POST",
@@ -704,15 +725,23 @@ async function sendQuestion(question, options = {}) {
     if (!response.ok) throw new Error(await errorMessage(response));
     const data = await response.json();
     loading.remove();
-    const message = appendMessage("assistant", data.answer || "답변이 비어 있습니다.", data.source || "", data.sources || [], request);
-    renderInlineSegments(message.querySelector(".message-body"), data.result?.inline_segments);
+    const message = appendMessage(
+      "assistant",
+      data.answer || "답변이 비어 있습니다.",
+      data.source || "",
+      data.sources || [],
+      request,
+    );
+    renderInlineSegments(message.querySelector(".message-body"), data.result?.inline_segments, data.answer || "");
   } catch (error) {
     loading.remove();
-    if (error.name === "AbortError") {
-      appendMessage("assistant", "답변 생성을 중단했습니다.", "error", [], request);
-    } else {
-      appendMessage("assistant", error.message || "답변 처리 중 오류가 발생했습니다.", "error", [], request);
-    }
+    appendMessage(
+      "assistant",
+      error.name === "AbortError" ? "답변 생성을 중단했습니다." : (error.message || "답변 처리 중 오류가 발생했습니다."),
+      "error",
+      [],
+      request,
+    );
   } finally {
     if (state.chatController === controller) state.chatController = null;
     setChatBusy(false);
@@ -738,25 +767,39 @@ async function copyAnswer(text) {
   }
 }
 
-function collapseCalculationEvidence(body) {
+function collapseEvidence(body) {
   const text = body.textContent;
-  const marker = "계산 근거:";
-  const markerIndex = text.indexOf(marker);
+  const match = evidenceMatch(text);
+  if (!match) return;
+
+  const markerIndex = match.index;
   if (markerIndex <= 0) return;
 
-  const answer = text.slice(0, markerIndex).trimEnd();
-  const evidence = text.slice(markerIndex + marker.length).trim();
+  const evidence = text.slice(markerIndex + match.marker.length).trim();
   if (!evidence) return;
 
+  // Keep interactive name/detail buttons that precede the evidence marker.
+  const answerNodes = [];
+  let consumed = 0;
+  for (const node of [...body.childNodes]) {
+    const nodeLength = node.textContent.length;
+    if (consumed + nodeLength <= markerIndex) {
+      answerNodes.push(node);
+    } else if (consumed < markerIndex && node.nodeType === Node.TEXT_NODE) {
+      const prefix = node.textContent.slice(0, markerIndex - consumed).trimEnd();
+      if (prefix) answerNodes.push(document.createTextNode(prefix));
+    }
+    consumed += nodeLength;
+    if (consumed >= markerIndex) break;
+  }
+
   body.replaceChildren();
-  const answerText = document.createElement("div");
-  answerText.textContent = answer;
-  body.append(answerText);
+  body.append(...answerNodes);
 
   const details = document.createElement("details");
   details.className = "calculation-evidence";
   const summary = document.createElement("summary");
-  summary.textContent = "계산 근거";
+  summary.textContent = match.label;
   const evidenceText = document.createElement("div");
   evidenceText.className = "calculation-evidence-body";
   evidenceText.textContent = evidence;
@@ -766,6 +809,7 @@ function collapseCalculationEvidence(body) {
 
 function setChatBusy(busy) {
   state.busy = busy;
+  elements.clearChat.disabled = busy;
   elements.sendButton.classList.toggle("stop", busy);
   elements.sendButton.setAttribute("aria-label", busy ? "답변 생성 중단" : "질문 전송");
   elements.sendButton.querySelector("[data-send-label]").textContent = busy ? "중단" : "전송";
@@ -1184,6 +1228,7 @@ elements.allDocuments.addEventListener("click", () => {
   updateScope();
 });
 elements.clearChat.addEventListener("click", () => {
+  if (state.busy) return;
   elements.chatArea.innerHTML = initialChat;
   bindSuggestions();
 });

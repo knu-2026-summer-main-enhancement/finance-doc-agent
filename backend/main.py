@@ -70,6 +70,7 @@ from rag.question_engine import (
     compare_shadow_decision,
     decide_question,
 )
+from utils.table_parser import normalize_person_name
 from rag.deterministic_query_plan import (
     ambiguous_person_lookup_candidates,
     build_auto_schema_grounded_plan,
@@ -85,7 +86,6 @@ from rag.question_decision import QuestionDecision
 from pandas_engine.query_plan import QueryPlan
 
 logger = logging.getLogger("uvicorn.error")
-
 
 @dataclass(frozen=True)
 class QuestionResolution:
@@ -291,6 +291,11 @@ class ChatSuggestionRequest(BaseModel):
 class IngestRequest(BaseModel):
     file_path: str #파일 업로드 요청
 
+
+class RenameDocumentRequest(BaseModel):
+    new_name: str
+
+
 class StatusResponse(BaseModel):
     status: str
     message: str
@@ -306,6 +311,7 @@ def root_ui():
 
 @app.get("/ui", include_in_schema=False)
 def chatbot_ui():
+    """Primary chat UI (V3 mobile layout and desktop treatment)."""
     return FileResponse(
         os.path.join(STATIC_DIR, "index.html"),
         headers={"Cache-Control": "no-store"},
@@ -334,6 +340,85 @@ def health():
         result["chromadb"] = "unreachable"
         result["status"] = "degraded"
     return result
+
+
+def _result_1_contact_records() -> dict[str, dict[str, object]]:
+    """Return contacts from a member table, regardless of its display file name."""
+    records: dict[str, dict[str, object]] = {}
+    for alias, dataframe in _df_namespace.items():
+        columns = {re.sub(r"\s+", "", str(column)).casefold(): column for column in dataframe.columns}
+        name_column = next((columns[key] for key in ("회원명", "성명", "이름") if key in columns), None)
+        email_column = next((column for key, column in columns.items() if "이메일" in key or "email" in key), None)
+        phone_column = next((column for key, column in columns.items() if "전화" in key or "휴대폰" in key or "연락처" in key or "phone" in key), None)
+        department_column = next((column for key, column in columns.items() if "전공" in key or "학과" in key or "department" in key), None)
+        if name_column is None or (email_column is None and phone_column is None):
+            continue
+
+        year_column = columns.get("년")
+        month_column = columns.get("월")
+        day_column = columns.get("일")
+        date_columns = [
+            column for key, column in columns.items()
+            if "날짜" in key or "일자" in key or "date" in key
+        ]
+
+        def latest_rank(row, row_order: int) -> tuple[int, int, int, int]:
+            def number(column) -> int:
+                if column is None:
+                    return 0
+                match = re.search(r"\d+", str(row.get(column, "")))
+                return int(match.group()) if match else 0
+
+            year, month, day = number(year_column), number(month_column), number(day_column)
+            if year:
+                return year, month, day, row_order
+            for column in date_columns:
+                digits = re.sub(r"\D", "", str(row.get(column, "")))
+                if len(digits) >= 8:
+                    return int(digits[:4]), int(digits[4:6]), int(digits[6:8]), row_order
+            return 0, 0, 0, row_order
+
+        for row_order, (_, row) in enumerate(dataframe.iterrows()):
+            display_name = str(row.get(name_column, "")).strip()
+            name = normalize_person_name(display_name)
+            if not name or name.casefold() in {"nan", "none", "<na>"}:
+                continue
+            record = records.setdefault(name, {"name": display_name, "phones": set(), "emails": set(), "departments": set()})
+            rank = latest_rank(row, row_order)
+            for column, key in ((phone_column, "phones"), (email_column, "emails"), (department_column, "departments")):
+                if column is None:
+                    continue
+                value = str(row.get(column, "")).strip()
+                if not value or value.casefold() in {"nan", "none", "<na>"}:
+                    continue
+                if key == "phones":
+                    digits = re.sub(r"\D", "", value)
+                    value = f"{digits[:3]}-{digits[3:7]}-{digits[7:]}" if len(digits) == 11 and digits.startswith("01") else value
+                rank_key = f"_{key}_rank"
+                if rank >= record.get(rank_key, (-1, -1, -1, -1)):
+                    record[key] = {value}
+                    record[rank_key] = rank
+
+    return records
+
+
+@app.get("/contacts/names")
+def result_1_contact_names(_: None = Depends(_verify_api_key)):
+    """Names from member tables that can reveal a contact card when clicked in the UI."""
+    return {"names": [record["name"] for record in _result_1_contact_records().values()]}
+
+
+@app.get("/contacts/{name}")
+def result_1_contact(name: str, _: None = Depends(_verify_api_key)):
+    record = _result_1_contact_records().get(normalize_person_name(name))
+    if record is None:
+        raise HTTPException(status_code=404, detail="Result_1에서 해당 회원을 찾을 수 없습니다.")
+    return {
+        "name": record["name"],
+        "phones": sorted(record["phones"]),
+        "emails": sorted(record["emails"]),
+        "departments": sorted(record["departments"]),
+    }
 
 
 @app.get("/chat/details/{reference}")
@@ -723,6 +808,58 @@ def delete_document(source: str, _: None = Depends(_verify_api_key)):
         "file_deleted": file_existed,
         "manifest_deleted": manifest_deleted,
     }
+
+
+@app.patch("/documents/{source}", response_model=StatusResponse)
+def rename_document(
+    source: str,
+    req: RenameDocumentRequest,
+    background_tasks: BackgroundTasks,
+    _: None = Depends(_verify_api_key),
+):
+    """등록 문서의 이름을 바꾸고 새 이름으로 다시 색인한다."""
+    from utils.chroma_store import delete_from_chroma
+    from utils.parquet_store import drop_dataframe_by_source
+
+    source = os.path.basename(source)
+    requested_name = req.new_name.strip()
+    if not requested_name or requested_name != os.path.basename(requested_name):
+        raise HTTPException(status_code=400, detail="유효한 파일명을 입력해 주세요.")
+
+    source_ext = os.path.splitext(source)[1].lower()
+    new_ext = os.path.splitext(requested_name)[1].lower()
+    if not new_ext:
+        requested_name += source_ext
+    elif new_ext != source_ext:
+        raise HTTPException(
+            status_code=400,
+            detail=f"파일 확장자는 변경할 수 없습니다. ({source_ext})",
+        )
+    if requested_name == source:
+        return StatusResponse(status="ok", message="파일명이 동일합니다.", filename=source)
+
+    old_path = _validate_ingest_path(os.path.join(DATA_FOLDER, source))
+    new_path = _validate_ingest_path(os.path.join(DATA_FOLDER, requested_name))
+    if not os.path.exists(old_path):
+        raise HTTPException(status_code=404, detail=f"'{source}' 문서를 찾을 수 없습니다.")
+    if os.path.exists(new_path) or get_manifest_status(requested_name) is not None:
+        raise HTTPException(status_code=409, detail=f"'{requested_name}' 이름의 문서가 이미 있습니다.")
+
+    try:
+        os.replace(old_path, new_path)
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"파일명 변경 실패: {exc}") from exc
+
+    delete_from_chroma(source)
+    drop_dataframe_by_source(source)
+    delete_manifest(source)
+    _load_dataframes()
+    background_tasks.add_task(_process_and_reload, new_path)
+    return StatusResponse(
+        status="accepted",
+        message=f"'{requested_name}' 이름으로 변경했고, 색인을 시작했습니다.",
+        filename=requested_name,
+    )
 
 
 @app.post("/ingest/all", response_model=StatusResponse) #data_folder 안의 모든 문서를 한번에 색인하는 api
