@@ -34,6 +34,7 @@ from rag.question_analyzer import QuestionAnalysis, analyze_question
 from rag.deterministic_query_plan import build_schema_grounded_plan
 from utils.semantic_schema import infer_column_meaning
 from pandas_engine.interactive import build_interactive_result, build_interactive_dataframe
+from pandas_engine.query_plan import QueryPlan
 
 logger = logging.getLogger("uvicorn.error")
 _interactive_result: ContextVar[dict | None] = ContextVar("interactive_result", default=None)
@@ -105,6 +106,7 @@ async def _answer_query_plan(
     allow_vector_fallback: bool,
     analysis: QuestionAnalysis | None = None,
     operation_hint: str | None = None,
+    prepared_plan: QueryPlan | None = None,
 ) -> tuple[str, list[str], str]:
     """Generate, validate, and execute the generic structured-query plan."""
 
@@ -113,7 +115,7 @@ async def _answer_query_plan(
         operation_hint or "none",
         question[:50],
     )
-    early_plan = build_schema_grounded_plan(
+    early_plan = prepared_plan or build_schema_grounded_plan(
         question,
         dataframes=scoped_mapping(_df_namespace, _df_sources),
         operation_hint=operation_hint,
@@ -250,6 +252,7 @@ async def _answer_pandas(
     analysis: QuestionAnalysis | None = None,
     strategy: Literal["AUTO", "DIRECT", "QUERY_PLAN"] = "AUTO",
     operation_hint: str | None = None,
+    prepared_plan: QueryPlan | None = None,
 ) -> tuple[str, list[str], str]:
     clear_interactive_result()
     scoped_dataframes = scoped_mapping(_df_namespace, _df_sources)
@@ -316,6 +319,7 @@ async def _answer_pandas(
             allow_vector_fallback=allow_vector_fallback,
             analysis=analysis,
             operation_hint=operation_hint,
+            prepared_plan=prepared_plan,
         )
 
     # 비교 집계는 그룹 기준을 확정할 전용 실행기가 아직 없으므로 잘못된 단일

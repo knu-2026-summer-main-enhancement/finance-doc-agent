@@ -6,6 +6,7 @@ import pandas as pd
 
 from rag.deterministic_query_plan import (
     ambiguous_person_lookup_candidates,
+    build_auto_schema_grounded_plan,
     build_schema_grounded_plan,
     has_unmatched_person_amount_reference,
     has_unmatched_person_field_reference,
@@ -16,6 +17,15 @@ from pandas_engine.plan_validator import validate_query_plan
 
 
 class DeterministicQueryPlanTest(unittest.TestCase):
+    def test_auto_plan_routes_cross_month_range_to_date_executor(self):
+        operation, plan = build_auto_schema_grounded_plan(
+            "2025년 6월부터 2026년 1월까지 목록",
+            dataframes={},
+        )
+
+        self.assertEqual(operation, "structured_query")
+        self.assertIsNone(plan)
+
     def setUp(self):
         self.df = pd.DataFrame(
             {

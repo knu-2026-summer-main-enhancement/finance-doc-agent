@@ -771,3 +771,101 @@ def build_schema_grounded_plan(
             return None
         return QueryPlan(status="ready", dataframe=alias, operation="list", filters=tuple(filters), select=select)
     return None
+
+
+def build_auto_schema_grounded_plan(
+    question: str,
+    *,
+    dataframes: Mapping[str, pd.DataFrame],
+) -> tuple[str | None, QueryPlan | None]:
+    """Choose and ground a fast PANDAS plan in one deterministic boundary.
+
+    The operation labels remain the R.JSON contract, while this function owns
+    the narrow keyword precedence formerly duplicated in ``main.py``.
+    """
+    # Cross-month ranges use the dedicated schema-aware date executor.  They
+    # must not become independent year/month P.JSON filters because that can
+    # silently collapse the range to its first month.
+    date_spec = parse_date_filter(question)
+    if (
+        date_spec is not None
+        and not date_spec.error
+        and date_spec.start_month != date_spec.end_month
+    ):
+        return "structured_query", None
+    normalized = re.sub(r"\s+", "", question).replace("번쨰", "번째")
+    normalized = re.sub(r"\s+", "", question).replace("번쨰", "번째")
+    broad_projection = bool(re.search(
+        r"(?:전체(?:기록|내역|회원)|모든회원|각회원|회원별)", normalized,
+    ))
+    missing_request = bool(re.search(
+        r"(?:비어있|안적|미입력|미등록|누락|공백|등록되지않|없(?:는|어|어?))",
+        normalized,
+    ))
+    if (
+        is_grounded_person_payment_existence_question(
+            question, dataframes=dataframes
+        )
+        or is_grounded_person_amount_lookup_question(
+            question, dataframes=dataframes
+        )
+    ):
+        hints = ("lookup_amount", "structured_query")
+    elif re.fullmatch(
+        r"(?:표의?)?(?:전체|모든|전부)(?:데이터|기록|행|명단|목록|리스트)?"
+        r"(?:보여줘|보여|알려줘|조회해줘|확인해줘)?[?!.]*",
+        normalized,
+    ):
+        hints = ("list_records", "structured_query")
+    elif broad_projection or missing_request:
+        hints = ("structured_query",)
+    elif any(token in normalized for token in ("등록날짜", "지급일", "날짜", "언제", "시기")):
+        hints = ("lookup_field", "structured_query")
+    elif re.search(
+        r"(?:돈|금액|회비|결제|납부|후원|기부).{0,8}?"
+        r"(?:냈|내었|냈어|냈나요|했어|했나|했나요)",
+        normalized,
+    ):
+        hints = ("lookup_amount", "structured_query")
+    elif (
+        any(token in normalized for token in ("전화번호", "이메일"))
+        and re.search(r"(?:얼마|돈|금액|회비|결제|납부|후원|기부)", normalized)
+    ):
+        hints = ("lookup_amount", "structured_query")
+    elif any(token in normalized for token in ("전화번호", "이메일", "전공", "학과")):
+        hints = ("lookup_field", "structured_query")
+    elif re.search(r"(?:사람|인원|회원).*?(?:몇명|수)|몇명", normalized):
+        hints = ("count_records", "structured_query")
+    elif re.search(
+        r"(?:최댓값|최대(?:값|액|금액)?|최고(?:값|액|금액)?|"
+        r"(?:가장|제일)(?:큰|높은|많은)(?:값|금액|돈|액)|"
+        r"(?:값|금액|돈|액).{0,8}?(?:가장|제일)(?:큰|높은|많은))",
+        normalized,
+    ) and not re.search(r"(?:사람|회원|인원|누구)", normalized):
+        hints = ("max_amount", "structured_query")
+    elif re.search(
+        r"(?:최솟값|최소(?:값|액|금액)?|최저(?:값|액|금액)?|"
+        r"(?:가장|제일)(?:작은|낮은)(?:값|금액|돈|액))",
+        normalized,
+    ):
+        hints = ("min_amount", "structured_query")
+    elif re.search(
+        r"(?:오름차순|내림차순|순서대로|큰순|작은순|많은순|적은순|"
+        r"\d+(?:번째|위|등)|첫번째|두번째|세번째|네번째|다섯번째|최신|가장이른)",
+        normalized,
+    ):
+        hints = ("structured_query",)
+    elif re.search(r"(?:총합|합계|총액|얼마|금액|돈)", normalized):
+        hints = ("sum_amount", "structured_query")
+    else:
+        hints = ("structured_query",)
+
+    for operation_hint in hints:
+        plan = build_schema_grounded_plan(
+            question,
+            dataframes=dataframes,
+            operation_hint=operation_hint,
+        )
+        if plan is not None:
+            return operation_hint, plan
+    return None, None

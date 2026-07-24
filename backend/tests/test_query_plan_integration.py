@@ -80,6 +80,43 @@ class QueryPlanPandasIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("상태 = 완료", answer)
         self.assertIn("원본 3개", answer)
 
+    async def test_prepared_deterministic_plan_is_reused_without_rebuilding(self):
+        plan = QueryPlan.model_validate(
+            {
+                "status": "ready",
+                "dataframe": "df0",
+                "operation": "list",
+                "filters": [
+                    {"column": "상태", "operator": "eq", "value": "완료"}
+                ],
+                "select": ["항목", "상태"],
+            }
+        )
+
+        with (
+            self._direct_misses(),
+            patch(
+                "rag.pandas_rag.build_schema_grounded_plan",
+                side_effect=AssertionError("prepared P.JSON must be reused"),
+            ),
+            patch(
+                "rag.pandas_rag.generate_validated_query_plan",
+                new=AsyncMock(
+                    side_effect=AssertionError("LLM planner must not run")
+                ),
+            ),
+        ):
+            answer, sources, route = await _answer_pandas(
+                "완료 상태 목록",
+                strategy="QUERY_PLAN",
+                operation_hint="structured_query",
+                prepared_plan=plan,
+            )
+
+        self.assertEqual(route, "pandas")
+        self.assertEqual(sources, ["업무목록.xlsx"])
+        self.assertIn("총 2건", answer)
+
     async def test_lookup_field_hint_reaches_query_planner(self):
         validation = self._validation(
             {

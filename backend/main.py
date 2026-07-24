@@ -9,6 +9,7 @@ import re #문자열 정규식
 import shutil  #파일 폴더 제어
 import sys
 from contextlib import asynccontextmanager #비동기 처리
+from dataclasses import dataclass
 from datetime import datetime, timezone #시간 계산 
 from typing import AsyncIterator, Literal #비동기 처리
 from urllib.request import urlopen #웹 요청
@@ -63,7 +64,6 @@ from rag.guide import build_guide_response
 from rag.vector import _answer_vector, _stream_vector
 from rag.pandas_rag import _answer_pandas, current_interactive_result
 from pandas_engine.interactive import get_interactive_detail
-from pandas_engine.date_filter import parse_date_filter
 from rag.question_engine import (
     QuestionEngineError,
     compare_shadow_decision,
@@ -71,16 +71,26 @@ from rag.question_engine import (
 )
 from rag.deterministic_query_plan import (
     ambiguous_person_lookup_candidates,
-    build_schema_grounded_plan,
+    build_auto_schema_grounded_plan,
     has_unmatched_person_amount_reference,
     has_unmatched_person_field_reference,
-    is_grounded_person_amount_lookup_question,
-    is_grounded_person_payment_existence_question,
 )
 from rag.question_suggestions import build_person_autocomplete_catalog, build_question_suggestions
 from rag.question_decision import QuestionDecision
+from pandas_engine.query_plan import QueryPlan
 
 logger = logging.getLogger("uvicorn.error")
+
+
+@dataclass(frozen=True)
+class QuestionResolution:
+    """One routing result with an optional already-grounded execution plan."""
+
+    guard_result: object
+    route: str
+    pandas_strategy: str | None
+    plan: QueryPlan | None = None
+    answer: str | None = None
 
 
 def _route_with_guard(
@@ -114,188 +124,63 @@ def _schedule_shadow_question_engine(
     return True
 
 
-async def _resolve_llm_question(question: str):
-    """Return validated LLM operations, engine, and optional PANDAS strategy."""
 
-    normalized = re.sub(r"\s+", "", question)
-    # Common IME typo/variant: "두번쨰", "두번째" should mean "두번째".
-    normalized = normalized.replace("번쨰", "번째")
+
+async def _resolve_llm_question(question: str) -> QuestionResolution:
+    """Resolve a question through one deterministic planning boundary first."""
     dataframes = scoped_mapping(_df_namespace, _df_sources)
-    deterministic_operation = None
-    date_spec = parse_date_filter(question)
-    # A plain whole-table list has no semantic ambiguity and should not wait
-    # for a local model. File/document inventories use a separate route and do
-    # not match this table-record expression.
-    if (
-        date_spec is not None
-        and not date_spec.error
-        and date_spec.start_month != date_spec.end_month
-    ):
-        # The schema-aware date filter chooses a usable complete date column
-        # or a year+month component pair before table execution.
-        deterministic_operation = "structured_query"
-    elif (
-        is_grounded_person_payment_existence_question(question, dataframes=dataframes)
-        or is_grounded_person_amount_lookup_question(question, dataframes=dataframes)
-    ):
-        candidate = build_schema_grounded_plan(
-            question, dataframes=dataframes, operation_hint="lookup_amount"
+    candidates = ambiguous_person_lookup_candidates(question, dataframes=dataframes)
+    if candidates:
+        return QuestionResolution(
+            guard_result=check_question(question),
+            route="PANDAS",
+            pandas_strategy=None,
+            answer=(
+                "동일하거나 유사한 이름의 회원이 여러 명입니다. "
+                "전체 이름을 알려 주세요. 후보: " + ", ".join(candidates)
+            ),
         )
-        if candidate is not None:
-            deterministic_operation = "lookup_amount"
-    elif re.fullmatch(
-        r"(?:표의?)?(?:전체|모든|전부)(?:데이터|기록|행|명단|목록|리스트)?"
-        r"(?:보여줘|보여|알려줘|조회해줘|확인해줘)?[?!.]*",
-        normalized,
-    ):
-        candidate = build_schema_grounded_plan(
-            question, dataframes=dataframes, operation_hint="list_records"
+    if has_unmatched_person_field_reference(question, dataframes=dataframes):
+        return QuestionResolution(
+            check_question(question), "PANDAS", None,
+            answer="조회된 정보가 없습니다.",
         )
-        if candidate is not None:
-            deterministic_operation = "list_records"
-    # Whole-table projections may mention phone/email/major, but they are not
-    # single-subject lookup_field requests.  Let D-P build their P.JSON before
-    # the field-keyword branches can send them to R.JSON/LLM.QA.
-    elif re.search(
-        r"(?:전체(?:기록|내역|회원)|모든회원|각회원|회원별)",
-        normalized,
-    ):
-        candidate = build_schema_grounded_plan(
-            question, dataframes=dataframes, operation_hint="structured_query"
+    if has_unmatched_person_amount_reference(question, dataframes=dataframes):
+        return QuestionResolution(
+            check_question(question), "PANDAS", None,
+            answer="조회된 금액이 없습니다.",
         )
-        if candidate is not None:
-            deterministic_operation = "structured_query"
-    # A missing-value phrase is a filter condition even when it names a field
-    # that can otherwise be returned by a lookup (for example an email).
-    elif re.search(r"(?:비어있|안적|미입력|누락|공백|없(?:는|어|어?))", normalized):
-        candidate = build_schema_grounded_plan(
-            question, dataframes=dataframes, operation_hint="structured_query"
-        )
-        if candidate is not None:
-            deterministic_operation = "structured_query"
-    # A payment-time request can naturally contain "돈 냈어".  Resolve its
-    # explicit temporal projection before the payment-existence total below.
-    elif any(token in normalized for token in ("등록날짜", "지급일", "날짜", "언제", "시기")):
-        candidate = build_schema_grounded_plan(
-            question, dataframes=dataframes, operation_hint="lookup_field"
-        )
-        if candidate is not None:
-            deterministic_operation = "lookup_field"
-    elif re.search(r"(?:돈|금액|회비|결제|납부|후원|기부).{0,8}?(?:냈|내었|냈어|냈나요|했어|했나|했나요)", normalized):
-        candidate = build_schema_grounded_plan(
-            question, dataframes=dataframes, operation_hint="lookup_amount"
-        )
-        if candidate is not None:
-            deterministic_operation = "lookup_amount"
-    elif (
-        any(token in normalized for token in ("전화번호", "이메일"))
-        and re.search(r"(?:얼마|돈|금액|회비|결제|납부|후원|기부)", normalized)
-    ):
-        candidate = build_schema_grounded_plan(
-            question, dataframes=dataframes, operation_hint="lookup_amount"
-        )
-        if candidate is not None:
-            deterministic_operation = "lookup_amount"
-    elif any(token in normalized for token in ("전화번호", "이메일", "전공", "학과")):
-        candidate = build_schema_grounded_plan(
-            question, dataframes=dataframes, operation_hint="lookup_field"
-        )
-        if candidate is not None:
-            deterministic_operation = "lookup_field"
-    elif re.search(r"(?:사람|인원|회원).*?(?:몇명|수)|몇명", normalized):
-        candidate = build_schema_grounded_plan(
-            question, dataframes=dataframes, operation_hint="count_records"
-        )
-        if candidate is not None:
-            deterministic_operation = "count_records"
-    # Explicit scalar extremes must take precedence over the generic money-total
-    # shortcut below. "가장 큰 금액" asks for max, not sum.
-    elif (
-        re.search(
-            r"(?:최댓값|최대(?:값|액|금액)?|최고(?:값|액|금액)?|"
-            r"(?:가장|제일)(?:큰|높은|많은)(?:값|금액|돈|액)|"
-            r"(?:값|금액|돈|액).{0,8}?(?:가장|제일)(?:큰|높은|많은))",
-            normalized,
-        )
-        and not re.search(r"(?:사람|회원|인원|누구)", normalized)
-    ):
-        candidate = build_schema_grounded_plan(
-            question, dataframes=dataframes, operation_hint="max_amount"
-        )
-        if candidate is not None:
-            deterministic_operation = "max_amount"
-    elif re.search(
-        r"(?:최솟값|최소(?:값|액|금액)?|최저(?:값|액|금액)?|"
-        r"(?:가장|제일)(?:작은|낮은)(?:값|금액|돈|액))",
-        normalized,
-    ):
-        candidate = build_schema_grounded_plan(
-            question, dataframes=dataframes, operation_hint="min_amount"
-        )
-        if candidate is not None:
-            deterministic_operation = "min_amount"
-    # Ordering and ordinal ranking must take precedence over the generic
-    # money-total shortcut below.  "금액을 큰 순서대로" is a list request,
-    # while "누적 금액이 두 번째로 큰 사람" is a grouped rank request.
-    elif re.search(
-        r"(?:오름차순|내림차순|순서대로|큰순|작은순|많은순|적은순|"
-        r"\d+번째|첫번째|두번째|세번째|네번째|다섯번째|최신|가장이른)",
-        normalized,
-    ):
-        candidate = build_schema_grounded_plan(
-            question, dataframes=dataframes, operation_hint="structured_query"
-        )
-        if candidate is not None:
-            deterministic_operation = "structured_query"
-    # A grounded person plus a short money noun is a person-scoped total.
-    # The QueryPlan builder keeps explicit average/mode/ranking precedence and
-    # declines this route unless the subject is grounded in the dataframe.
-    elif re.search(r"(?:총합|합계|총액|얼마|금액|돈)", normalized):
-        candidate = build_schema_grounded_plan(
-            question, dataframes=dataframes, operation_hint="sum_amount"
-        )
-        if candidate is not None:
-            deterministic_operation = "sum_amount"
-    else:
-        candidate = build_schema_grounded_plan(
-            question, dataframes=dataframes, operation_hint="structured_query"
-        )
-        if candidate is not None:
-            deterministic_operation = "structured_query"
+    operation, prepared_plan = build_auto_schema_grounded_plan(
+        question,
+        dataframes=dataframes,
+    )
 
-    # A keyword-specific branch can legitimately decline its narrow operation
-    # (for example, "전공별 납부액" is not a single-person field lookup). Do
-    # not send such a question to LLM.QA before giving the general D-P planner
-    # a chance to build the schema-grounded P.JSON.
-    if deterministic_operation is None:
-        candidate = build_schema_grounded_plan(
-            question, dataframes=dataframes, operation_hint="structured_query"
-        )
-        if candidate is not None:
-            deterministic_operation = "structured_query"
-
-    if deterministic_operation:
+    if operation is not None:
         decision = QuestionDecision.model_validate(
             {
                 "status": "ready",
-                "requests": [{"source_text": question, "operation": deterministic_operation}],
+                "requests": [{"source_text": question, "operation": operation}],
                 "reason": "스키마와 질문 원문으로 검증 가능한 표 조회입니다.",
             }
         )
         guard_result = check_question_decision(decision)
-        logger.info("[QUESTION_ENGINE] 스키마 기반 분류 | operation=%s", deterministic_operation)
-        return guard_result, "PANDAS", pandas_strategy_for_operations(decision.operations)
+        logger.info("[QUESTION_ENGINE] D-P AUTO 분류 | operation=%s", operation)
+        return QuestionResolution(
+            guard_result=guard_result,
+            route="PANDAS",
+            pandas_strategy=pandas_strategy_for_operations(decision.operations),
+            plan=prepared_plan,
+        )
 
-    decision = await decide_question(
-        question,
-        schema=_get_df_schema(),
-    )
+    decision = await decide_question(question, schema=_get_df_schema())
     guard_result = check_question_decision(decision)
     if guard_result.status == "GUIDE":
-        return guard_result, "GUIDE", None
-    route = route_operations(decision.operations)
-    strategy = pandas_strategy_for_operations(decision.operations)
-    return guard_result, route, strategy
+        return QuestionResolution(guard_result, "GUIDE", None)
+    return QuestionResolution(
+        guard_result,
+        route_operations(decision.operations),
+        pandas_strategy_for_operations(decision.operations),
+    )
 
 
 def _document_list_answer(entries: list[dict]) -> tuple[str, list[str]]:
@@ -558,42 +443,18 @@ async def chat(
                 and req.mode == "auto"
             )
             if use_llm_engine:
-                scoped_dataframes = scoped_mapping(_df_namespace, _df_sources)
-                candidates = ambiguous_person_lookup_candidates(
-                    req.question,
-                    dataframes=scoped_dataframes,
-                )
-                if candidates:
-                    return ChatResponse(
-                        answer=(
-                            "동일하거나 유사한 이름의 회원이 여러 명입니다. "
-                            "전체 이름을 알려 주세요. 후보: " + ", ".join(candidates)
-                        ),
-                        source="pandas",
-                        sources=[],
-                    )
-                if has_unmatched_person_field_reference(
-                    req.question,
-                    dataframes=scoped_dataframes,
-                ):
-                    return ChatResponse(
-                        answer="\uc870\ud68c\ub41c \uc815\ubcf4\uac00 \uc5c6\uc2b5\ub2c8\ub2e4.",
-                        source="pandas",
-                        sources=[],
-                    )
-                if has_unmatched_person_amount_reference(
-                    req.question,
-                    dataframes=scoped_dataframes,
-                ):
-                    return ChatResponse(
-                        answer="조회된 금액이 없습니다.",
-                        source="pandas",
-                        sources=[],
-                    )
                 try:
-                    guard_result, route, pandas_strategy = (
-                        await _resolve_llm_question(req.question)
-                    )
+                    resolution = await _resolve_llm_question(req.question)
+                    guard_result = resolution.guard_result
+                    route = resolution.route
+                    pandas_strategy = resolution.pandas_strategy
+                    prepared_plan = resolution.plan
+                    if resolution.answer is not None:
+                        return ChatResponse(
+                            answer=resolution.answer,
+                            source="pandas",
+                            sources=[],
+                        )
                 except QuestionEngineError as exc:
                     logger.warning(
                         "[QUESTION_ENGINE] 실제 분류 실패 | err=%s",
@@ -615,6 +476,7 @@ async def chat(
                     req.mode,
                 )
                 pandas_strategy = None
+                prepared_plan = None
 
             if guard_result.status == "GUIDE":
                 _schedule_shadow_question_engine(
@@ -651,6 +513,7 @@ async def chat(
                         if use_llm_engine and len(guard_result.operations) == 1
                         else None
                     ),
+                    prepared_plan=prepared_plan,
                 )
                 interactive_result = current_interactive_result()
             else:
@@ -684,9 +547,14 @@ async def chat_stream(req: ChatRequest, _: None = Depends(_verify_api_key)):
                 )
                 if use_llm_engine:
                     try:
-                        guard_result, route, pandas_strategy = (
-                            await _resolve_llm_question(req.question)
-                        )
+                        resolution = await _resolve_llm_question(req.question)
+                        guard_result = resolution.guard_result
+                        route = resolution.route
+                        pandas_strategy = resolution.pandas_strategy
+                        prepared_plan = resolution.plan
+                        if resolution.answer is not None:
+                            yield resolution.answer
+                            return
                     except QuestionEngineError:
                         yield (
                             "질문의 처리 유형을 안전하게 결정하지 못했습니다. "
@@ -701,6 +569,7 @@ async def chat_stream(req: ChatRequest, _: None = Depends(_verify_api_key)):
                         req.mode,
                     )
                     pandas_strategy = None
+                    prepared_plan = None
 
                 if guard_result.status == "GUIDE":
                     logger.info("[GUARD] GUIDE(stream) | reason=%s", guard_result.reason_code)
@@ -722,6 +591,7 @@ async def chat_stream(req: ChatRequest, _: None = Depends(_verify_api_key)):
                             if use_llm_engine and len(guard_result.operations) == 1
                             else None
                         ),
+                        prepared_plan=prepared_plan,
                     )
                     yield answer
                 else:
