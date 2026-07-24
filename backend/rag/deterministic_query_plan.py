@@ -30,6 +30,7 @@ _MONEY = re.compile(r"(?<!\d)(\d[\d,]*(?:\s*(?:만원|천원|원))?)(?!\d)")
 _PERSON_COUNT = re.compile(r"(?:사람|인원|회원).*?(?:몇\s*명|수)|몇\s*명")
 _SUM = re.compile(r"(?:총합|합계|총액|얼마(?:야|예|지|냈))")
 _MEAN = re.compile(r"(?:평균|평균값|평균액)")
+_MEDIAN = re.compile(r"(?:중앙값|중간값|중앙\s*금액)")
 _MODE = re.compile(r"(?:최빈값|최빈액|가장\s*(?:흔한|많이\s*나온)\s*(?:값|금액)?)")
 _MAX_VALUE = re.compile(
     r"(?:최댓값|최대(?:값|액|\s*금액)?|최고(?:값|액|\s*금액)?|"
@@ -83,6 +84,8 @@ _PERSON_DISPLAY_SUFFIX = re.compile(r"\s*[\(\[\{][^\]\)\}]*[\]\)\}]\s*$")
 _NON_PERSON_LEADING_TOKENS = {
     "가장", "제일", "최고", "최저", "사람", "회원", "회원별",
     "전체", "전체기록", "모든회원", "각회원", "누구",
+    "평균", "평균값", "평균액", "중앙값", "중간값", "최빈값",
+    "최댓값", "최대값", "최대액", "최솟값", "최소값", "최소액",
 }
 
 # These are user-facing Korean equivalents for a semantic category, not names
@@ -719,6 +722,8 @@ def build_schema_grounded_plan(
         return QueryPlan(status="ready", dataframe=alias, operation="count", filters=tuple(filters), distinct_by=(str(person),) if people_count and person is not None else ())
     if _MEAN.search(question) and money is not None:
         return QueryPlan(status="ready", dataframe=alias, operation="mean", filters=tuple(filters), target=str(money))
+    if _MEDIAN.search(question) and money is not None:
+        return QueryPlan(status="ready", dataframe=alias, operation="median", filters=tuple(filters), target=str(money))
     if _MODE.search(question) and money is not None:
         return QueryPlan(status="ready", dataframe=alias, operation="mode", filters=tuple(filters), target=str(money))
     if (operation_hint == "max_amount" or _MAX_VALUE.search(question)) and money is not None:
@@ -798,7 +803,18 @@ def build_auto_schema_grounded_plan(
     ):
         return "structured_query", None
     normalized = re.sub(r"\s+", "", question).replace("번쨰", "번째")
-    normalized = re.sub(r"\s+", "", question).replace("번쨰", "번째")
+    if (
+        re.search(r"(?:비교|차이)", question)
+        and _MAX_VALUE.search(question)
+        and _MIN_VALUE.search(question)
+        and not re.search(r"(?:사람|회원|인원|누구)", question)
+    ):
+        return "compare", None
+    person_ranking_operation = (
+        "min_person_by_amount" if _GROUP_SUM_MINIMUM.search(question)
+        else "max_person_by_amount" if _GROUP_SUM_EXTREME.search(question)
+        else None
+    )
     broad_projection = bool(re.search(
         r"(?:전체(?:기록|내역|회원)|모든회원|각회원|회원별)", normalized,
     ))
@@ -806,7 +822,9 @@ def build_auto_schema_grounded_plan(
         r"(?:비어있|안적|미입력|미등록|누락|공백|등록되지않|없(?:는|어|어?))",
         normalized,
     ))
-    if (
+    if person_ranking_operation is not None:
+        hints = ("structured_query",)
+    elif (
         is_grounded_person_payment_existence_question(
             question, dataframes=dataframes
         )
@@ -840,6 +858,12 @@ def build_auto_schema_grounded_plan(
         hints = ("lookup_field", "structured_query")
     elif re.search(r"(?:사람|인원|회원).*?(?:몇명|수)|몇명", normalized):
         hints = ("count_records", "structured_query")
+    elif _MEDIAN.search(question):
+        hints = ("median_amount", "structured_query")
+    elif _MEAN.search(question):
+        hints = ("average_amount", "structured_query")
+    elif _MODE.search(question):
+        hints = ("mode_amount", "structured_query")
     elif re.search(
         r"(?:최댓값|최대(?:값|액|금액)?|최고(?:값|액|금액)?|"
         r"(?:가장|제일)(?:큰|높은|많은)(?:값|금액|돈|액)|"
@@ -871,5 +895,7 @@ def build_auto_schema_grounded_plan(
             operation_hint=operation_hint,
         )
         if plan is not None:
+            if person_ranking_operation is not None and plan.operation == "group_sum":
+                return person_ranking_operation, plan
             return operation_hint, plan
     return None, None

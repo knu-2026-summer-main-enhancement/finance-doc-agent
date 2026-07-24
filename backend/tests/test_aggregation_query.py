@@ -16,6 +16,7 @@ from pandas_engine.aggregation import (
 from pandas_engine.formatter import _format_scalar_result
 from rag.router import _route
 from rag.question_analyzer import analyze_question
+from rag.pandas_rag import _answer_extreme_value_comparison
 from utils.table_parser import _clean_dataframe
 
 
@@ -250,6 +251,22 @@ class AggregationQueryTest(unittest.TestCase):
 
         intents = detect_aggregation_intents("가장 많이 낸 사람과 가장 적게 낸 사람 알려줘")
         self.assertEqual([intent.operation for intent in intents], ["max", "min"])
+
+    def test_min_max_value_comparison_returns_both_values_and_difference(self):
+        question = "가장 큰 금액과 가장 작은 금액 비교해줘"
+
+        result = _answer_extreme_value_comparison(
+            question,
+            analyze_question(question),
+        )
+
+        self.assertIsNotNone(result)
+        answer, sources, route = result
+        self.assertIn("최댓값은 9,000,000원", answer)
+        self.assertIn("최솟값은 1,000,000원", answer)
+        self.assertIn("차이는 8,000,000원", answer)
+        self.assertEqual(sources, ["test2025.png"])
+        self.assertEqual(route, "pandas")
 
     def test_multiple_amount_columns_are_selected_from_runtime_headers(self):
         raw = pd.DataFrame([

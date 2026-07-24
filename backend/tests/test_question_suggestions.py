@@ -6,6 +6,7 @@ from rag.deterministic_query_plan import build_schema_grounded_plan
 from rag.question_suggestions import (
     build_date_autocomplete_catalog,
     build_person_autocomplete_catalog,
+    build_person_prefix_matches,
     build_question_suggestions,
 )
 from utils.table_parser import _clean_dataframe
@@ -74,6 +75,15 @@ class QuestionSuggestionsTest(unittest.TestCase):
         self.assertTrue(any(item["text"] == "김민수 금액 알려줘" for item in exact))
         self.assertFalse(any("김민수" in item["text"] for item in partial))
 
+    def test_person_suggestion_recognizes_particles_and_person_inside_phrase(self):
+        dataframes = {"payments": _payment_dataframe()}
+
+        with_particle = build_question_suggestions("김민수는", dataframes=dataframes)
+        reversed_order = build_question_suggestions("금액 김민수", dataframes=dataframes)
+
+        self.assertTrue(any(item["text"] == "김민수 금액 알려줘" for item in with_particle))
+        self.assertTrue(any(item["text"] == "김민수 금액 알려줘" for item in reversed_order))
+
     def test_person_autocomplete_catalog_has_only_grounded_names_and_actions(self):
         dataframes = {"payments": _payment_dataframe()}
 
@@ -83,6 +93,25 @@ class QuestionSuggestionsTest(unittest.TestCase):
         self.assertTrue(catalog["actions"])
         self.assertTrue(all(action["suffix"] for action in catalog["actions"]))
         self.assertTrue(all(action["path"] == "fast" for action in catalog["actions"]))
+
+    def test_person_prefix_matches_are_limited_and_mask_aware(self):
+        dataframes = {"payments": _payment_dataframe()}
+
+        self.assertEqual(build_person_prefix_matches("김민", dataframes=dataframes), ["김민수"])
+        self.assertEqual(build_person_prefix_matches("김", dataframes=dataframes), [])
+
+        masked = {"payments": _payment_dataframe().assign(성명=["추*진", "김민수"])}
+        self.assertEqual(build_person_prefix_matches("추교", dataframes=masked), ["추*진"])
+
+    def test_large_person_catalog_switches_to_prefix_mode(self):
+        names = [f"김{index:03d}" for index in range(501)]
+        dataframes = {"payments": pd.DataFrame({"성명": names, "납부금액": [10000] * len(names)})}
+
+        catalog = build_person_autocomplete_catalog(dataframes)
+
+        self.assertEqual(catalog["mode"], "remote")
+        self.assertEqual(catalog["names"], [])
+        self.assertEqual(catalog["total"], 501)
 
     def test_catalog_can_represent_every_eo_operation(self):
         dataframes = {"payments": _payment_dataframe()}
@@ -173,7 +202,22 @@ class QuestionSuggestionsTest(unittest.TestCase):
             "납부금액": [10000],
         })}
 
-        self.assertEqual(build_date_autocomplete_catalog(dataframes), {"actions": []})
+        catalog = build_date_autocomplete_catalog(dataframes)
+        self.assertTrue(catalog["actions"])
+        self.assertEqual(
+            {action["lead"] for action in catalog["actions"]},
+            {"신청일자 기준", "지급일자 기준"},
+        )
+
+    def test_multi_document_suggestions_require_shared_semantic_columns(self):
+        first = _payment_dataframe()
+        second = _payment_dataframe().rename(columns={"성명": "이름", "납부금액": "결제금액"})
+
+        suggestions = build_question_suggestions("", dataframes={"first": first, "second": second}, limit=100)
+        texts = {item["text"] for item in suggestions}
+
+        self.assertIn("선택한 문서 전체 인원 몇 명이야?", texts)
+        self.assertIn("선택한 문서 전체 금액 알려줘", texts)
 
 
 if __name__ == "__main__":

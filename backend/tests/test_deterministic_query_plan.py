@@ -313,6 +313,20 @@ class DeterministicQueryPlanTest(unittest.TestCase):
             "\uae30\uacc4\uacfc \uc5bc\ub9c8", dataframes={"df0": self.df}
         ))
 
+    def test_statistic_terms_are_not_mistaken_for_absent_person_names(self):
+        for question in (
+            "평균 금액 얼마야?",
+            "중앙값 금액 얼마야?",
+            "최빈값 금액 얼마야?",
+        ):
+            with self.subTest(question=question):
+                self.assertFalse(
+                    has_unmatched_person_amount_reference(
+                        question,
+                        dataframes={"df0": self.df},
+                    )
+                )
+
     def test_real_name_matches_only_compatible_masked_name(self):
         masked = self.df.iloc[[0]].copy()
         masked["회원명"] = ["추*진"]
@@ -531,11 +545,53 @@ class DeterministicQueryPlanTest(unittest.TestCase):
         self.assertIsNotNone(plan)
         self.assertEqual(plan.operation, "mode")
 
+    def test_auto_mean_and_median_keep_their_operation_contracts(self):
+        for question, expected_operation, expected_plan_operation in (
+            ("평균 금액 얼마", "average_amount", "mean"),
+            ("금액 중앙값 얼마야", "median_amount", "median"),
+        ):
+            with self.subTest(question=question):
+                operation, plan = build_auto_schema_grounded_plan(
+                    question,
+                    dataframes={"df0": self.df},
+                )
+
+                self.assertEqual(operation, expected_operation)
+                self.assertIsNotNone(plan)
+                self.assertEqual(plan.operation, expected_plan_operation)
+
+    def test_auto_max_min_value_comparison_does_not_collapse_to_one_extreme(self):
+        operation, plan = build_auto_schema_grounded_plan(
+            "가장 큰 금액과 가장 작은 금액 비교해줘",
+            dataframes={"df0": self.df},
+        )
+
+        self.assertEqual(operation, "compare")
+        self.assertIsNone(plan)
+
     def test_lowest_total_person_is_ascending_group_sum(self):
         plan = self._plan("가장 돈 적게 낸 사람 누구야?", "structured_query")
         self.assertIsNotNone(plan)
         self.assertEqual(plan.operation, "group_sum")
         self.assertEqual(plan.group_order, "asc")
+
+    def test_auto_person_extremes_keep_person_ranking_operation_contract(self):
+        for question, expected_operation, expected_order in (
+            ("돈을 가장 적게 낸 사람 누구야?", "min_person_by_amount", "asc"),
+            ("돈을 가장 많이 낸 사람 누구야?", "max_person_by_amount", "desc"),
+        ):
+            with self.subTest(question=question):
+                operation, plan = build_auto_schema_grounded_plan(
+                    question,
+                    dataframes={"df0": self.df},
+                )
+
+                self.assertEqual(operation, expected_operation)
+                self.assertIsNotNone(plan)
+                self.assertEqual(plan.operation, "group_sum")
+                self.assertEqual(plan.group_by, ("회원명",))
+                self.assertEqual(plan.group_order, expected_order)
+                self.assertEqual(plan.top_n, 1)
 
     def test_department_alias_is_selected_for_person_lookup(self):
         plan = self._plan("김나다 무슨 과야?", "lookup_field")

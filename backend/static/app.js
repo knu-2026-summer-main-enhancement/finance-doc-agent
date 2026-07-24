@@ -66,13 +66,18 @@ const state = {
   suggestionIndex: -1,
   suggestionCatalogs: new Map(),
   suggestionCatalog: [],
-  personAutocomplete: { names: [], actions: [] },
+  personAutocomplete: { names: [], actions: [], mode: "local" },
+  remotePersonCandidates: [],
+  personSuggestionController: null,
+  personSuggestionTimer: null,
+  personSuggestionCache: new Map(),
   dateAutocomplete: { actions: [] },
   suggestionUsage: new Map(),
   documentsLoaded: false,
 };
 
 const initialChat = elements.chatArea.innerHTML;
+const SUGGESTION_USAGE_STORAGE_KEY = "finance-doc-agent.suggestion-usage.v1";
 
 function apiHeaders(json = false) {
   const headers = {};
@@ -187,6 +192,9 @@ function toggleDocument(source) {
 
 function updateScope() {
   hideQuestionSuggestions();
+  restoreSuggestionUsage();
+  state.remotePersonCandidates = [];
+  state.personSuggestionCache.clear();
   const selected = [...state.selected];
   elements.allDocuments.classList.toggle("selected", selected.length === 0);
   elements.scopeSummary.textContent = selected.length === 0
@@ -679,8 +687,16 @@ function renderDetail(detail) {
       elements.detailBody.append(card);
     });
   }
-  elements.detailMore.hidden = !detail.page?.has_more;
-  elements.detailMore.onclick = () => openDetail(detail._reference, detail.page.offset + detail.page.limit);
+  const hasMoreDetails = Boolean(
+    detail.page
+    && detail.page.has_more
+    && Number.isFinite(Number(detail.page.offset))
+    && Number.isFinite(Number(detail.page.limit))
+  );
+  elements.detailMore.hidden = !hasMoreDetails;
+  elements.detailMore.onclick = hasMoreDetails
+    ? () => openDetail(detail._reference, detail.page.offset + detail.page.limit)
+    : null;
   if (!elements.detailDialog.open) elements.detailDialog.showModal();
 }
 
@@ -826,9 +842,33 @@ function resizeTextarea() {
   elements.questionInput.style.height = `${Math.min(elements.questionInput.scrollHeight, 150)}px`;
 }
 
+function syncMobileComposerInset() {
+  if (window.innerWidth > 820 || !document.documentElement.classList.contains("ui-v3")) {
+    document.documentElement.style.removeProperty("--composer-inset");
+    return;
+  }
+  const distanceFromBottom = elements.chatArea.scrollHeight
+    - elements.chatArea.scrollTop
+    - elements.chatArea.clientHeight;
+  const wasNearBottom = distanceFromBottom < 80;
+  const inset = Math.ceil(document.querySelector(".composer-wrap").getBoundingClientRect().height);
+  document.documentElement.style.setProperty("--composer-inset", `${inset}px`);
+  if (wasNearBottom) {
+    requestAnimationFrame(() => {
+      elements.chatArea.scrollTop = elements.chatArea.scrollHeight;
+    });
+  }
+}
+
+let suggestionHideTimer = null;
+
 function hideQuestionSuggestions() {
-  elements.questionAutocomplete.hidden = true;
-  elements.questionAutocomplete.replaceChildren();
+  clearTimeout(suggestionHideTimer);
+  elements.questionAutocomplete.classList.remove("visible");
+  suggestionHideTimer = window.setTimeout(() => {
+    elements.questionAutocomplete.hidden = true;
+    elements.questionAutocomplete.replaceChildren();
+  }, window.innerWidth <= 820 ? 220 : 0);
   elements.questionInput.setAttribute("aria-expanded", "false");
   elements.questionInput.removeAttribute("aria-activedescendant");
   state.suggestionIndex = -1;
@@ -848,9 +888,7 @@ function setSuggestionIndex(index) {
 }
 
 function chooseQuestionSuggestion(text, operation = "") {
-  if (operation) {
-    state.suggestionUsage.set(operation, (state.suggestionUsage.get(operation) || 0) + 1);
-  }
+  recordSuggestionUsage(operation);
   elements.questionInput.value = text;
   resizeTextarea();
   hideQuestionSuggestions();
@@ -870,17 +908,19 @@ function appendHighlightedText(container, text, query) {
   container.append(mark, document.createTextNode(text.slice(index + needle.length)));
 }
 
-function renderQuestionSuggestions(suggestions, query = elements.questionInput.value) {
+function renderQuestionSuggestions(suggestions, query = elements.questionInput.value, hint = "") {
   suggestions = suggestions.slice(0, 3);
+  clearTimeout(suggestionHideTimer);
+  const wasHidden = elements.questionAutocomplete.hidden;
   elements.questionAutocomplete.replaceChildren();
-  if (suggestions.length) {
+  if (suggestions.length || hint) {
     const header = document.createElement("div");
     header.className = "autocomplete-header";
     const title = document.createElement("strong");
     title.textContent = query.trim() ? "이어서 질문해 보세요" : "검증된 질문";
-    const hint = document.createElement("span");
-    hint.textContent = "↑↓ 이동 · Enter 선택";
-    header.append(title, hint);
+    const navigationHint = document.createElement("span");
+    navigationHint.textContent = "↑↓ 이동 · Enter 선택";
+    header.append(title, navigationHint);
     elements.questionAutocomplete.append(header);
   }
   suggestions.forEach((suggestion, index) => {
@@ -910,7 +950,26 @@ function renderQuestionSuggestions(suggestions, query = elements.questionInput.v
     button.addEventListener("mouseenter", () => setSuggestionIndex(index));
     elements.questionAutocomplete.append(button);
   });
-  elements.questionAutocomplete.hidden = suggestions.length === 0;
+  if (hint) {
+    const message = document.createElement("div");
+    message.className = "autocomplete-hint";
+    message.textContent = hint;
+    elements.questionAutocomplete.append(message);
+  }
+  const shouldOpen = suggestions.length > 0 || Boolean(hint);
+  if (shouldOpen) {
+    elements.questionAutocomplete.hidden = false;
+    if (wasHidden) {
+      elements.questionAutocomplete.classList.remove("visible");
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => elements.questionAutocomplete.classList.add("visible"));
+      });
+    } else {
+      elements.questionAutocomplete.classList.add("visible");
+    }
+  } else {
+    hideQuestionSuggestions();
+  }
   elements.questionInput.setAttribute("aria-expanded", String(suggestions.length > 0));
   state.suggestionIndex = -1;
 }
@@ -946,6 +1005,7 @@ async function primeQuestionCatalog() {
       state.personAutocomplete = {
         names: Array.isArray(data.person_names) ? data.person_names : [],
         actions: Array.isArray(data.person_actions) ? data.person_actions : [],
+        mode: data.person_mode === "remote" ? "remote" : "local",
       };
       state.dateAutocomplete = {
         actions: Array.isArray(data.date_actions) ? data.date_actions : [],
@@ -962,7 +1022,7 @@ async function primeQuestionCatalog() {
   } catch (error) {
     if (error.name !== "AbortError") {
       state.suggestionCatalog = [];
-      state.personAutocomplete = { names: [], actions: [] };
+      state.personAutocomplete = { names: [], actions: [], mode: "local" };
       state.dateAutocomplete = { actions: [] };
     }
   } finally {
@@ -983,81 +1043,200 @@ function suggestionTerms(query) {
   }).filter(Boolean);
 }
 
-function rankLocalSuggestions(query) {
-  const normalizedQuery = normalizedSuggestionText(query);
-  const terms = suggestionTerms(query);
-  return state.suggestionCatalog
-    .map((suggestion, index) => {
-      const searchable = normalizedSuggestionText(`${suggestion.text} ${suggestion.label}`);
-      let score = state.suggestionUsage.get(suggestion.operation) || 0;
-      if (!normalizedQuery) score += suggestion.path === "fast" ? 20 : 10;
-      else if (searchable.startsWith(normalizedQuery)) score += 100;
-      else if (searchable.includes(normalizedQuery)) score += 70;
-      else {
-        const matches = terms.filter((term) => searchable.includes(term)).length;
-        if (!matches) return null;
-        score += matches === terms.length ? 50 : 15 * matches;
-      }
-      return { suggestion, score, index };
-    })
-    .filter(Boolean)
-    .sort((left, right) => right.score - left.score || left.index - right.index)
-    .slice(0, 3)
-    .map((item) => item.suggestion);
-}
-
-function personNameMatchesPrefix(name, query) {
+function personNameMatchesInput(name, query) {
   const normalizedName = normalizedSuggestionText(name);
   const normalizedQuery = normalizedSuggestionText(query);
-  if (!normalizedQuery || !/^[가-힣*]+$/u.test(query)) return false;
+  if (!normalizedName || !normalizedQuery) return false;
+  if (normalizedQuery.includes(normalizedName)) return true;
+  if (!/^[가-힣*]+$/u.test(query)) return false;
   if (normalizedName.startsWith(normalizedQuery)) return true;
   return normalizedName.length === normalizedQuery.length
     && [...normalizedName].every((character, index) => character === "*" || character === [...normalizedQuery][index]);
 }
 
+function suggestionUsageScopeKey() {
+  const selected = [...state.selected].sort((left, right) => left.localeCompare(right, "ko-KR"));
+  return selected.length ? selected.join("\u001f") : "__all_documents__";
+}
+
+function restoreSuggestionUsage() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(SUGGESTION_USAGE_STORAGE_KEY) || "{}");
+    const records = saved[suggestionUsageScopeKey()] || {};
+    state.suggestionUsage = new Map(Object.entries(records).filter(([, value]) =>
+      value && Number.isFinite(Number(value.count)) && Number.isFinite(Number(value.lastUsed))
+    ));
+  } catch (_) {
+    state.suggestionUsage = new Map();
+  }
+}
+
+function recordSuggestionUsage(operation) {
+  if (!operation) return;
+  const current = state.suggestionUsage.get(operation) || { count: 0, lastUsed: 0 };
+  state.suggestionUsage.set(operation, {
+    count: Math.min(Number(current.count || 0) + 1, 50),
+    lastUsed: Date.now(),
+  });
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(SUGGESTION_USAGE_STORAGE_KEY) || "{}");
+    saved[suggestionUsageScopeKey()] = Object.fromEntries(state.suggestionUsage);
+    window.localStorage.setItem(SUGGESTION_USAGE_STORAGE_KEY, JSON.stringify(saved));
+  } catch (_) {
+    // Autocomplete remains usable when local storage is unavailable.
+  }
+}
+
 function rankPersonCompletions(query) {
-  const normalizedQuery = normalizedSuggestionText(query);
-  if (!normalizedQuery) return [];
+  if (!normalizedSuggestionText(query)) return [];
   const suggestions = [];
-  for (const name of state.personAutocomplete.names) {
+  const names = state.personAutocomplete.mode === "remote"
+    ? state.remotePersonCandidates
+    : state.personAutocomplete.names;
+  for (const name of names) {
+    if (!personNameMatchesInput(name, query)) continue;
     for (const action of state.personAutocomplete.actions) {
       const text = `${name} ${action.suffix}`;
-      // Keep a completion visible while its exact wording is being typed.
-      // Before the action wording starts, match the name prefix so that
-      // entering "김현" can still expand to a complete question.
-      if (
-        !normalizedSuggestionText(text).startsWith(normalizedQuery)
-        && !personNameMatchesPrefix(name, query)
-      ) continue;
-      suggestions.push({ ...action, text });
-      if (suggestions.length === 3) return suggestions;
+      suggestions.push({ ...action, text, category: "person" });
+      if (suggestions.length === 9) return suggestions;
     }
   }
   return suggestions;
 }
 
-function dateExpressionPrefix(query) {
+function remotePersonPrefix(query) {
+  const tokens = String(query || "").normalize("NFKC").match(/[가-힣*]{2,}/gu) || [];
+  const particles = /(에게|한테|께|은|는|이|가|을|를|의|도|만)$/u;
+  return tokens
+    .map((token) => token.replace(particles, ""))
+    .filter((token) => token.length >= 2)
+    .sort((left, right) => right.length - left.length)[0] || "";
+}
+
+function scheduleRemotePersonSearch(query) {
+  if (state.personAutocomplete.mode !== "remote" || elements.naturalMode.checked || state.busy) return;
+  const prefix = remotePersonPrefix(query);
+  if (!prefix) {
+    state.personSuggestionController?.abort();
+    window.clearTimeout(state.personSuggestionTimer);
+    state.remotePersonCandidates = [];
+    return;
+  }
+  const cacheKey = `${suggestionScopeKey()}\u001f${prefix}`;
+  const cached = state.personSuggestionCache.get(cacheKey);
+  if (cached) {
+    state.remotePersonCandidates = cached;
+    return;
+  }
+  state.personSuggestionController?.abort();
+  window.clearTimeout(state.personSuggestionTimer);
+  state.personSuggestionTimer = window.setTimeout(async () => {
+    const controller = new AbortController();
+    state.personSuggestionController = controller;
+    try {
+      const response = await fetch("/chat/person-suggestions", {
+        method: "POST",
+        headers: apiHeaders(true),
+        body: JSON.stringify({ prefix, sources: [...state.selected], limit: 10 }),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const data = await response.json();
+      if (prefix === remotePersonPrefix(elements.questionInput.value)) {
+        state.remotePersonCandidates = Array.isArray(data.names) ? data.names : [];
+        state.personSuggestionCache.set(cacheKey, state.remotePersonCandidates);
+        showLocalQuestionSuggestions();
+      }
+    } catch (error) {
+      if (error.name !== "AbortError") state.remotePersonCandidates = [];
+    } finally {
+      if (state.personSuggestionController === controller) state.personSuggestionController = null;
+    }
+  }, 200);
+}
+
+function dateExpressionState(query) {
   const value = String(query || "").normalize("NFKC").trim().replace(/\s+/g, " ");
   const range = value.match(/^((?:19|20)\d{2}\s*년\s*(?:1[0-2]|[1-9])\s*월\s*부터\s*(?:19|20)\d{2}\s*년\s*(?:1[0-2]|[1-9])\s*월\s*까지)/u);
-  if (range) return range[1].replace(/\s+/g, " ");
+  if (range) return { prefix: range[1].replace(/\s+/g, " "), rangePending: false };
+  if (/(?:부터|에서|~|〜|-)\s*(?:(?:19|20)\d{0,4}(?:\s*년)?(?:\s*(?:1[0-2]|[1-9])?\s*월?)?)?$/u.test(value)
+    && /(?:19|20)\d{2}\s*년\s*(?:1[0-2]|[1-9])\s*월/u.test(value)) {
+    return { prefix: "", rangePending: true };
+  }
   const yearMonth = value.match(/^((?:19|20)\d{2})\s*년\s*(1[0-2]|[1-9])\s*월/u);
-  if (yearMonth) return `${yearMonth[1]}년 ${yearMonth[2]}월`;
+  if (yearMonth) return { prefix: `${yearMonth[1]}년 ${yearMonth[2]}월`, rangePending: false };
   const year = value.match(/^((?:19|20)\d{2})\s*년?/u);
-  if (year) return `${year[1]}년`;
-  return "";
+  if (year) return { prefix: `${year[1]}년`, rangePending: false };
+  return { prefix: "", rangePending: false };
 }
 
 function rankDateCompletions(query) {
-  const prefix = dateExpressionPrefix(query);
+  const { prefix } = dateExpressionState(query);
   if (!prefix) return [];
   const candidates = state.dateAutocomplete.actions.map((action) => ({
     ...action,
-    text: `${prefix} ${action.suffix}`,
+    text: `${action.lead ? `${action.lead} ` : ""}${prefix} ${action.suffix}`,
+    category: "date",
   }));
   const normalizedQuery = normalizedSuggestionText(query);
-  return candidates.filter((candidate) =>
-    normalizedSuggestionText(candidate.text).startsWith(normalizedQuery)
-  ).slice(0, 3);
+  return candidates.filter((candidate) => normalizedSuggestionText(candidate.text).startsWith(normalizedQuery));
+}
+
+function scoreSuggestionCandidate(candidate, query, index) {
+  const normalizedQuery = normalizedSuggestionText(query);
+  const searchable = normalizedSuggestionText(`${candidate.text} ${candidate.label}`);
+  const terms = suggestionTerms(query);
+  const usage = state.suggestionUsage.get(candidate.operation);
+  const ageHours = usage ? (Date.now() - Number(usage.lastUsed || 0)) / 3_600_000 : Infinity;
+  let score = usage ? Math.min(Number(usage.count || 0), 8) : 0;
+  if (ageHours <= 24) score += 6;
+  else if (ageHours <= 24 * 7) score += 3;
+  if (!normalizedQuery) score += candidate.path === "fast" ? 20 : 10;
+  else if (searchable.startsWith(normalizedQuery)) score += 100;
+  else if (searchable.includes(normalizedQuery)) score += 70;
+  else {
+    const matches = terms.filter((term) => searchable.includes(term)).length;
+    if (!matches && candidate.category !== "person") return null;
+    score += matches === terms.length && terms.length ? 50 : 15 * matches;
+  }
+  if (candidate.category === "person") score += 35;
+  if (candidate.category === "date") score += 25;
+  if (candidate.scope === "multi") score += 20;
+  if (candidate.path === "fast") score += 5;
+  return { candidate, score, index };
+}
+
+function rankUnifiedSuggestions(query) {
+  const candidates = [
+    ...rankPersonCompletions(query),
+    ...rankDateCompletions(query),
+    ...state.suggestionCatalog.map((suggestion) => ({ ...suggestion, category: "general" })),
+  ];
+  const seen = new Set();
+  const ranked = candidates
+    .map((candidate, index) => scoreSuggestionCandidate(candidate, query, index))
+    .filter(Boolean)
+    .filter(({ candidate }) => {
+      const key = normalizedSuggestionText(candidate.text);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) => right.score - left.score || left.index - right.index);
+  const selected = [];
+  const categories = new Set();
+  for (const item of ranked) {
+    if (categories.has(item.candidate.category)) continue;
+    selected.push(item.candidate);
+    categories.add(item.candidate.category);
+    if (selected.length === 3) return selected;
+  }
+  for (const item of ranked) {
+    if (selected.includes(item.candidate)) continue;
+    selected.push(item.candidate);
+    if (selected.length === 3) break;
+  }
+  return selected;
 }
 
 function showLocalQuestionSuggestions() {
@@ -1066,10 +1245,11 @@ function showLocalQuestionSuggestions() {
     return;
   }
   const query = elements.questionInput.value.trim();
-  const suggestions = rankPersonCompletions(query);
-  if (!suggestions.length) suggestions.push(...rankDateCompletions(query));
-  if (!suggestions.length) suggestions.push(...rankLocalSuggestions(query));
-  renderQuestionSuggestions(suggestions, query);
+  const dateState = dateExpressionState(query);
+  const rangeHint = dateState.rangePending
+    ? "종료 날짜를 입력하면 기간 목록·합계·인원 질문을 추천합니다."
+    : "";
+  renderQuestionSuggestions(rankUnifiedSuggestions(query), query, rangeHint);
 }
 
 function bindSuggestions() {
@@ -1104,6 +1284,19 @@ function updateNaturalMode() {
       : "문서에 대해 질문하세요.");
 }
 
+function setNaturalMode(active) {
+  if (active && !elements.naturalMode.checked) {
+    const confirmed = window.confirm(
+      "주의: AI 문서 검색은 의미가 비슷한 내용을 바탕으로 답변하므로 부정확하거나 틀린 답변을 만들 수 있습니다.\n\n"
+      + "금액·인원·통계 계산이나 원본 확인이 필요한 질문에는 사용하지 마세요. 그래도 AI 문서 검색을 켤까요?",
+    );
+    if (!confirmed) return false;
+  }
+  elements.naturalMode.checked = active;
+  updateNaturalMode();
+  return true;
+}
+
 elements.chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
   if (state.busy) {
@@ -1114,6 +1307,7 @@ elements.chatForm.addEventListener("submit", (event) => {
 });
 elements.questionInput.addEventListener("input", () => {
   resizeTextarea();
+  scheduleRemotePersonSearch(elements.questionInput.value);
   showLocalQuestionSuggestions();
 });
 elements.questionInput.addEventListener("focus", async () => {
@@ -1194,7 +1388,14 @@ document.addEventListener("keydown", (event) => {
     }
   }
 });
-elements.naturalMode.addEventListener("change", updateNaturalMode);
+elements.naturalMode.addEventListener("change", () => {
+  if (elements.naturalMode.checked) {
+    elements.naturalMode.checked = false;
+    setNaturalMode(true);
+    return;
+  }
+  updateNaturalMode();
+});
 elements.renameForm.addEventListener("submit", submitRenameDocument);
 elements.renameCancel.addEventListener("click", closeRenameModal);
 elements.deleteCancel.addEventListener("click", closeDeleteModal);
@@ -1249,11 +1450,14 @@ elements.quickAttach.addEventListener("click", () => {
   setUploadPanelOpen(true);
 });
 elements.quickModeToggle.addEventListener("click", () => {
-  elements.naturalMode.checked = !elements.naturalMode.checked;
-  updateNaturalMode();
+  setNaturalMode(!elements.naturalMode.checked);
 });
 
 bindSuggestions();
 loadDocuments();
 updateNaturalMode();
+const composerResizeObserver = new ResizeObserver(syncMobileComposerInset);
+composerResizeObserver.observe(document.querySelector(".composer-wrap"));
+window.addEventListener("resize", syncMobileComposerInset);
+syncMobileComposerInset();
 elements.questionInput.focus();

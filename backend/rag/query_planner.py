@@ -94,6 +94,14 @@ def _operation_hint_text(
         "lookup_amount": "lookup_amount: 특정 대상의 금액 조회. 대상 식별 filters와 금액 target을 사용",
         "max_amount": "max_amount: operation=max, target은 금액 컬럼",
         "min_amount": "min_amount: operation=min, target은 금액 컬럼",
+        "max_person_by_amount": (
+            "max_person_by_amount: operation=group_sum, target은 금액 컬럼, "
+            "group_by는 사람 식별 컬럼, group_order=desc, top_n=1"
+        ),
+        "min_person_by_amount": (
+            "min_person_by_amount: operation=group_sum, target은 금액 컬럼, "
+            "group_by는 사람 식별 컬럼, group_order=asc, top_n=1"
+        ),
     }
     if operation_hint in operation_contracts:
         return operation_contracts[operation_hint]
@@ -106,6 +114,19 @@ def _validate_operation_hint_contract(
 ) -> QueryPlan:
     """Ensure a specialized classifier decision survives plan generation."""
 
+    if operation_hint in {"max_person_by_amount", "min_person_by_amount"}:
+        expected_order = "desc" if operation_hint == "max_person_by_amount" else "asc"
+        if (
+            plan.status != "ready"
+            or plan.operation != "group_sum"
+            or not plan.target
+            or not plan.group_by
+            or plan.group_order != expected_order
+        ):
+            raise ValueError(
+                f"{operation_hint} requires ranked person group_sum with {expected_order} order"
+            )
+        return plan
     if operation_hint != "lookup_field":
         return plan
     if plan.status != "ready":

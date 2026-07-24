@@ -29,6 +29,7 @@
 .calculation-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 18px; padding: 16px; border: 1px solid #dce7e1; border-radius: 13px; background: #f7faf8; }
 .detail-candidate { display: block; width: 100%; margin: 8px 0; padding: 13px; border: 1px solid var(--line); border-radius: 12px; color: var(--text); background: #fff; text-align: left; cursor: pointer; }
 .detail-dialog > .secondary-button { margin: 0 18px 16px; }
+.detail-dialog > .secondary-button[hidden] { display: none; }
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -205,6 +206,7 @@ button { color: inherit; }
 .autocomplete-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .autocomplete-text mark { color: inherit; background: transparent; font-weight: 800; }
 .autocomplete-option small { flex: 0 0 auto; color: var(--muted); font-size: 9px; font-weight: 700; }
+.autocomplete-hint { padding: 7px 9px; color: var(--muted); font-size: 10px; line-height: 1.45; }
 .composer:focus-within { border-color: #aaa1ec; box-shadow: 0 0 0 3px rgba(118,103,232,.09), 0 10px 30px rgba(24,24,27,.08); }
 .composer textarea { width: 100%; max-height: 150px; padding: 9px 4px 9px 6px; border: 0; outline: 0; resize: none; color: var(--ink); background: transparent; line-height: 1.5; }
 .upload-panel {
@@ -373,6 +375,39 @@ html.ui-v3 .send-button { width: 44px; min-width: 44px; min-height: 44px; paddin
 html.ui-v3 .send-button [data-send-label] { display: none; }
 html.ui-v3 .send-button [data-send-icon] { font-size: 18px; }
 html.ui-v3 .message { margin-bottom: 20px; }
+html.ui-v3 .chat-area {
+  padding-bottom: calc(var(--composer-inset, 112px) + 12px);
+  scroll-padding-bottom: calc(var(--composer-inset, 112px) + 12px);
+}
+html.ui-v3 .question-autocomplete {
+  max-height: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+  border-color: transparent;
+  opacity: 0;
+  transform: translateY(9px);
+  overscroll-behavior: contain;
+  transition:
+    max-height .22s cubic-bezier(.2, .75, .25, 1),
+    margin-bottom .22s ease,
+    padding-top .22s ease,
+    padding-bottom .22s ease,
+    border-color .16s ease,
+    opacity .16s ease,
+    transform .22s cubic-bezier(.2, .75, .25, 1);
+}
+html.ui-v3 .question-autocomplete.visible {
+  max-height: min(34dvh, 190px);
+  margin-bottom: 7px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+  overflow-y: auto;
+  border-color: #dedee5;
+  opacity: 1;
+  transform: translateY(0);
+}
 }
 
 @media (min-width: 821px) {
@@ -418,6 +453,16 @@ html.ui-v3 .message { margin-bottom: 20px; }
   .suggestion-grid { grid-template-columns: 1fr; }
   .composer-wrap { padding: clamp(7px, 2.8vw, 9px) clamp(10px, 3.4vw, 13px) clamp(10px, 3.4vw, 13px); }
   .composer-wrap > .query-mode-row { gap: 5px; min-height: 28px; margin-right: 0; font-size: clamp(10px, 3vw, 11px); }
+  /* Mobile autocomplete stays compact so three suggestions do not cover the chat. */
+  .question-autocomplete { gap: 1px; margin-bottom: 5px; padding: 4px; border-radius: 10px; }
+  .autocomplete-header { min-height: 18px; padding: 2px 5px; font-size: 8px; }
+  .autocomplete-header strong { font-size: 9px; }
+  .autocomplete-option { gap: 6px; min-height: 34px; padding: 6px 7px; border-radius: 7px; font-size: 12px; }
+  .autocomplete-main { gap: 6px; }
+  .autocomplete-icon { width: 20px; height: 20px; border-radius: 6px; font-size: 9px; }
+  .autocomplete-icon.vector { font-size: 7px; }
+  .autocomplete-option small { display: none; }
+  .autocomplete-hint { padding: 5px 6px; font-size: 9px; }
   .composer { gap: clamp(6px, 2.7vw, 9px); padding: clamp(7px, 2.8vw, 9px); border-radius: clamp(12px, 5vw, 18px); }
   .composer textarea { font-size: clamp(13px, 3.8vw, 15px); }
   .send-button span:first-child { display: none; }

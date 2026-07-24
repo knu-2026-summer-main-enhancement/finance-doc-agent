@@ -55,6 +55,40 @@ _NUMERIC_COMPARISON_FILTER = re.compile(
 )
 
 
+def _answer_extreme_value_comparison(
+    question: str,
+    analysis: QuestionAnalysis,
+) -> tuple[str, list[str], str] | None:
+    """Compare one minimum and one maximum value without an LLM-generated plan."""
+
+    intents = analysis.aggregation_intents
+    if (
+        {intent.operation for intent in intents} != {"min", "max"}
+        or any(intent.target != "value" for intent in intents)
+    ):
+        return None
+    payloads: dict[str, dict] = {}
+    sources: list[str] = []
+    for intent in intents:
+        result, result_sources = _query_pandas_direct(
+            question,
+            aggregation_intents=[intent],
+            date_filter=analysis.date_filter,
+        )
+        if not isinstance(result, dict) or result.get("type") != "aggregation":
+            return None
+        payloads[intent.operation] = result
+        sources.extend(result_sources)
+    minimum = float(payloads["min"]["value"])
+    maximum = float(payloads["max"]["value"])
+    label = str(payloads["max"].get("label") or payloads["min"].get("label") or "금액")
+    answer = (
+        f"{label} 최댓값은 {maximum:,.0f}원이고 최솟값은 {minimum:,.0f}원입니다. "
+        f"두 값의 차이는 {maximum - minimum:,.0f}원입니다."
+    )
+    return answer, list(dict.fromkeys(sources)), "pandas"
+
+
 def _format_direct_dataframe_with_evidence(
     df: pd.DataFrame,
     question: str,
@@ -266,6 +300,17 @@ async def _answer_pandas(
 
     analysis = analysis or analyze_question(question)
 
+    if "compare" in analysis.operations:
+        comparison = _answer_extreme_value_comparison(question, analysis)
+        if comparison is not None:
+            return comparison
+        return (
+            "현재 이 비교 조건은 한 번에 안전하게 계산할 수 없습니다. "
+            "비교할 대상과 범위를 조금 더 명확하게 입력해 주세요.",
+            [],
+            "pandas",
+        )
+
     if strategy == "QUERY_PLAN":
         # R.JSON may deliberately choose QUERY_PLAN for a structured request,
         # but explicit date ranges already have a schema-aware deterministic
@@ -324,16 +369,6 @@ async def _answer_pandas(
             analysis=analysis,
             operation_hint=operation_hint,
             prepared_plan=prepared_plan,
-        )
-
-    # 비교 집계는 그룹 기준을 확정할 전용 실행기가 아직 없으므로 잘못된 단일
-    # 집계를 반환하지 않는다. 정상 /chat 경로에서는 Guard가 먼저 안내한다.
-    if "compare" in analysis.operations:
-        return (
-            "현재 여러 범위의 집계 결과를 직접 비교하는 기능은 지원하지 않습니다. "
-            "비교할 각 범위의 집계값을 별도로 질문해 주세요.",
-            [],
-            "pandas",
         )
 
     # 기본 통계는 LLM 코드 생성이나 VECTOR 검색으로 넘기지 않고 검증된 함수로 계산한다.

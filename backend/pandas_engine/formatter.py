@@ -370,7 +370,8 @@ def _format_query_plan_evidence(result: QueryExecutionResult) -> str:
     if evidence.limit is not None:
         lines.append(f"- 반환 제한: {evidence.limit:,}개")
     elif evidence.top_n is not None:
-        lines.append(f"- 순위 제한: 상위 {evidence.top_n:,}개")
+        direction = "하위" if evidence.group_order == "asc" else "상위"
+        lines.append(f"- 순위 제한: {direction} {evidence.top_n:,}개")
     if evidence.rank_position is not None:
         lines.append(f"- 순위: 동순위 포함 {evidence.rank_position:,}번째")
     lines.append(
@@ -412,11 +413,23 @@ def _format_query_execution_result(
         elif result.operation == "group_sum" and not result.value.empty:
             group_column = result.value.columns[0]
             amount_column = result.target or result.value.columns[-1]
+            amount_suffix = "원" if result.target_data_type == "money" else ""
             lines = [
-                f"{row[group_column]} {_format_number(row[amount_column])}"
+                f"{row[group_column]} {_format_number(row[amount_column])}{amount_suffix}"
                 for _, row in result.value.iterrows()
             ]
-            answer = f"총 {len(lines)}건\n" + "\n".join(lines)
+            if (
+                result.evidence.top_n == 1
+                and re.search(r"(?:사람|회원|인원|누구)", question)
+            ):
+                heading = (
+                    "가장 적게 낸 사람"
+                    if result.evidence.group_order == "asc"
+                    else "가장 많이 낸 사람"
+                )
+                answer = f"{heading}은 다음과 같습니다.\n" + "\n".join(lines)
+            else:
+                answer = f"총 {len(lines)}건\n" + "\n".join(lines)
         else:
             answer = _format_dataframe_result_for_question(result.value, question)
     elif result.operation == "count":

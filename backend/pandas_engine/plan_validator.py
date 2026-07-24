@@ -599,7 +599,17 @@ def _validate_result_limit_grounding(
             rf"(?<!\d){plan.top_n}(?!\d)(?:개|건|명|위|번째|개만|건만|명만)?",
             normalized,
         )
-        if evidence is None:
+        implicit_extreme_one = (
+            plan.top_n == 1
+            and plan.operation == "group_sum"
+            and plan.group_order in {"asc", "desc"}
+            and bool(re.search(
+                r"(?:가장|제일|최고|최저).{0,20}?"
+                r"(?:많이|많은|큰|높은|적게|적은|작은|낮은|최대|최소)",
+                normalized,
+            ))
+        )
+        if evidence is None and not implicit_extreme_one:
             issues.append(
                 _issue(
                     "ungrounded_top_n",

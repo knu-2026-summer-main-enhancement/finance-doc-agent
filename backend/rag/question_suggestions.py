@@ -51,9 +51,11 @@ _TEMPLATES = (
 )
 
 _CACHE_LIMIT = 32
+_LOCAL_PERSON_CATALOG_LIMIT = 500
 _base_cache: OrderedDict[tuple, tuple[dict[str, str], ...]] = OrderedDict()
 _person_cache: OrderedDict[tuple, tuple[str, ...]] = OrderedDict()
 _cache_lock = threading.Lock()
+_PERSON_PARTICLE = re.compile(r"(?:에게|한테|께|은|는|이|가|을|를|의|도|만)$")
 
 
 def _normalize(value: str) -> str:
@@ -164,7 +166,7 @@ def build_person_autocomplete_catalog(
 
     names = _person_values(dataframes)
     if not names:
-        return {"names": [], "actions": []}
+        return {"names": [], "actions": [], "mode": "local", "total": 0}
 
     # Validate the action wording against this schema once.  All returned
     # names originate from the same person column, so the valid shapes apply
@@ -184,7 +186,45 @@ def build_person_autocomplete_catalog(
                 "path": result["path"],
                 "path_label": result["path_label"],
             })
-    return {"names": list(names), "actions": actions}
+    # Avoid exposing or iterating an entire large member list in the browser.
+    # The UI switches to the prefix endpoint when this limit is exceeded.
+    local_names = list(names) if len(names) <= _LOCAL_PERSON_CATALOG_LIMIT else []
+    return {
+        "names": local_names,
+        "actions": actions,
+        "mode": "local" if local_names else "remote",
+        "total": len(names),
+    }
+
+
+def build_person_prefix_matches(
+    prefix: str,
+    *,
+    dataframes: Mapping[str, pd.DataFrame],
+    limit: int = 10,
+) -> list[str]:
+    """Return at most ``limit`` stored names for a two-or-more-character prefix.
+
+    This is deliberately a narrow lookup endpoint: it receives no question
+    intent, returns no contact fields, and never logs the supplied text.
+    """
+
+    entered = normalize_person_name(prefix)
+    entered = _PERSON_PARTICLE.sub("", entered)
+    if len(entered) < 2 or limit <= 0:
+        return []
+    matches: list[str] = []
+    for stored in _person_values(dataframes):
+        if stored.startswith(entered):
+            matches.append(stored)
+        elif is_masked_name(stored) and len(entered) <= len(stored) and all(
+            expected == "*" or expected == actual
+            for expected, actual in zip(stored, entered)
+        ):
+            matches.append(stored)
+        if len(matches) >= limit:
+            break
+    return matches
 
 
 def build_date_autocomplete_catalog(
@@ -212,51 +252,125 @@ def build_date_autocomplete_catalog(
         elif meaning.role in {"date", "year_month"}:
             complete_columns.append(str(column))
 
-    # A year/month expression is safe only with one component pair or one
-    # complete calendar column. Multiple unrelated business dates must remain
-    # explicit instead of receiving a potentially misleading completion.
+    # A year/month expression is safe without a qualifier only with one
+    # component pair or one complete calendar column. Multiple business dates
+    # remain available, but every suggestion names its chosen source column.
     supports_year_month = (
         len(year_columns) == 1 and len(month_columns) == 1
     ) or (
         len(complete_columns) == 1
         and len(temporal_columns) == 1
     )
-    if not supports_year_month:
+    explicit_columns = list(dict.fromkeys(
+        column for column in temporal_columns
+        if column in complete_columns or (column in month_columns and len(year_columns) == 1)
+    ))
+    if not supports_year_month and not explicit_columns:
         return {"actions": []}
 
     prefix = f"{date.today().year}년 1월"
-    templates = (
-        _Template(f"{prefix} 목록 보여줘", "filter_records", "날짜 목록", "list_records", "fast"),
-        _Template(f"{prefix} 금액 총합 알려줘", "sum_amount", "날짜 합계", "sum_amount", "fast"),
-        _Template(f"{prefix} 인원 몇 명이야?", "count_records", "날짜 인원", "count_records", "fast"),
-    )
     actions: list[dict[str, str]] = []
-    for template in templates:
-        result = _compile_template(template, dataframes)
-        if result is None:
-            continue
-        actions.append({
-            "suffix": result["text"].removeprefix(prefix).strip(),
-            "operation": result["operation"],
-            "label": result["label"],
-            "path": result["path"],
-            "path_label": result["path_label"],
-        })
+    leads = [""] if supports_year_month else [f"{column} 기준" for column in explicit_columns]
+    for lead in leads:
+        stem = f"{lead} {prefix}".strip()
+        templates = (
+            _Template(f"{stem} 목록 보여줘", "filter_records", "날짜 목록", "list_records", "fast"),
+            _Template(f"{stem} 금액 총합 알려줘", "sum_amount", "날짜 합계", "sum_amount", "fast"),
+            _Template(f"{stem} 인원 몇 명이야?", "count_records", "날짜 인원", "count_records", "fast"),
+        )
+        for template in templates:
+            result = _compile_template(template, dataframes)
+            if result is None:
+                continue
+            actions.append({
+                "lead": lead,
+                "suffix": result["text"].removeprefix(stem).strip(),
+                "operation": result["operation"],
+                "label": result["label"],
+                "path": result["path"],
+                "path_label": result["path_label"],
+            })
     return {"actions": actions}
 
 
-def _is_grounded_person_input(query: str, dataframes: Mapping[str, pd.DataFrame]) -> bool:
-    entered = normalize_person_name(query)
+def _all_dataframes_support(
+    dataframes: Mapping[str, pd.DataFrame],
+    predicate,
+) -> bool:
+    return bool(dataframes) and all(
+        any(
+            not str(column).startswith("_") and predicate(infer_column_meaning(str(column), df[column]))
+            for column in df.columns
+        )
+        for df in dataframes.values()
+    )
+
+
+def _multi_document_suggestions(dataframes: Mapping[str, pd.DataFrame]) -> tuple[dict[str, str], ...]:
+    """Return only cross-document prompts whose semantic prerequisites are shared.
+
+    These are classified prompts, not fast QueryPlans: the final executor still
+    decides whether selected documents can be combined for the exact question.
+    """
+
+    if len(dataframes) < 2:
+        return ()
+    candidates: list[dict[str, str]] = []
+    if _all_dataframes_support(dataframes, lambda meaning: meaning.concept == "entity" and meaning.role == "entity_name" and meaning.qualifier == "person"):
+        candidates.append({
+            "text": "선택한 문서 전체 인원 몇 명이야?", "operation": "count_records",
+            "label": "여러 문서 인원", "path": "classified", "path_label": "공통 스키마", "scope": "multi",
+        })
+    if _all_dataframes_support(dataframes, lambda meaning: meaning.role == "amount" or meaning.data_type == "money"):
+        candidates.append({
+            "text": "선택한 문서 전체 금액 알려줘", "operation": "sum_amount",
+            "label": "여러 문서 합계", "path": "classified", "path_label": "공통 스키마", "scope": "multi",
+        })
+    if _all_dataframes_support(dataframes, lambda meaning: meaning.concept == "temporal" and meaning.role in {"date", "year_month", "month"}):
+        candidates.append({
+            "text": "선택한 문서를 날짜순으로 보여줘", "operation": "structured_query",
+            "label": "여러 문서 날짜", "path": "classified", "path_label": "공통 스키마", "scope": "multi",
+        })
+    return tuple(candidates)
+
+
+def _person_value_matches(entered: str, stored: str) -> bool:
+    if entered == stored:
+        return True
+    return (
+        is_masked_name(stored)
+        and len(entered) == len(stored)
+        and all(expected == "*" or expected == actual for expected, actual in zip(stored, entered))
+    )
+
+
+def _grounded_person_name(query: str, dataframes: Mapping[str, pd.DataFrame]) -> str | None:
+    """Find a stored person name anywhere in a user phrase without guessing.
+
+    Korean particles are removed only from the entered phrase.  The returned
+    value always comes from the source column, so a suggestion never invents a
+    person name and masked-name comparison keeps its existing strict policy.
+    """
+
+    compact = normalize_person_name(query)
+    if not compact:
+        return None
+    candidates = [compact, _PERSON_PARTICLE.sub("", compact)]
+    candidates.extend(
+        _PERSON_PARTICLE.sub("", token)
+        for token in re.findall(r"[가-힣*]{2,8}", compact)
+    )
     for stored in _person_values(dataframes):
-        if entered == stored:
-            return True
-        if (
-            is_masked_name(stored)
-            and len(entered) == len(stored)
-            and all(expected == "*" or expected == actual for expected, actual in zip(stored, entered))
-        ):
-            return True
-    return False
+        if stored in compact:
+            return stored
+        for candidate in candidates:
+            if _person_value_matches(candidate, stored):
+                return stored
+        if is_masked_name(stored):
+            for start in range(max(0, len(compact) - len(stored) + 1)):
+                if _person_value_matches(compact[start:start + len(stored)], stored):
+                    return stored
+    return None
 
 
 def _dynamic_templates(
@@ -266,15 +380,15 @@ def _dynamic_templates(
     stripped = query.strip()
     candidates: list[_Template] = []
 
-    # Echo only a name-shaped value already supplied by the user. D-P must
-    # ground it to a row before the suggestion can leave the backend.
-    if re.fullmatch(r"[가-힣*]{2,5}", stripped) and _is_grounded_person_input(stripped, dataframes):
+    # Echo only a stored person value already present in the user's phrase.
+    # D-P still grounds the final question to a row before it can be suggested.
+    if person_name := _grounded_person_name(stripped, dataframes):
         candidates.extend((
-            _Template(f"{stripped} 금액 알려줘", "lookup_amount", "인물 금액", "lookup_amount", "fast", True),
-            _Template(f"{stripped} 전체 기록 보여줘", "filter_records", "인물 기록", "filter_records", "fast", True),
-            _Template(f"{stripped} 전화번호 알려줘", "lookup_field", "전화번호", "lookup_field", "fast", True),
-            _Template(f"{stripped} 이메일 알려줘", "lookup_field", "이메일", "lookup_field", "fast", True),
-            _Template(f"{stripped} 학과 알려줘", "lookup_field", "학과", "lookup_field", "fast", True),
+            _Template(f"{person_name} 금액 알려줘", "lookup_amount", "인물 금액", "lookup_amount", "fast", True),
+            _Template(f"{person_name} 전체 기록 보여줘", "filter_records", "인물 기록", "filter_records", "fast", True),
+            _Template(f"{person_name} 전화번호 알려줘", "lookup_field", "전화번호", "lookup_field", "fast", True),
+            _Template(f"{person_name} 이메일 알려줘", "lookup_field", "이메일", "lookup_field", "fast", True),
+            _Template(f"{person_name} 학과 알려줘", "lookup_field", "학과", "lookup_field", "fast", True),
         ))
 
     # A condition literal is supplied by the user, never invented from source
@@ -301,7 +415,12 @@ def _relevance(text: str, query: str) -> tuple[int, int]:
     if normalized_query in normalized_text:
         return (4, -len(text))
     tokens = [_normalize(token) for token in re.findall(r"[가-힣A-Za-z0-9*]+", query)]
-    tokens = [token for token in tokens if token]
+    tokens = [
+        normalized
+        for token in tokens
+        for normalized in (token, _PERSON_PARTICLE.sub("", token))
+        if normalized
+    ]
     matched = sum(token in normalized_text for token in tokens)
     return ((3 if tokens and matched == len(tokens) else 2 if matched else 0), matched)
 
@@ -318,6 +437,7 @@ def build_question_suggestions(
         return []
 
     candidates = list(_base_suggestions(dataframes))
+    candidates.extend(_multi_document_suggestions(dataframes))
     candidates.extend(
         result
         for template in _dynamic_templates(query, dataframes)

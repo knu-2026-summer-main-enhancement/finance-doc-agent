@@ -80,6 +80,7 @@ from rag.deterministic_query_plan import (
 from rag.question_suggestions import (
     build_date_autocomplete_catalog,
     build_person_autocomplete_catalog,
+    build_person_prefix_matches,
     build_question_suggestions,
 )
 from rag.question_decision import QuestionDecision
@@ -288,6 +289,11 @@ class ChatSuggestionRequest(BaseModel):
     limit: int = Field(default=6, ge=1, le=50)
     catalog: bool = False
 
+class PersonSuggestionRequest(BaseModel):
+    prefix: str
+    sources: list[str] = Field(default_factory=list)
+    limit: int = Field(default=10, ge=1, le=10)
+
 class IngestRequest(BaseModel):
     file_path: str #파일 업로드 요청
 
@@ -452,7 +458,25 @@ def chat_suggestions(
         "person_names": person_catalog["names"],
         "person_actions": person_catalog["actions"],
         "date_actions": date_catalog["actions"],
+        "person_mode": person_catalog.get("mode", "local"),
+        "person_total": person_catalog.get("total", 0),
     }
+
+
+@app.post("/chat/person-suggestions")
+def chat_person_suggestions(
+    req: PersonSuggestionRequest,
+    _: None = Depends(_verify_api_key),
+):
+    if len(req.prefix) > 40:
+        raise HTTPException(status_code=400, detail="prefix가 너무 깁니다.")
+    with document_scope(req.sources):
+        names = build_person_prefix_matches(
+            req.prefix,
+            dataframes=scoped_mapping(_df_namespace, _df_sources),
+            limit=req.limit,
+        )
+    return {"names": names}
 
 
 @app.get("/summary") #모든 적재 문서의 요약 정보 반환 

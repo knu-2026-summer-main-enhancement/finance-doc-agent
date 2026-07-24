@@ -354,6 +354,30 @@ class PlanValidatorTest(unittest.TestCase):
                 self.assertFalse(result.is_executable)
                 self.assertEqual(result.status, status)
 
+    def test_person_superlative_grounds_implicit_top_one(self):
+        for question, order in (
+            ("돈을 가장 많이 낸 사람 누구야?", "desc"),
+            ("돈을 가장 적게 낸 사람 누구야?", "asc"),
+        ):
+            with self.subTest(question=question):
+                result = self._validate(
+                    self._plan(
+                        operation="group_sum",
+                        select=[],
+                        target="출연금액",
+                        group_by=["이름"],
+                        group_order=order,
+                        top_n=1,
+                    ),
+                    question,
+                )
+
+                self.assertTrue(result.is_executable)
+                self.assertNotIn(
+                    "ungrounded_top_n",
+                    {issue.code for issue in result.issues},
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

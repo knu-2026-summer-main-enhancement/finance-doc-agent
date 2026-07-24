@@ -73,7 +73,12 @@ def check_question(question: str) -> GuardResult:
             analysis=analysis,
         )
 
-    if "compare" in operations:
+    supported_extreme_comparison = (
+        "compare" in operations
+        and {intent.operation for intent in analysis.aggregation_intents} == {"min", "max"}
+        and all(intent.target == "value" for intent in analysis.aggregation_intents)
+    )
+    if "compare" in operations and not supported_extreme_comparison:
         return GuardResult(
             status="GUIDE",
             reason_code="COMPARISON_NOT_SUPPORTED",
@@ -84,7 +89,7 @@ def check_question(question: str) -> GuardResult:
             analysis=analysis,
         )
 
-    if len(analysis.aggregation_intents) > 1:
+    if len(analysis.aggregation_intents) > 1 and not supported_extreme_comparison:
         return GuardResult(
             status="GUIDE",
             reason_code="MULTIPLE_AGGREGATIONS",
@@ -162,16 +167,6 @@ def check_question_decision(decision: QuestionDecision) -> GuardResult:
             operations=operations,
             domains=domains,
             suggestions=["각 요청을 별도 질문으로 나누어 주세요."],
-        )
-
-    if "compare" in operations:
-        return GuardResult(
-            status="GUIDE",
-            reason_code="COMPARISON_NOT_SUPPORTED",
-            reason="현재 여러 범위의 결과를 직접 비교하는 기능은 지원하지 않습니다.",
-            operations=operations,
-            domains=domains,
-            suggestions=["비교할 각 범위를 별도 질문으로 조회해 주세요."],
         )
 
     aggregation_operations = {

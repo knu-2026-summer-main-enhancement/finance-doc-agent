@@ -45,6 +45,7 @@ class QueryExecutionEvidence:
     sort: tuple[SortCondition, ...]
     distinct_by: tuple[str, ...]
     group_by: tuple[str, ...]
+    group_order: str | None
     source_rows: int
     filtered_rows: int
     unique_people: int | None
@@ -416,6 +417,7 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
         sort=plan.sort,
         distinct_by=plan.distinct_by,
         group_by=plan.group_by,
+        group_order=plan.group_order,
         source_rows=int(len(df)),
         filtered_rows=filtered_rows,
         unique_people=unique_people,
