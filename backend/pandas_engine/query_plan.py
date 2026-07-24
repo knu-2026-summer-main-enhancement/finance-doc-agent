@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# 표 질의를 실행하기 위한 QueryPlan의 타입 계약이다.
+# LLM 또는 정규식 planner가 만든 모든 계획은 이 모델과 validator를 거쳐야 한다.
+
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# 검증이 끝난 QueryPlan을 pandas 연산으로만 실행하는 결정적 실행 계층이다.
+# 질문 문장 해석은 planner에서 끝내고, 이곳에서는 계획에 없는 의미를 추측하지 않는다.
+
 from dataclasses import dataclass, replace
 import re
 from typing import Hashable

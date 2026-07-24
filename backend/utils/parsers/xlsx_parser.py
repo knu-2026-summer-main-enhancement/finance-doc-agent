@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# XLSX 시트와 병합 셀 정보를 공통 표 적재 파이프라인으로 전달한다.
+# 컬럼 정리·의미 추론 규칙은 이 파일에 중복 구현하지 않고 pipeline에 둔다.
+
 import logging
 import os
 from collections.abc import Iterable

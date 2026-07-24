@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# 자주 검증된 질문을 정규식과 실제 스키마로 해석해 QueryPlan을 빠르게 만든다.
+# 특정 데이터의 사람명·연도·컬럼명을 넣지 말고 semantic schema에 근거해 계획한다.
+
 import re
 import unicodedata
 from typing import Hashable, Mapping

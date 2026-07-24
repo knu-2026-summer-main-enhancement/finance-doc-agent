@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# Ollama LLM, 임베딩, Chroma retriever를 지연 생성해 재사용한다.
+# 연결 설정은 core.config에만 두고 호출부는 아래 getter를 통해 접근한다.
+
 from typing import Optional
 
 import chromadb

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# 질문 판정 결과(Routing Decision)의 타입 계약이다.
+# operation을 추가할 때는 planner, executor, formatter와 관련 테스트까지 함께 맞춘다.
+
 from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator

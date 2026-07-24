@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# 한 요청에서 선택한 문서 범위를 ContextVar로 격리한다.
+# 전역 DataFrame을 직접 잘라 쓰지 말고 이 모듈의 범위 조회 함수를 사용한다.
+
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# 환경 변수와 기본값의 단일 진입점이다.
+# 새 설정은 사용하는 모듈에 직접 os.getenv를 추가하지 말고 이곳에서 정의한다.
+
 import os
 
 OLLAMA_BASE_URL     = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")

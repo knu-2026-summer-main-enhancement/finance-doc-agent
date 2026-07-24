@@ -1,5 +1,8 @@
 "use strict";
 
+// 구조화된 API 응답을 채팅 본문, 인물 카드, 금액 상세로 렌더링하는 UI 진입점이다.
+// 서버의 한국어 answer 문자열을 다시 파싱하지 말고 entities·segments·details를 사용한다.
+
 const elements = {
   sidebar: document.getElementById("sidebar"),
   closeSidebar: document.getElementById("closeSidebar"),

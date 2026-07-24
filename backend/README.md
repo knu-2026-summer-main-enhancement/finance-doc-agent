@@ -42,6 +42,7 @@
 
 상세 설명:
 
+- [개발자 가이드](DEVELOPER_GUIDE.md)
 - [Document Ingestion](utils/README.md)
 - [Question Routing](rag/README.md)
 - [Query Execution](pandas_engine/README.md)
@@ -112,4 +113,3 @@ http://localhost:8080/ui
 - 상세조회 캐시는 15분 TTL과 최대 256개 제한을 사용합니다.
 - 계산 기여 행은 요청한 페이지에 대해서만 JSON으로 변환합니다.
 - 연락처는 일반 응답이 아닌 사용자 요청 상세 카드에서만 제공합니다.
-
