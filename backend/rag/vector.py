@@ -194,18 +194,23 @@ async def _answer_vector(
     allow_pandas_fallback: bool = True,
     analysis: QuestionAnalysis | None = None,
 ) -> tuple[str, list[str], str]:
+    from rag.cancellation import raise_if_cancelled
+
+    raise_if_cancelled()
     question_id, question_chars = question_log_metadata(question)
     logger.info(
         "[VECTOR] 검색 시작 | question_id=%s chars=%d",
         question_id, question_chars,
     )
     prepared = await prepare_vector_context(question)
+    raise_if_cancelled()
     if prepared.immediate_answer:
         return prepared.immediate_answer, prepared.source_files or [], "vector"
 
     answer = await (prepared.prompt | get_llm_rag() | StrOutputParser()).ainvoke(
         {"context": prepared.context, "question": question}
     )
+    raise_if_cancelled()
     has_vector_override = (
         analysis.has_vector_override
         if analysis is not None

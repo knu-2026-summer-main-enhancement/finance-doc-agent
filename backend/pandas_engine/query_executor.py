@@ -25,6 +25,7 @@ from pandas_engine.query_plan import (
     ScalarValue,
     SortCondition,
 )
+from rag.cancellation import raise_if_cancelled
 from utils.semantic_schema import SYSTEM_COLUMNS, infer_column_meaning, is_source_column
 from utils.table_parser import IDENTITY_INTERNAL_COLS, normalize_person_name
 
@@ -386,6 +387,7 @@ def _target_series(
 def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult:
     """Execute only a QueryPlan that already passed runtime validation."""
 
+    raise_if_cancelled()
     if not validation.is_executable or validation.dataframe is None:
         details = ", ".join(issue.code for issue in validation.issues) or validation.status
         raise QueryPlanExecutionError(
@@ -396,9 +398,11 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
     df = validation.dataframe
     source_file = validation.source_file or str(plan.dataframe)
     filtered = _apply_filters(df, plan)
+    raise_if_cancelled()
     filtered_rows = int(len(filtered))
 
     filtered = _drop_plan_duplicates(filtered, plan)
+    raise_if_cancelled()
 
     matched_rows = int(len(filtered))
     person_columns = [
@@ -510,6 +514,7 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
                     kind="stable",
                 )
             )
+            raise_if_cancelled()
             if plan.rank_position is not None:
                 distinct_values = ranked[str(plan.target)].drop_duplicates().tolist()
                 available_rank_count = len(distinct_values)
@@ -543,6 +548,7 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
         raise QueryPlanExecutionError(f"{plan.operation} 연산에 대상 컬럼이 없습니다.")
 
     target, target_column = _target_series(filtered, plan.target)
+    raise_if_cancelled()
     target_data_type = column_data_type(filtered, target_column)
     valid = target.dropna()
     valid_rows = int(valid.size)

@@ -58,6 +58,7 @@ const state = {
   selected: new Set(),
   busy: false,
   chatController: null,
+  chatRequestId: null,
   contactNames: new Set(),
   contactNamesPromise: null,
   renameSource: "",
@@ -717,10 +718,13 @@ async function sendQuestion(question, options = {}) {
 
   await loadContactNames();
   const controller = new AbortController();
+  const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   state.chatController = controller;
+  state.chatRequestId = requestId;
   setChatBusy(true);
   const request = {
     question: value,
+    request_id: requestId,
     sources: options.sources ? [...options.sources] : [...state.selected],
     mode: options.mode || (elements.naturalMode.checked ? "natural" : "auto"),
   };
@@ -759,7 +763,10 @@ async function sendQuestion(question, options = {}) {
       request,
     );
   } finally {
-    if (state.chatController === controller) state.chatController = null;
+    if (state.chatController === controller) {
+      state.chatController = null;
+      state.chatRequestId = null;
+    }
     setChatBusy(false);
     elements.questionInput.focus();
   }
@@ -834,6 +841,13 @@ function setChatBusy(busy) {
 }
 
 function stopChat() {
+  const requestId = state.chatRequestId;
+  if (requestId) {
+    fetch(`/chat/cancel/${encodeURIComponent(requestId)}`, {
+      method: "POST",
+      headers: apiHeaders(),
+    }).catch(() => {});
+  }
   state.chatController?.abort();
 }
 
@@ -1339,6 +1353,7 @@ elements.questionInput.addEventListener("keydown", (event) => {
   }
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
+    if (state.busy) return;
     elements.chatForm.requestSubmit();
   }
 });

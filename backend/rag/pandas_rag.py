@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from contextvars import ContextVar
@@ -33,6 +34,7 @@ from rag.query_planner import (
 )
 from rag.question_analyzer import QuestionAnalysis, analyze_question
 from rag.deterministic_query_plan import build_schema_grounded_plan
+from rag.cancellation import raise_if_cancelled
 from utils.semantic_schema import infer_column_meaning
 from pandas_engine.interactive import build_interactive_result, build_interactive_dataframe
 from pandas_engine.query_plan import QueryPlan
@@ -146,6 +148,7 @@ async def _answer_query_plan(
     """Generate, validate, and execute the generic structured-query plan."""
 
     question_id, question_chars = question_log_metadata(question)
+    raise_if_cancelled()
     logger.info(
         "[PANDAS] QueryPlan 생성 중 | hint=%s question_id=%s chars=%d",
         operation_hint or "none", question_id, question_chars,
@@ -164,7 +167,8 @@ async def _answer_query_plan(
             operation_hint=operation_hint,
         )
         if early_validation.is_executable:
-            execution = execute_query_plan(early_validation)
+            execution = await asyncio.to_thread(execute_query_plan, early_validation)
+            raise_if_cancelled()
             answer = _format_query_execution_result(execution, question)
             _interactive_result.set(build_interactive_result(execution, answer=answer))
             logger.info("[PANDAS] 스키마 기반 선행 계획 실행 | operation=%s", execution.operation)
@@ -174,6 +178,7 @@ async def _answer_query_plan(
             question,
             operation_hint=operation_hint,
         )
+        raise_if_cancelled()
     except QueryPlannerError as exc:
         logger.error("[PANDAS] QueryPlan 생성 실패 | err=%s", exc)
         fallback_plan = build_schema_grounded_plan(
@@ -190,7 +195,8 @@ async def _answer_query_plan(
                 operation_hint=operation_hint,
             )
             if fallback_validation.is_executable:
-                execution = execute_query_plan(fallback_validation)
+                execution = await asyncio.to_thread(execute_query_plan, fallback_validation)
+                raise_if_cancelled()
                 answer = _format_query_execution_result(execution, question)
                 _interactive_result.set(build_interactive_result(execution, answer=answer))
                 logger.warning("[PANDAS] 스키마 기반 폴백 계획 실행 | operation=%s", execution.operation)
@@ -226,6 +232,7 @@ async def _answer_query_plan(
             allow_pandas_fallback=False,
             analysis=analysis,
         )
+        raise_if_cancelled()
         return v_answer, v_sources, "vector"
 
     if not validation.is_executable:
@@ -245,7 +252,8 @@ async def _answer_query_plan(
                 operation_hint=operation_hint,
             )
             if fallback_validation.is_executable:
-                execution = execute_query_plan(fallback_validation)
+                execution = await asyncio.to_thread(execute_query_plan, fallback_validation)
+                raise_if_cancelled()
                 answer = _format_query_execution_result(execution, question)
                 _interactive_result.set(build_interactive_result(execution, answer=answer))
                 logger.warning("[PANDAS] 검증 실패 후 스키마 기반 폴백 실행 | operation=%s", execution.operation)
@@ -268,7 +276,8 @@ async def _answer_query_plan(
         )
 
     try:
-        execution = execute_query_plan(validation)
+        execution = await asyncio.to_thread(execute_query_plan, validation)
+        raise_if_cancelled()
     except QueryPlanExecutionError as exc:
         logger.error("[PANDAS] QueryPlan 실행 차단 | err=%s", exc)
         return "검증된 표 조회 계획을 실행하지 못했습니다.", [], "pandas"
@@ -293,6 +302,7 @@ async def _answer_pandas(
     prepared_plan: QueryPlan | None = None,
 ) -> tuple[str, list[str], str]:
     clear_interactive_result()
+    raise_if_cancelled()
     scoped_dataframes = scoped_mapping(_df_namespace, _df_sources)
     if not scoped_dataframes:
         message = "선택한 문서에서 조회 가능한 표 데이터를 찾을 수 없습니다." if source_scope_active() else "현재 로드된 데이터프레임이 없습니다."
@@ -373,11 +383,13 @@ async def _answer_pandas(
 
     # 기본 통계는 LLM 코드 생성이나 VECTOR 검색으로 넘기지 않고 검증된 함수로 계산한다.
     if analysis.aggregation_intents:
-        direct_result, direct_sources = _query_pandas_direct(
+        direct_result, direct_sources = await asyncio.to_thread(
+            _query_pandas_direct,
             question,
             aggregation_intents=analysis.aggregation_intents,
             date_filter=analysis.date_filter,
         )
+        raise_if_cancelled()
         if direct_result is None:
             # Person-ranking aggregation may be structurally valid even when
             # the legacy direct aggregator cannot produce its subject payload.
@@ -432,11 +444,13 @@ async def _answer_pandas(
         return "조회된 데이터가 없습니다.", [], "pandas"
 
     # 2단계: 키워드 직접 조회 (LLM 코드 생성 없음)
-    direct_result, direct_sources = _query_pandas_direct(
+    direct_result, direct_sources = await asyncio.to_thread(
+        _query_pandas_direct,
         question,
         aggregation_intents=analysis.aggregation_intents,
         date_filter=analysis.date_filter,
     )
+    raise_if_cancelled()
     if direct_result is not None:
         formatted = _format_pandas_result(direct_result)
         if formatted != "조회된 데이터가 없습니다.":

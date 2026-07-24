@@ -8,6 +8,7 @@ import os #파일 폴더 제어
 import re #문자열 정규식
 import shutil  #파일 폴더 제어
 import sys
+from threading import Event
 from contextlib import asynccontextmanager #비동기 처리
 from dataclasses import dataclass
 from datetime import datetime, timezone #시간 계산 
@@ -85,8 +86,10 @@ from rag.question_suggestions import (
 )
 from rag.question_decision import QuestionDecision
 from pandas_engine.query_plan import QueryPlan
+from rag.cancellation import RequestCancelled, raise_if_cancelled, reset_cancel_event, set_cancel_event
 
 logger = logging.getLogger("uvicorn.error")
+_chat_cancellations: dict[str, Event] = {}
 
 @dataclass(frozen=True)
 class QuestionResolution:
@@ -276,6 +279,8 @@ class ChatRequest(BaseModel): #베이스모델 -> 제이슨으로 return
     question: str #질문 
     sources: list[str] = Field(default_factory=list) #선택한 원본 문서명
     mode: Literal["auto", "natural"] = "auto" #자동 분기 또는 자연어 의미 검색
+
+    request_id: str | None = Field(default=None, max_length=100)
 
 class ChatResponse(BaseModel):
     answer: str #답변,
@@ -550,7 +555,13 @@ async def chat(
 ):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="question이 비어있습니다.")
+    request_id = (req.request_id or "").strip()
+    cancel_event = Event()
+    if request_id:
+        _chat_cancellations[request_id] = cancel_event
+    cancel_token = set_cancel_event(cancel_event)
     try:
+        raise_if_cancelled()
         with document_scope(req.sources) as selected:
             if selected:
                 logger.info("[SCOPE] 선택 문서 | sources=%s", list(selected))
@@ -571,6 +582,7 @@ async def chat(
                             source="pandas",
                             sources=[],
                         )
+                    raise_if_cancelled()
                 except QuestionEngineError as exc:
                     logger.warning(
                         "[QUESTION_ENGINE] 실제 분류 실패 | err=%s",
@@ -647,6 +659,9 @@ async def chat(
                 )
                 interactive_result = None
             return ChatResponse(answer=answer, source=actual_route, sources=sources, result=interactive_result if route == "PANDAS" else None)
+    except RequestCancelled:
+        logger.info("[CHAT] cancelled | request_id=%s", request_id or "unknown")
+        raise HTTPException(status_code=499, detail="답변 생성을 중단했습니다.")
     except Exception as exc:
         question_id, question_chars = question_log_metadata(req.question)
         logger.error(
@@ -657,6 +672,20 @@ async def chat(
             status_code=500,
             detail="답변 처리 중 내부 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
         )
+
+    finally:
+        reset_cancel_event(cancel_token)
+        if request_id and _chat_cancellations.get(request_id) is cancel_event:
+            _chat_cancellations.pop(request_id, None)
+
+
+@app.post("/chat/cancel/{request_id}", status_code=202)
+async def cancel_chat(request_id: str, _: None = Depends(_verify_api_key)):
+    event = _chat_cancellations.get(request_id)
+    if event is not None:
+        event.set()
+        return {"status": "cancelling"}
+    return {"status": "not_found"}
 
 
 @app.post("/chat/stream") #답변 하기 (글씨가 조금씩 써내려져가는 stream 방식)
