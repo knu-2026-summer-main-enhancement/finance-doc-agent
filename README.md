@@ -1,915 +1,135 @@
-# Finance Document Agent 고도화 프로젝트
+# Finance Document Agent
 
-> 기존 장학재단 문서 조회 에이전트를 출발점으로, **원본 데이터 보존**, **질문 분류 안정성**, **답변과 원본 기록의 연결성**을 단계적으로 고도화한 프로젝트
+장학금, 후원금, 기부금, 회비, 지원금 문서를 업로드하고 자연어로 조회하는 한국어 문서 질의 에이전트입니다.
 
----
+표를 직접 열어 필터를 걸거나 금액을 계산하지 않아도 이름, 기간, 기수, 금액 조건을 질문하면 문서에 기록된 값을 기준으로 답합니다. 문서의 목적이나 지급 기준처럼 표 밖의 설명도 검색할 수 있습니다.
 
-## 1. 프로젝트의 출발점
+## 주요 기능
 
-이 프로젝트의 출발점은 장학금·후원금·지원금·예산 명세처럼 **금액과 표가 중심인 문서**를 적재하고, 사용자가 자연어로 명단·금액·기준·절차를 조회할 수 있도록 만든 로컬 문서 질의 에이전트다.
+### 문서 업로드
 
-대상 문서는 Excel, PDF, HWP/HWPX, 표 이미지이며, 문서 안에는 보통 다음과 같은 정보가 포함된다.
+- Excel, PDF, HWP/HWPX, 표 이미지 지원
+- 여러 시트와 병합 셀로 구성된 Excel 표 처리
+- 스캔 PDF와 이미지 표 OCR 처리
+- 원본 컬럼을 유지하면서 이름, 금액, 날짜 컬럼 자동 인식
+- 컬럼 이름, 순서, 개수가 달라져도 의미를 기준으로 조회
 
-- 장학생·수혜자·기부자·기관 명단
-- 학과, 기수, 발행번호와 같은 식별 정보
-- 지급일·출연일·졸업연월과 같은 날짜 정보
-- 지급액·후원액·출연금액과 같은 금액 정보
-- 장학금의 목적, 지원 기준, 신청 절차와 같은 본문 정보
+### 명단과 인물 조회
 
-기존 에이전트는 문서를 단순히 한 저장소에 넣지 않는다. 표 데이터는 **Parquet**에 구조화하고, 문서 설명과 행 단위 텍스트는 **ChromaDB**에 임베딩하는 이중 저장 구조를 사용한다. 이 구조를 통해 계산과 명단 조회는 PANDAS 경로에서 처리하고, 규정·목적·절차처럼 본문 의미를 찾아야 하는 질문은 VECTOR 경로에서 처리한다.
+- 전체 명단, 기수별 명단, 기간별 명단 조회
+- 이름으로 금액, 학과, 이메일, 전화번호 등 원본 필드 조회
+- `추교진`과 `추*진`처럼 마스킹된 이름 비교
+- 동명이인을 임의로 합치지 않고 서로 다른 기록으로 표시
+- 답변의 이름을 눌러 인물 카드와 원본 기록 확인
 
-하지만 실제 장학재단 문서를 적용하면서 세 가지 문제가 반복적으로 드러났다.
+예시:
 
-1. 문서 형식과 표 구조가 달라지면 적재 결과가 흔들렸다.
-2. 질문이 조금만 모호해도 잘못된 실행 경로로 분류될 수 있었다.
-3. 결과는 맞더라도 어떤 문서와 행을 사용했는지, 인물과 금액의 원본 기록이 무엇인지 확인하기 어려웠다.
-
-따라서 본 프로젝트는 기존 구조를 버리고 새로 만드는 것이 아니라, 기존 에이전트를 바탕으로 다음 세 부분을 순서대로 고도화한다.
-
-```mermaid
-flowchart LR
-    P1[Part 1<br/>문서 적재] --> P2[Part 2<br/>질문 분류] --> P3[Part 3<br/>질문 답변]
+```text
+49기 목록 보여줘
+2025년 6월부터 2026년 1월까지 목록 보여줘
+김현수 얼마야?
+임종식 최근 결제 등록 날짜 언제야?
 ```
 
----
+### 금액 계산과 순위
 
-## 2. 기존 장학재단 문서 조회 에이전트의 동작 구조
+- 합계, 평균, 중앙값, 최빈값, 최댓값, 최솟값
+- 개인별 누적 납부액과 개별 결제 기록 구분
+- 가장 많이 또는 적게 낸 사람 조회
+- 두 번째, 세 번째 같은 순위와 동점 순위 처리
+- 답변의 금액을 눌러 계산 대상 행과 제외 행 확인
+- 금액 컬럼이 여러 개면 임의로 첫 컬럼을 사용하지 않고 계산 항목 확인
 
-### 2.1 문서 적재 과정
+예시:
 
-사용자가 문서를 업로드하면 먼저 파일 형식에 맞는 파서가 원본 내용을 읽는다.
-
-- Excel은 시트별 표를 추출한다.
-- PDF는 본문과 표를 분리하고, 스캔 페이지는 OCR로 보완한다.
-- HWP/HWPX는 HTML 변환 후 표를 추출한다.
-
-추출된 표는 바로 저장하지 않는다. 실제 병합 셀을 복원하고, 헤더와 데이터 행을 구분한다. 이후 표는 Parquet에 저장하고, 문서 설명과 행 텍스트는 ChromaDB에 저장한다.
-
-```mermaid
-flowchart TD
-    A[문서 업로드] --> B{파일 형식 판별}
-    B --> B1[Excel 파서]
-    B --> B2[PDF 파서]
-    B --> B3[HWP/HWPX 파서]
-
-    B1 --> C[실제 병합 셀 복원]
-    B2 --> C
-    B3 --> C
-
-    C --> D[공통 표 정제]
-    D --> F1[(Parquet<br/>구조화 표 데이터)]
-    D --> F2[(ChromaDB<br/>문서·행 벡터 데이터)]
+```text
+전체 회비 총합 얼마야?
+가장 큰 금액 뭐야?
+돈을 두 번째로 많이 낸 사람 누구야?
+2025년 6월부터 2026년 1월까지 금액 총합 알려줘
 ```
 
-### 2.2 VECTOR 경로
+### 문서 내용 검색
 
-VECTOR 경로는 표 계산보다 **문서의 의미와 본문 내용**을 찾는 데 사용한다.
+- 장학금과 지원금의 목적 조회
+- 선정 및 지급 기준 검색
+- 신청 및 지급 절차 설명
+- 검색된 문서 근거 안에서만 답변 생성
 
-예를 들어 다음 질문은 VECTOR 경로가 적합하다.
+예시:
 
-- 이 장학금의 지급 기준은 무엇인가?
-- 신청 절차를 설명해 달라.
-- 지원 대상 조건이 무엇인가?
-- 이 문서의 목적을 요약해 달라.
-
-처리 과정은 질문과 가까운 문서 청크를 ChromaDB에서 검색한 뒤, 검색된 근거만 LLM에 전달하여 답변을 생성하는 방식이다. 검색 문서에 직접 근거가 없으면 일반 지식이나 파일명 추측으로 내용을 채우지 않는 것을 원칙으로 한다.
-
-```mermaid
-flowchart LR
-    Q[질문] --> S[ChromaDB 유사도 검색]
-    S --> C[관련 문서 청크 선택]
-    C --> L[LLM 답변]
-    L --> A[답변]
+```text
+이 장학금의 지급 기준을 알려줘
+신청 절차를 설명해줘
+이 문서의 목적이 뭐야?
 ```
 
-### 2.3 PANDAS 경로
+### 빠른 질문 자동완성
 
-PANDAS 경로는 **표의 행과 열을 직접 조회하거나 계산해야 하는 질문**에 사용한다.
+- 현재 선택한 문서에서 실행 가능한 질문만 추천
+- 실제 문서에 존재하는 이름을 기준으로 인물 질문 완성
+- 연도와 월을 입력하면 기간 목록, 합계, 인원 질문 추천
+- 추천은 최대 3개만 표시
+- 키 입력마다 서버나 LLM을 호출하지 않고 문서 선택 시 받은 카탈로그를 로컬에서 사용
 
-예를 들어 다음 질문은 PANDAS 경로가 적합하다.
+### 확인 가능한 답변
 
-- 홍길동의 학과를 알려 달라.
-- 3월 장학생 명단을 보여 달라.
-- 출연금액의 총합을 계산해 달라.
-- 가장 많은 금액을 받은 사람을 알려 달라.
+- 사용한 문서와 조건 표시
+- 계산 컬럼, 조건 통과 행, 유효·제외 행 수 표시
+- 목록은 이름 중심으로 간결하게 출력
+- 대용량 목록은 전체 건수와 처음 200명을 표시
+- 인물 카드에는 원본 데이터 컬럼만 제공
+- 전화번호와 이메일은 사용자가 요청한 상세 카드에서만 표시
 
-PANDAS 경로 안에는 두 가지 실행 방식이 있다.
+## 지원 질문
 
-1. **기본 조회**  
-   이름 검색, 명단 조회, 합계, 평균, 최댓값, 최솟값처럼 자주 사용하는 질문을 검증된 전용 함수로 처리한다.
-
-2. **코드 생성형 조회**  
-   기본 조회로 처리하기 어려운 표 질문을 별도 계획으로 변환하여 실행한다. 정해진 프롬프트로 Python 코드를 LLM이 작성한다.
-
-```mermaid
-flowchart TD
-    P((P)) --> D[기본 조회]
-    P --> G[코드 생성형 조회]
-    D --> D1[내부 함수로 구현]
-    G --> G1[Python 코드 생성]
-    G1 --> G2[실행]
-    G2 --> G3[답변 생성]
-```
-
-### 2.4 Router의 역할
-
-Router는 질문을 직접 답하는 모듈이 아니라, 질문을 분석한 결과를 바탕으로 **어떤 실행 경로를 사용할지 결정하는 모듈**이다.
-
-- 표 조회·명단·금액 계산이면 PANDAS
-- 문서 목적·기준·절차 설명이면 VECTOR
-
-이 프로젝트에서 가장 중요한 것은 Router가 PANDAS경로나 VECTOR경로 두 가지로 분기된다는 것이다. 잘못된 분기는 이후의 검색과 계산이 아무리 정확해도 오답으로 이어질 수 있다.
-
-### 2.5 전체 사용자 흐름
-
-아래 순서도는 사용자가 문서를 업로드한 시점부터 답변을 받기까지의 기본 흐름을 한눈에 보여 준다.
-
-```mermaid
-flowchart LR
-    U[문서 업로드] --> I[문서 적재<br/>Parquet + ChromaDB]
-    I --> Q[사용자 질문]
-    Q --> R[Router]
-    R --> V[VECTOR 경로]
-    R --> P[PANDAS 경로]
-    V --> A[답변]
-    P --> A
-```
-
-즉, **문서 업로드 → 문서 적재 → 질문 → Router 분기 → VECTOR 또는 PANDAS 처리 → 답변**이 기존 에이전트의 핵심 흐름이다.
-
----
-
-## 3. 고도화 과정을 보는 기준: E1, E2, E3, E4
-
-본 프로젝트의 발전 과정은 기능 목록이 아니라 발표와 피드백의 흐름에 맞춰 네 시기로 구분한다.
-
-| Era | 의미 |
+| 목적 | 질문 예시 |
 |---|---|
-| **E1** | 1st 발표 전까지 구현한 내용 |
-| **E2** | 2nd 발표 전까지 구현한 내용 |
-| **E3** | 발표 피드백을 반영해 구현한 현재 고도화 내용 |
-| **E4** | E3 이후 검증·운영 확장을 위한 다음 계획 |
-
-```mermaid
-flowchart LR
-    E1[E1<br/>1st 발표 전] --> E2[E2<br/>2nd 발표 전] --> E3[E3<br/>피드백 반영 구현] --> E4[E4<br/>다음 검증·운영 계획]
-```
-
-이제 전체 고도화 과정을 **문서 적재**, **질문 분류**, **질문 답변**의 세 Part로 나누어 설명한다.
-
----
-
-# Part 1. 문서 적재 고도화
-
-문서 적재 Part의 목표는 형식이 다른 문서가 들어오더라도 원본 표 구조를 최대한 보존하고, 이후 질문 단계에서 날짜·금액·이름을 안정적으로 사용할 수 있는 데이터로 변환하는 것이다.
-
-## E1. 이미지 처리와 병합 셀 복원
-
-초기 에이전트는 Excel, PDF, HWP/HWPX 중심으로 동작했기 때문에 세로로 긴 표 이미지나 스캔 자료를 직접 적재하기 어려웠다. 또한 빈칸을 모두 이전 행의 값으로 채우는 방식은 일반 공란까지 병합 셀로 오인하여 원본 값을 변형할 수 있었다.
-
-E1에서는 이 두 문제를 우선 해결했다.
-
-### 이미지 표 처리
-
-OpenCV로 가로선과 세로선을 검출하여 행·열 경계를 찾고, 각 셀을 개별 이미지로 분리한 뒤 PaddleOCR로 문자를 인식하도록 구성했다. 고정된 열 개수나 특정 컬럼명을 코드에 넣지 않고, 실제 이미지에서 감지한 열 수와 첫 표 행을 기준으로 DataFrame을 생성하도록 했다.
-
-```mermaid
-flowchart LR
-    A[표 이미지] --> B[격자선 검출]
-    B --> C[행·열 경계 복원]
-    C --> D[셀 단위 분리]
-    D --> E[PaddleOCR]
-    E --> F[DataFrame 생성]
-```
-
-### 병합 셀 처리
-
-병합 셀은 단순히 빈칸이라는 이유로 복원하지 않고 파일에서 확인할 수 있는 물리적 근거를 사용하도록 변경했다.
-
-- XLSX: 실제 병합 범위
-- PDF: 셀 좌표와 표 구조
-- HWP/HWPX: rowspan 정보
-- 이미지: 격자선과 셀 경계
-
-이 변경으로 일반 공란과 실제 병합 셀을 구분하고, 원본 표를 임의로 변형하는 문제를 줄였다.
-
-## E2. 공통 스키마와 날짜 인식
-
-E1에서 표를 읽어 오는 안정성을 높였지만, 같은 의미의 컬럼이 문서마다 다른 이름을 사용하는 문제가 남아 있었다.
-
-예를 들어 금액 컬럼은 `지급액`, `후원액`, `출연금액`으로 다르게 표현될 수 있고, 날짜 컬럼은 `지급일`, `출연일자`, `졸업연월`, `지급월`처럼 서로 다른 정밀도를 가진다.
-
-E2에서는 원본 컬럼명을 강제로 하나로 바꾸지 않고, 원본은 그대로 보존하면서 별도의 의미 정보를 붙이는 **공통 의미 스키마**를 추가했다.
-
-스키마에는 다음 정보가 포함된다.
-
-- 원본 컬럼명
-- 추론된 의미
-- 데이터 타입과 단위
-- 날짜 정밀도
-- 민감정보 여부
-- 매핑 신뢰도
-- 스키마 버전
-
-특히 날짜를 하나의 타입으로 처리하지 않고 다음과 같이 구분했다.
-
-| 원본 형태 | 스키마 의미 |
-|---|---|
-| `2025-03-14`, `출연일자` | `date` |
-| `2025-03`, `졸업연월` | `year_month` |
-| `2025`, `지급연도` | `year` |
-| `3월`, `지급월` | `month` |
-| `14일` | `day` |
-
-이로써 `3월 명단`, `2025년 4월 합계`, `2024년 12월부터 2025년 2월까지`와 같은 질문을 표 구조에 맞게 처리할 기반을 만들었다.
-
-## E3. 원본 컬럼 보존과 대화형 조회 기반 정비
-
-Part 2 E3에서 질문을 안전하게 해석하고 Part 3 E3에서 인물 카드와 금액 기록을 보여 주려면, 적재 단계부터 원본 행과 컬럼의 연결을 잃지 않아야 한다. E3에서는 정규화·OCR·검색용 처리 과정에서 쓰이는 내부 정보와 사용자에게 보여 줄 원본 데이터를 분리하고, 조회 근거를 다시 찾을 수 있는 구조를 정비했다.
-
-- 원본 데이터 컬럼과 `ocrConfidence` 같은 내부 메타데이터를 구분해 보존한다.
-- 인물 카드에는 내부 메타데이터가 아닌 원본 데이터 컬럼만 전달한다.
-- 인물·금액 결과가 어떤 문서·테이블·원본 행에서 나왔는지 추적할 수 있는 식별 정보를 유지한다.
-- 같은 이름이라도 서로 다른 행·문서의 기록은 임의로 합치지 않는다.
-- 브라우저가 답변 문장을 다시 해석하지 않고, 구조화된 API 응답으로 인물 카드와 납부·지급 기록을 조회하도록 연결한다.
-
-이 기반이 있어야 이름이나 금액을 눌렀을 때 원본 기록을 정확히 다시 보여 줄 수 있고, 화면에 내부 처리용 컬럼이 섞이지 않는다.
-
-## E4. 운영 문서 연결과 예외 구조 처리 계획
-
-발표 피드백 이후의 E4는 새로운 기능을 무작정 추가하기보다 실제 운영 문서가 들어왔을 때 적재가 중단되지 않도록 만드는 데 초점을 둔다.
-
-### 1. Google Sheets 연결
-
-사용자가 파일을 매번 내려받아 업로드하지 않아도 지정된 Google Sheets 문서를 불러와 기존 Table Ingest Pipeline으로 전달하는 연결 구조를 추가할 계획이다. 불러온 데이터도 Excel과 동일하게 원본 컬럼, 공통 스키마, Parquet, ChromaDB 흐름을 사용한다.
-
-### 2. PDF 적재 발전
-
-현재 PDF는 본문과 표를 분리하고 스캔 페이지를 OCR로 보완하지만, 실제 문서에서는 한 페이지에 여러 표가 있거나 표 경계가 흐린 경우가 있다. E4에서는 페이지별 처리 결과와 표별 품질 정보를 남기고, 텍스트 PDF·스캔 PDF·혼합 PDF를 구분해 서로 다른 추출 전략을 적용할 계획이다.
-
-### 3. Excel의 과도한 병합 셀 문제 처리
-
-행과 열이 지나치게 많이 병합된 Excel은 일반적인 표 구조로 바로 변환하기 어렵다. E4에서는 병합 영역을 무조건 펼치지 않고, 제목 영역·다단 헤더·실제 데이터 영역을 먼저 분리한 뒤 데이터 영역에만 병합 복원 규칙을 적용하는 방향으로 개선한다.
-
-```mermaid
-flowchart LR
-    E1[이미지 처리<br/>병합 셀 복원] --> E2[공통 스키마<br/>날짜 인식] --> E3[원본 컬럼 보존<br/>대화형 조회 기반] --> E4[Google Sheets<br/>PDF 발전<br/>과도 병합 처리]
-```
-
----
-
-# Part 2. 질문 분류 고도화
-
-질문 분류 Part는 전체 프로젝트에서 가장 중요한 부분이다. 적재된 데이터가 정확해도 질문이 잘못 분류되면 VECTOR가 계산 질문을 받거나, PANDAS가 규정 설명 질문을 받아 오답을 만들 수 있기 때문이다.
-
-## E1. V1에서 V2.2까지: 규칙 기반 분류의 발전
-
-### V1. 모호한 질문이 VECTOR로 들어가는 문제
-
-#### 문제
-
-초기 구조에서는 처리하기 어려운 질문이나 모호한 질문도 명확히 차단되지 않으면 최종적으로 VECTOR 경로로 흘러가는 경우가 있었다.
-
-예를 들어 다음과 같은 질문이다.
-
-- `저번 거 얼마야?`
-- `그 사람 알려줘.`
-- `금액이랑 규정 전부 비교해줘.`
-
-이 질문들은 대상 문서·사람·기간이 없거나, PANDAS와 VECTOR 작업이 섞여 있다. 그러나 이를 그대로 VECTOR가 받으면 관련성이 낮은 문서를 근거처럼 사용하거나 LLM이 빈 내용을 보완하면서 할루시네이션이 발생할 수 있다.
-
-#### 해결
-
-Router 앞에 Guard와 Guide를 추가했다.
-
-- **Guard**는 질문을 실행해도 되는지 검사한다.
-- **Guide**는 실행할 수 없는 질문을 사용자가 다시 작성할 수 있도록 안내한다.
-
-Guard는 다음 질문을 감지한다.
-
-- VECTOR와 PANDAS가 섞인 복합 질문
-- 너무 짧아 대상을 확인할 수 없는 질문
-- 문서명·사람·기간·금액 대상이 불명확한 질문
-- 현재 지원하지 않는 요청
-
-이 구조를 통해 위험한 질문을 임의로 VECTOR에 보내는 대신, 필요한 정보를 다시 입력하도록 안내하게 했다.
-
-### V2. 집계식 분류 문제
-
-#### 문제
-
-V1 이후에도 `합계`, `가장 많이`, `평균`, `몇 명`처럼 집계가 필요한 질문을 세밀하게 구분하지 못하는 문제가 있었다. 같은 PANDAS 질문이라도 필요한 계산이 다르기 때문에 단순히 PANDAS로 보내는 것만으로는 충분하지 않았다.
-
-### V2.1. 집계 정규식 강화
-
-V2.1에서는 질문 속 표현을 정규식으로 감지하여 집계 의도를 더 세분화했다.
-
-- `총합`, `합계`, `전체 금액` → 총합 계산
-- `가장 많이`, `최대`, `1등` → 최댓값 계산
-- `몇 명`, `인원`, `건수` → 개수 계산
-- `명단`, `리스트`, `누구` → 목록 조회
-
-이를 통해 단순 PANDAS 분기보다 구체적인 실행 유형을 결정할 수 있게 되었다.
-
-### V2.2. Regex Question Analyzer와 Engine-Operation Pair 도입
-
-V2.2에서는 질문을 Guard와 Router가 각각 따로 해석하지 않도록 **Regex Question Analyzer**를 추가했다.
-
-기존 구조는 다음과 같았다.
-
-```text
-질문 → Guard → Router
-```
-
-변경된 구조는 다음과 같다.
-
-```text
-질문 → Regex Question Analyzer → Guard → Router
-```
-
-Regex Question Analyzer는 질문마다 **Engine-Operation Pair**를 만든다.
-
-- **Engine**: 질문이 요구하는 실제 작업 유형
-- **Operation**: 작업을 실행할 PANDAS·VECTOR 경로
-
-예시는 다음과 같다.
-
-| 질문 | Engine | Operation |
-|---|---|---|
-| `전체 명단 보여줘` | 리스트 조회 | PANDAS |
-| `홍길동 학과 알려줘` | 단순 이름 조회 | PANDAS |
-| `가장 큰 지급액은?` | 최댓값 계산 | PANDAS |
-| `출연금액 총합은?` | 총합 계산 | PANDAS |
-| `장학금 지급 기준은?` | 문서 기준 설명 | VECTOR |
-
-구조도에서도 축약 기호 대신 각 구성 요소의 역할을 그대로 표시한다.
-
-```mermaid
-flowchart LR
-    Q[질문] --> RQA[Regex Question Analyzer]
-    RQA --> EO[Engine-Operation Pair]
-    EO --> G[Guard]
-    G -->|통과| R[Router]
-    G -->|모호·복합·너무 짧음| GUIDE[Guide]
-    R --> V((VECTOR))
-    R --> P((PANDAS))
-    P --> PD[Deterministic Lookup]
-    P --> PG[Python Code Generation]
-```
-
-이 구조의 핵심은 Guard와 Router가 질문을 다시 해석하지 않고, Regex Question Analyzer가 만든 하나의 Engine-Operation Pair를 공유한다는 점이다.
-
-## E2. V3: LLM 기반 질문 분석과 안전한 JSON 실행
-
-### 문제 1. 너무 강해진 정규식
-
-V2.1과 V2.2에서 정규식을 계속 강화하면서 표현 하나가 여러 규칙에 동시에 걸리거나, 사용자의 실제 의도와 다른 Engine-Operation Pair로 분류되는 사례가 늘어났다.
-
-예를 들어 `가장 많이 받은 사람의 학과를 알려줘`는 최댓값 계산과 필드 조회가 함께 필요하다. 단순 키워드 규칙은 `가장 많이`만 보고 최댓값 계산으로 끝내거나, `학과`만 보고 이름 조회로 잘못 분류할 수 있다.
-
-### 문제 2. PANDAS 코드 생성 오류
-
-PANDAS 분기의 기본 조회는 비교적 안정적이었지만, 기본 조회로 처리하지 못한 질문을 Python 코드로 생성하는 과정에서 유의미한 오류가 발견되었다.
-
-- 존재하지 않는 컬럼 사용
-- 문자열 금액을 숫자로 잘못 처리
-- 선택하지 않은 문서의 DataFrame 접근
-- 질문에 없는 조건 추가
-- 잘못된 비교 연산과 정렬
-- 임의 Python 코드 실행 위험
-
-### 해결 1. Regex Question Analyzer를 LLM Question Analyzer로 전환
-
-V3에서는 Regex Question Analyzer가 Engine-Operation Pair를 결정하던 방식을 LLM Question Analyzer가 허용된 질문 유형을 Routing Decision JSON으로 반환하는 방식으로 변경했다.
-
-LLM은 자유롭게 `PANDAS` 또는 `VECTOR`라는 문자열을 선택하는 것이 아니라, `lookup_field`, `sum`, `max`, `document_criteria`처럼 허용된 operation만 선택한다. 이후 Guard와 Router가 이 operation을 실제 실행 경로로 변환한다.
-
-```mermaid
-flowchart LR
-    Q[질문 + 압축 스키마] --> LQA[LLM Question Analyzer]
-    LQA --> RD[Routing Decision JSON]
-    RD --> C[Contract Validation]
-    C --> G[Guard]
-    G --> R[Router]
-    R --> V((VECTOR))
-    R --> P((PANDAS))
-```
-
-### 해결 2. Python 코드 대신 Query Execution Plan JSON 생성
-
-PANDAS의 코드 생성 경로도 Python 코드를 직접 생성하는 방식에서, 허용된 연산만 담는 Query Execution Plan JSON 방식으로 변경했다.
-
-```mermaid
-flowchart LR
-    P((PANDAS)) --> D[Deterministic Lookup]
-    P --> QP[Query Execution Plan JSON 생성]
-    QP --> V1[Contract Validation]
-    V1 --> V2[Schema and Type Validation]
-    V2 --> V3[Question Constraint Validation]
-    V3 --> X[Restricted Execution]
-```
-
-현재 허용되는 대표 연산은 `list`, `count`, `sum`, `mean`, `median`, `mode`, `min`, `max`다.
-
-추가한 안전장치는 다음과 같다.
-
-- 허용되지 않은 operation 거부
-- 질문 원문에 없는 필터값 거부
-- 존재하지 않는 문서와 컬럼 거부
-- 선택 문서 범위를 벗어난 접근 거부
-- 숫자·금액·날짜 자료형 불일치 거부
-- JSON 오류 시 형식 수정 목적의 재시도 1회
-- 검증 실패 시 임의 실행 대신 Guide 응답
-- 기존 정규식 결과와 LLM 결과를 비교하는 shadow 모드
-
-## E3. V4: 검증된 질문의 빠른 분류와 이중 JSON 구조
-
-### 문제 1. 검증된 질문도 항상 LLM 분류를 거치는 문제
-
-V3에서는 질문 분류를 LLM 기반으로 전환했지만, `49기 목록`, `홍길동이 낸 금액`, `2025년 3월 합계`처럼 표의 실제 컬럼과 값만으로 처리할 수 있는 검증된 질문도 LLM 호출을 거칠 수 있었다. 이 구조는 단순한 질문에도 응답 지연과 분류 결과의 변동 가능성을 만든다.
-
-### 문제 2. 질문 분류와 실제 실행 계획의 역할이 혼동되는 문제
-
-질문을 PANDAS와 VECTOR 중 어디로 보낼지 정하는 정보와, 어떤 데이터프레임에서 어떤 필터·집계·정렬을 실행할지 정하는 정보는 서로 다르다. 그러나 둘을 모두 JSON이라고만 부르면 분류 결과가 곧 실행 계획인 것처럼 오해하기 쉽다.
-
-- `Routing Decision JSON`: 질문의 의도와 operation을 표현하며 최종 실행 모드를 고르는 **Routing Decision JSON**
-- `Query Execution Plan JSON`: dataframe, filter, select, target, group, sort, limit 등을 표현하는 **Query Execution Plan JSON**
-
-### 문제 3. 정규식 분류와 LLM 분류의 관계가 불분명한 문제
-
-Regex Question Analyzer와 LLM Question Analyzer가 동시에 존재하지만, LLM 모드에서 두 결과가 모두 실제 라우팅을 결정하는 것은 아니다. 정규식 결과는 기존 동작과의 차이를 확인하기 위한 shadow 비교 기준이며, 실제 분류 결과와 구분해서 기록해야 한다.
-
-### 해결
-
-#### 용어 정리
-
-| 표기 | 의미 | 역할 |
-|---|---|---|
-| `Fast Pattern Router` | Fast operation candidate detection | 질문에서 자주 쓰는 표현을 먼저 확인하고, LLM 없이 처리할 수 있는지 시험하는 최초 진입점 |
-| `Schema-Grounded Planner` | Schema-validated query planning | operation 후보를 실제 스키마·메타데이터·원본 값에 대입해 안전한 `Query Execution Plan JSON`을 만들 수 있는지 검증하는 deterministic planner |
-| `Regex Question Analyzer` | Regex-based question analysis | 기존의 전체 정규식 질문 분석기. 현재 LLM 모드에서는 실제 경로를 결정하지 않고 `LLM Question Analyzer`와 결과를 비교하는 shadow 기준으로 사용 |
-| `LLM Question Analyzer` | LLM-based question analysis | 빠른 결정론적 경로로 확정할 수 없는 질문을 해석해 `Routing Decision JSON`을 만드는 질문 분석기 |
-| `Routing Decision JSON` | Routing decision contract | 질문의 operation과 상태를 담아 Guard와 Router가 PANDAS·VECTOR·GUIDE 중 경로를 결정하도록 하는 분류 계약 |
-| `Query Execution Plan JSON` | Restricted execution contract | 사용할 dataframe, filter, select, target, group, sort, limit 등 PANDAS가 실제로 수행할 작업을 담은 실행 계약 |
-| `operation` | 질문 작업 유형 | `lookup_amount`, `lookup_field`, `count_records`, `list_records`, `sum_amount`, `structured_query`처럼 질문이 요구하는 작업을 나타내는 값 |
-
-여기서 `Fast Pattern Router`의 일부 정규식과 `Regex Question Analyzer`는 같은 것이 아니다. `Fast Pattern Router`의 정규식은 자주 사용하는 질문에서 **operation 후보 하나를 빠르게 제안**하는 좁은 입구이고, `Regex Question Analyzer`는 V1·V2에서 사용하던 기존 정규식 분석 전체를 가리킨다. 현재 LLM 모드에서 `Regex Question Analyzer`는 실제 답변 경로가 아니라 비교용으로 남아 있다.
-
-#### 검증된 operation 후보를 먼저 시험하는 구조
-
-`Fast Pattern Router`는 자주 사용하는 질문 표현을 정규식으로 확인해 operation 후보를 먼저 만든다. 하지만 정규식이 맞아 보인다는 이유만으로 그 후보를 확정하지 않는다. 후보를 `Schema-Grounded Planner`에 전달하고, `Schema-Grounded Planner`가 현재 데이터 구조에서 유효한 `Query Execution Plan JSON`을 실제로 만들었을 때만 해당 operation을 채택한다.
-
-```text
-Fast Pattern Router      = operation 후보 제안
-Schema-Grounded Planner  = 실제 데이터와 스키마를 이용한 검증
-```
-
-따라서 이 구조는 “`Query Execution Plan JSON`을 만들 가능성이 높아 보이면 정규식으로 보낸다”가 아니라, “정규식으로 operation 후보를 고른 뒤 `Schema-Grounded Planner`가 `Query Execution Plan JSON` 생성에 성공한 경우에만 LLM 없는 경로를 확정한다”가 정확한 설명이다.
-
-예를 들어 `김철수가 낸 금액 알려줘`라는 질문은 다음 순서로 처리된다.
-
-1. `Fast Pattern Router`가 `돈`, `금액`, `냈어`와 같은 표현을 감지한다.
-2. `lookup_amount`를 operation 후보로 만든다.
-3. `Schema-Grounded Planner`가 실제 표에 사람 이름 컬럼과 금액 컬럼이 있는지 확인한다.
-4. 질문의 이름이 원본 값 또는 허용된 마스킹 이름과 대응하는지 확인한다.
-5. 조건을 만족하는 `Query Execution Plan JSON` 생성에 성공하면 operation 후보를 확정한다.
-6. 생성에 실패하면 정규식 후보를 버리고 `LLM Question Analyzer`가 `Routing Decision JSON`을 만들도록 넘긴다.
-
-operation이 확정된 경우 `Routing Decision JSON`은 LLM이 생성하지 않는다. Python 코드가 검증된 operation과 질문 원문을 `QuestionDecision` 형식에 넣어 직접 조립한다.
-
-```json
-{
-  "status": "ready",
-  "requests": [
-    {
-      "source_text": "김철수가 낸 금액 알려줘",
-      "operation": "lookup_amount"
-    }
-  ],
-  "reason": "스키마와 질문 원문으로 검증 가능한 표 조회입니다."
-}
-```
-
-즉, 이때의 `Routing Decision JSON`은 LLM이 새로 판단한 결과가 아니라 `Schema-Grounded Planner`로 검증된 operation을 기존 Guard·Router 계약에 맞게 포장한 결과다.
-
-V4에서는 질문을 받으면 `Fast Pattern Router`가 먼저 `Schema-Grounded Planner`를 호출한다. `Schema-Grounded Planner`가 현재 스키마와 메타데이터만으로 안전한 `Query Execution Plan JSON`을 만들 수 있는지를 확인하고, 만들 수 있다면 그 판단을 이용해 `Fast Pattern Router`가 `Routing Decision JSON`을 직접 만든다. 이 경로에서는 `LLM Question Analyzer`를 호출하지 않는다.
-
-`Schema-Grounded Planner`가 `Query Execution Plan JSON`을 만들 수 없는 질문만 `LLM Question Analyzer`로 보내 `Routing Decision JSON`을 생성한다. 이후에는 두 경로 모두 동일하게 Guard와 Router를 통과한다. Router가 PANDAS를 선택하면 실제 실행 단계에서 `Query Execution Plan JSON`을 생성·검증한 뒤 제한된 연산만 수행하고, VECTOR를 선택하면 문서 근거를 검색해 답변한다.
-
-현재 `Fast Pattern Router`에서 확인용으로 생성한 `Query Execution Plan JSON`은 실행 단계까지 전달하지 않는다. PANDAS 단계에서 `Schema-Grounded Planner`가 실제 `Query Execution Plan JSON`을 다시 만들며, 만들지 못하면 LLM Query Planner가 보완한다. 따라서 첫 번째 `Query Execution Plan JSON`은 빠르고 안전한 분류 가능성을 판단하는 근거이고, 두 번째 `Query Execution Plan JSON`이 검증 후 실제로 실행되는 계획이다.
-
-`Regex Question Analyzer`는 실제 라우팅 경로와 별도로 실행되는 shadow 비교용 경로다. `Regex Question Analyzer`와 `LLM Question Analyzer`의 operation 차이는 비교 로그에 남기되, LLM 모드의 최종 경로를 `Regex Question Analyzer`가 덮어쓰지는 않는다.
-
-```mermaid
-flowchart TD
-    Q[질문] --> PR[Fast Pattern Router]
-    PR --> OP[정규식으로<br/>operation 후보 제안]
-    OP --> DP[Schema-Grounded Planner]
-    DP --> C{Query Execution Plan JSON 생성 가능?}
-
-    C -->|가능| RD[Routing Decision JSON 직접 생성<br/>LLM 미사용]
-    C -->|불가능| LQ[LLM Question Analyzer]
-    LQ --> RL[Routing Decision JSON 생성]
-
-    RD --> G[Guard]
-    RL --> G
-    G -->|차단| GD[Guide]
-    G -->|통과| R[Router]
-
-    R -->|PANDAS| P[PANDAS]
-    R -->|VECTOR| V[VECTOR]
-
-    P --> DP2[Schema-Grounded Planner]
-    DP2 --> C2{Query Execution Plan JSON 생성 가능?}
-    C2 -->|가능| PV[Query Execution Plan JSON 검증]
-    C2 -->|불가능| LP[LLM Query Planner]
-    LP --> PG[Query Execution Plan JSON 생성]
-    PG --> PV
-    PV --> EX[제한된 연산 실행]
-
-    V --> VS[근거 검색 후 답변]
-
-    Q -. shadow .-> RE[Regex Question Analyzer]
-    RE -. operation 비교 .-> LOG[비교 로그]
-    LQ -. operation 비교 .-> LOG
-```
-
-정리하면 `Fast Pattern Router`는 LLM을 사용할지를 먼저 결정하고, `Routing Decision JSON`은 어디로 보낼지를 결정하며, `Query Execution Plan JSON`은 PANDAS가 무엇을 실행할지를 결정한다. 이 구조를 통해 검증된 질문은 빠르게 처리하면서도, 복잡한 질문에는 LLM의 판단 능력을 그대로 사용할 수 있다.
-
-쉽게 비유하면 모의고사 간단하게 쳐보고 점수가 잘나오면 바로 시험장으로 가서 시험을 보는 느낌이다.
-
-```mermaid
-flowchart LR
-    E1[V1·V2<br/>Regex Question Analyzer·Guard·Guide] --> E2[V3<br/>LLM Question Analyzer·Routing Decision JSON·Query Execution Plan JSON]
-    E2 --> E3[V4<br/>Fast Pattern Router·Schema-Grounded Planner]
-    E3 --> E4[V5<br/>Person Reference Check·Single Schema-Grounded Planner·Prepared Plan Reuse]
-```
-
-## E4. V5: Single Schema-Grounded Planning Boundary
-
-### 문제 1. Fast Pattern Router와 Schema-Grounded Planner의 책임 중복
-
-V4에서는 Fast Pattern Router가 operation 후보를 고르고 Schema-Grounded Planner가 실행 가능성을 검증했다. 실제 코드에서는 두 단계가 같은 질문 표현과 우선순위를 반복해서 다루기 때문에, 규칙을 수정할 때 두 위치의 순서가 달라질 가능성이 있었다.
-
-### 문제 2. 검증에 사용한 Query Execution Plan JSON의 재생성
-
-V4의 빠른 경로에서 만든 첫 번째 Query Execution Plan JSON은 분류 가능성을 확인하는 데만 사용했다. 이후 PANDAS가 같은 계획을 다시 만들었기 때문에 불필요한 계산이 발생하고, 첫 번째 판단과 실제 실행 계획이 달라질 여지가 있었다.
-
-### 문제 3. 이름·날짜 경계 처리와 회귀 검증의 분산
-
-동명이인, 존재하지 않는 이름, 마스킹 이름, 교차 월 날짜 범위는 Planner나 LLM보다 먼저 일관되게 처리해야 한다. 이 경계가 여러 위치에 흩어지면 같은 질문이 API 경로에 따라 다르게 처리될 수 있다.
-
-### 해결 1. Schema-Grounded Planner로 빠른 판단 단일화
-
-V5에서는 Fast Pattern Router의 operation 후보 선택과 Schema-Grounded Planner의 스키마 검증을 하나의 `Schema-Grounded Planner` 경계로 합쳤다. 이 Planner가 operation과 Query Execution Plan JSON을 함께 만들며, 안전한 계획을 만들지 못한 질문만 LLM Question Analyzer로 전달한다. 교차 월 날짜 범위는 `structured_query`로 분류하되 독립된 연·월 필터 계획을 만들지 않고 Date Range Executor로 넘긴다.
-
-### 해결 2. Prepared Query Execution Plan 재사용
-
-Schema-Grounded Planner가 만든 계획은 `QuestionResolution`에 보존해 PANDAS까지 전달한다. PANDAS는 전달받은 계획을 다시 생성하지 않고 Plan Validator로 검증한 뒤 Restricted Query Executor에서 그대로 실행한다. LLM Question Analyzer 경로처럼 준비된 계획이 없는 경우에만 Schema-Grounded Planner와 LLM Query Planner가 실행 계획 생성을 보완한다.
-
-### 해결 3. Person Reference Check와 경계 회귀 테스트
-
-동명이인 후보와 존재하지 않는 이름은 Schema-Grounded Planner와 LLM Question Analyzer보다 먼저 `Person Reference Check`에서 처리한다. Regex Question Analyzer는 실제 경로를 바꾸지 않는 Shadow Analyzer로만 유지한다. 교차 월 범위, Planner 실패 후 LLM 전환, 이름 선차단, Prepared Plan 재사용을 각각 회귀 테스트로 고정하고 골드셋의 날짜·금액·이름·목록 오차는 이 구조 위에서 계속 보완한다.
-
-```mermaid
-flowchart TD
-    Q[질문] --> PC[Person Reference Check]
-    PC -->|동명이인·미조회| PA[Candidate Guide or No Result]
-    PC -->|조회 가능| SGP[Schema-Grounded Planner]
-
-    SGP --> T{Planning Result}
-    T -->|Prepared Plan| RD[Routing Decision JSON]
-    T -->|Date Range Route| DR[Routing Decision JSON<br/>structured_query]
-    T -->|No Safe Plan| LQA[LLM Question Analyzer]
-    LQA --> RL[Routing Decision JSON]
-
-    RD --> G[Guard]
-    DR --> G
-    RL --> G
-    G -->|차단| GUIDE[Guide]
-    G -->|통과| R[Router]
-
-    R -->|VECTOR| V[VECTOR Evidence Search]
-    R -->|PANDAS| P{PANDAS Execution Input}
-
-    P -->|Prepared Plan| PV[Plan Validator]
-    PV --> X[Restricted Query Executor]
-    P -->|Date Range Route| DX[Date Range Executor]
-    P -->|Routing Only| SGP2[Schema-Grounded Planner]
-    SGP2 -->|Plan Ready| PV
-    SGP2 -->|No Plan| LQP[LLM Query Planner]
-    LQP --> PV
-
-    Q -. shadow .-> RQA[Regex Question Analyzer]
-    RQA -. comparison only .-> LOG[Shadow Comparison Log]
-```
-
-현재 V5의 핵심 흐름은 `Person Reference Check → Schema-Grounded Planner → Routing Decision JSON → Guard → Router → 실행기`다. Fast Pattern Router는 V4 설명에만 남는 이전 단계이며 V5 실제 경로에서는 제거되었다.
-
----
-
-# Part 3. 질문 답변 고도화
-
-질문 답변 Part의 목표는 결과값만 보여 주는 것이 아니라, **같은 이름을 빠뜨리지 않고**, **출처와 계산 근거를 확인할 수 있으며**, **날짜 맥락까지 함께 이해할 수 있는 답변**을 만드는 것이다.
-
-## E1. 동일 이름과 동명이인 처리
-
-초기에는 이름 하나가 검색되면 첫 번째 결과만 답변할 가능성이 있었다. 하지만 장학재단 문서에서는 같은 사람이 여러 기수·연도·문서에 등장할 수 있고, 서로 다른 사람이 같은 이름을 사용할 수도 있다.
-
-E1에서는 다음 원칙을 적용했다.
-
-- 같은 이름의 항목이 여러 개면 모두 보여 준다.
-- 동명이인이면 임의로 한 명을 선택하지 않는다.
-- 기수, 발행번호, 문서명, 학과와 같은 주변 정보를 함께 표시한다.
-- 여러 문서에서 같은 이름이 발견되면 문서 선택을 요청한다.
-- 마스킹 이름도 가능한 후보를 한 건으로 단정하지 않고 함께 제시한다.
-
-예를 들어 `김*수 찾아줘`라는 질문에 결과가 여러 개라면 한 행만 답하지 않고 다음과 같이 구분한다.
-
-```text
-김*수 검색 결과 3건
-- 문서 A / 58기 / 정보컴퓨터공학부 / 지급액 1,000,000원
-- 문서 A / 59기 / 기계공학부 / 지급액 800,000원
-- 문서 B / 발행번호 2025-061 / 지급액 1,200,000원
-```
-
-## E2. 출처와 계산 근거를 포함한 답변
-
-E2에서는 LLM을 사용한 답변과 PANDAS 계산 결과 모두에서 사용자가 결과를 검증할 수 있도록 근거 정보를 강화했다.
-
-### VECTOR 답변
-
-- 사용한 원본 문서
-- 검색된 문서 청크
-- 답변에 사용한 출처
-- 문서에 직접 근거가 없는 경우 답변 제한
-
-### PANDAS 답변
-
-- 사용한 원본 문서
-- 대상 컬럼
-- 수행한 연산
-- 조건에 일치한 행 수
-- 실제 계산에 사용한 유효 행 수
-- 제외된 행 수
-- 적용한 날짜 조건
-
-예시는 다음과 같다.
-
-```text
-총 출연금액: 977,070,000원
-
-계산 근거
-- 문서: test2025.png
-- 대상 컬럼: 출연금액
-- 계산: 합계
-- 조건 일치 행: 160행
-- 유효 행: 158행
-- 제외 행: 2행
-```
-
-이 단계부터 답변의 목표는 단순히 그럴듯한 문장을 만드는 것이 아니라, 사용자가 원본 문서와 계산 과정을 다시 확인할 수 있게 만드는 것으로 바뀌었다.
-
-## E3. 인물 카드와 금액 기록을 연결한 대화형 답변
-
-E3에서는 답변 문장을 읽는 데서 끝나지 않고, 사용자가 답변 속 인물과 금액을 눌러 원본 기록을 직접 확인할 수 있도록 구조화된 대화형 응답을 연결했다.
-
-- 인물 이름을 누르면 해당 인물의 상세 카드를 표시한다.
-- 인물 카드는 `ocrConfidence` 같은 내부 메타데이터를 제외하고 실제 원본 데이터 컬럼만 보여 준다.
-- 금액을 누르면 해당 금액이 계산되거나 조회된 원본 납부·지급 기록을 표시한다.
-- 동일 인물의 기록이 여러 건이면 한 건으로 합치지 않고 행 단위로 구분한다.
-- 인물과 금액의 연결 정보는 브라우저가 답변 문장을 다시 분석하지 않고 백엔드의 구조화된 API 응답으로 전달한다.
-- 상세 기록이 많을 때도 확인할 수 있도록 페이지 단위 조회 구조를 사용한다.
-
-이를 통해 사용자는 답변에 나온 이름과 금액이 어느 원본 행에서 나온 결과인지 바로 확인할 수 있다.
-
-## E4. 검증된 후속 질문 자동 반환 계획
-
-E4에서는 현재 질문과 응답에서 확인된 인물·금액·컬럼 정보를 기준으로, LLM을 거치지 않고 빠르게 실행할 수 있는 검증된 후속 질문을 자동 반환할 계획이다. 예를 들어 이름이 확인되면 `이 인물의 전체 기록`, `납부 금액`, `소속 정보`처럼 실제 스키마와 `Schema-Grounded Planner`로 실행 가능성이 검증된 질문만 추천하며, 문서별 이름이나 정답을 하드코딩하지 않는다.
-
-```mermaid
-flowchart LR
-    E1[동일 이름·동명이인<br/>전체 결과 제공] --> E2[출처·계산 근거<br/>신뢰도 강화] --> E3[인물 카드·금액 링크<br/>원본 기록 조회] --> E4[검증된 후속 질문<br/>자동 반환]
-```
-
----
-
-## 4. 전체 고도화 구조
-
-세 Part의 개선 결과를 하나의 흐름으로 합치면 다음과 같다.
-
-```mermaid
-flowchart TD
-    U[문서 업로드] --> I[형식별 문서 적재]
-    I --> M[실제 병합 셀 복원]
-    M --> S[공통 의미 스키마 + 날짜 스키마]
-    S --> O[원본 컬럼·행 식별 정보 보존]
-    O --> DB1[(Parquet)]
-    O --> DB2[(ChromaDB)]
-
-    DB1 --> Q[사용자 질문]
-    DB2 --> Q
-
-    Q --> NRC[Person Reference Check]
-    NRC -->|조회 가능| DP[Schema-Grounded Planner]
-    NRC -->|동명이인·미조회| NR[Candidate Guide or No Result]
-    DP --> PC{Planning Result}
-    PC -->|Prepared Plan| RJ[Routing Decision JSON 직접 생성]
-    PC -->|Date Range Route| RJ
-    PC -->|No Safe Plan| LQ[LLM Question Analyzer]
-    LQ --> RJ2[Routing Decision JSON 생성]
-
-    RJ --> G[Guard]
-    RJ2 --> G
-    G -->|모호·복합·미지원| GUIDE[Guide]
-    G -->|실행 가능| R[Router]
-
-    R --> V((VECTOR))
-    R --> P((PANDAS))
-
-    V --> VS[관련 문서 근거 검색]
-    VS --> VA[근거 제한 LLM 답변]
-
-    P --> PI{Execution Input}
-    PI -->|Prepared Plan| PV[Plan Validator]
-    PI -->|Date Range Route| DE[Date Range Executor]
-    PI -->|Routing Only| PD[Schema-Grounded Planner]
-    PD -->|Plan Ready| PV
-    PD -->|No Plan| PQ[LLM Query Planner]
-    PQ --> PV
-    PV --> PE[Restricted Query Executor]
-
-    VA --> A[구조화된 답변 + 출처]
-    PE --> A
-    DE --> A
-    A --> IC[인물 카드]
-    A --> MR[금액·납부·지급 기록]
-    IC --> OR[원본 컬럼·행 확인]
-    MR --> OR
-
-    OR -. E4 계획 .-> FQ[검증된 후속 질문 자동 반환]
-```
-
-이 흐름에서 각 Part의 역할은 명확히 분리된다.
-
-- **Part 1 문서 적재**는 원본 컬럼과 행의 연결을 보존해 다시 조회할 수 있는 데이터를 만든다.
-- **Part 2 질문 분류**는 `Person Reference Check`와 단일 `Schema-Grounded Planner`로 검증 가능한 질문을 먼저 처리하고, 안전한 계획을 만들지 못한 질문만 `LLM Question Analyzer`로 보낸다.
-- **Part 3 질문 답변**은 결과와 출처뿐 아니라 인물 카드와 금액의 원본 기록을 구조화된 응답으로 제공한다.
-- **E4 계획**은 골드셋 기반 세부 보완, 운영 문서 형식 확장, 검증된 후속 질문 자동 반환으로 이어진다.
-
----
-
-## 5. 현재 구현 구조
-
-### 주요 저장소
-
-| 저장소 | 역할 |
-|---|---|
-| Parquet | 표의 행·열을 구조화하여 PANDAS 조회에 사용 |
-| `.schema.json` | 원본 컬럼의 의미·단위·날짜·민감도 메타데이터 저장 |
-| ChromaDB | 문서 설명과 행 텍스트를 벡터로 저장 |
-| PostgreSQL | 적재 상태와 중복 여부를 관리하는 manifest 저장 |
-
-### 주요 모듈
-
-| 영역 | 핵심 모듈 | 역할 |
-|---|---|---|
-| 문서 적재 | `utils/ingest.py` | 파일 형식별 적재 진입점 |
-| 표 공통 처리 | `table_ingest_pipeline.py` | DataFrame형 표의 공통 정제·저장 |
-| 의미 스키마 | `semantic_schema.py` | 원본 컬럼의 의미·단위·날짜 추론 |
-| 질문 분석 | `question_analyzer.py`, `question_engine.py` | `Regex Question Analyzer`와 `LLM Question Analyzer`의 질문 operation 분석 |
-| 빠른 실행 판단 | `deterministic_query_plan.py` | `Schema-Grounded Planner`가 operation 후보 선택과 `Query Execution Plan JSON` 생성을 한 경계에서 검증 |
-| 질문 검수 | `guard.py`, `guide.py` | 모호·복합·미지원 질문 차단과 안내 |
-| 실행 분기 | `main.py`, `router.py` | `Routing Decision JSON`을 기준으로 VECTOR, PANDAS, DOCUMENTS, GUIDE 선택 |
-| PANDAS 기본 조회 | `datastore/query.py`, `aggregation.py` | 이름·명단·금액·날짜 조회 |
-| PANDAS 계획 조회 | `query_plan.py`, `plan_validator.py`, `query_executor.py` | `Query Execution Plan JSON` 생성·검증·제한 실행 |
-| 대화형 결과 | `pandas_engine/interactive.py`, `main.py` | 인물·금액·계산 근거와 페이지 조회용 구조화 데이터 제공 |
-| 웹 UI | `static/app.js`, `static/index.html`, `static/style.css` | 답변의 인물 카드와 금액 기록을 원본 컬럼 기준으로 표시 |
-| VECTOR 검색 | `vector.py`, `prompts.py` | 근거 검색과 LLM 답변 |
-
----
-
-## 6. 검증 방향
-
-현재 프로젝트는 기능의 개수보다 실제 문서와 질문에서 얼마나 안정적으로 동작하는지를 중요하게 본다.
-
-검증 지표는 다음과 같이 Part별로 나눈다.
-
-| Part | 핵심 검증 항목 |
-|---|---|
-| 문서 적재 | 셀 OCR 정확도, 병합 셀 복원, 날짜·금액 스키마 정확도, 원본 컬럼·행 연결 보존 |
-| 질문 분류 | operation 정확도, `Routing Decision JSON`·`Query Execution Plan JSON` 검증, Guard 감지율, Router 분기 정확도 |
-| 질문 답변 | 명단 누락 여부, 계산 정확도, 출처 일치 여부, 인물 카드·금액 기록의 원본 행 일치 여부 |
-
-현재 자동화 테스트는 질문 분석, Guard, Router, QueryPlan, 집계, 날짜, 문서 범위, 이름 검색, 스키마, 병합 셀, 이미지 OCR을 포함한다. 또한 `Result_1.xlsx`를 원본으로 만든 골드셋을 별도 서버에서 반복 실행해 라우팅 실패, 계획 실패, 실행 실패, 평가기 오판을 구분하고 원본 데이터와 결과를 대조한다. E4에서는 이 결과를 바탕으로 날짜·금액·이름·목록 조건의 세부 오차를 회귀 테스트와 함께 계속 보완한다.
-
----
-
-## 7. 실행 방법
-
-### 환경 준비
-
-```powershell
-git clone https://github.com/goyojin/finance-doc-agent.git
-cd finance-doc-agent
-Copy-Item .env.example .env
-Copy-Item .env.example backend/.env
-```
-
-```dotenv
-POSTGRES_PASSWORD=change_me_secure_password
-API_KEY=change_me_api_key
-QUESTION_ENGINE_MODE=legacy
-```
-
-`QUESTION_ENGINE_MODE`는 다음 세 모드를 지원한다.
-
-- `legacy`: 기존 Regex Question Analyzer 사용
-- `shadow`: 기존 결과로 실행하면서 LLM Question Analyzer 결과를 비교
-- `llm`: `Person Reference Check`와 `Schema-Grounded Planner`가 검증 가능한 질문은 빠르게 분류하고, 나머지는 LLM Question Analyzer의 구조화 operation을 실제 라우팅에 사용
-
-### 인프라 실행
-
-```powershell
-docker compose up -d
-```
-
-```powershell
-docker exec ollama_server ollama pull qwen2.5:3b
-docker exec ollama_server ollama pull bge-m3
-```
-
-### 백엔드 실행
+| 전체 목록 | `전체 목록 보여줘` |
+| 조건 목록 | `기계과 49기 목록 알려줘` |
+| 날짜 목록 | `2026년 1월 목록 보여줘` |
+| 인물 금액 | `김현수 얼마야?` |
+| 필드 조회 | `김현수 학과 알려줘` |
+| 인원 | `전체 인원 몇 명이야?` |
+| 합계 | `납부금액 총합 얼마야?` |
+| 최댓값 | `제일 많은 돈 얼마야?` |
+| 사람 순위 | `두 번째로 돈 많이 낸 사람 누구야?` |
+| 문서 검색 | `선정 기준을 설명해줘` |
+
+## 빠른 실행
+
+백엔드 기본 주소는 `http://localhost:8080`입니다.
 
 ```powershell
 cd backend
-python -m venv venv
-venv\Scripts\Activate.ps1
-pip install -r ..\requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 8080 --reload
+.\venv\Scripts\Activate.ps1
+python main.py
 ```
 
-- 웹 UI: `http://localhost:8080/ui`
-- Swagger UI: `http://localhost:8080/docs`
-- 상태 확인: `http://localhost:8080/health`
+또는 Uvicorn으로 실행할 수 있습니다.
 
----
-
-## 8. 대표 질문 예시
-
-### PANDAS 기본 조회
-
-```text
-선택한 문서의 전체 명단을 보여줘
-58기 기부자 명단을 알려줘
-홍길동의 학과와 지급액을 알려줘
-3~4월 출연금액 합계 알려줘
-가장 많이 받은 사람은 누구야?
+```powershell
+cd backend
+.\venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8080
 ```
 
-### PANDAS QueryPlan
+브라우저에서 `http://localhost:8080/ui`를 열고 문서를 선택한 뒤 질문합니다.
 
-```text
-3월에 지급액이 100만원 이상인 사람을 금액순으로 보여줘
-2025년 4월 장학생 중 상위 5명을 알려줘
-기수별 평균 지급액을 비교해줘
-```
+인프라와 환경 설정을 포함한 자세한 실행 방법은 [Backend Guide](backend/README.md)를 참고하세요.
 
-### VECTOR
+## 문서 안내
 
-```text
-이 장학금의 지급 기준을 설명해줘
-문서에 적힌 신청 절차가 뭐야?
-지원 대상 조건을 근거와 함께 알려줘
-```
+- [Backend Guide](backend/README.md): 서버 구성, 실행, API, 저장소
+- [Document Ingestion](backend/utils/README.md): Excel/PDF/HWP/OCR 적재와 스키마
+- [Question Routing](backend/rag/README.md): 질문 분류, 라우팅, V1~V5 고도화
+- [Query Execution](backend/pandas_engine/README.md): QueryPlan, 계산, 근거, 인물 카드
+- [Testing](backend/tests/README.md): 단위 테스트, 골드셋, 검증 기준
 
-### GUIDE가 필요한 질문
+## 현재 상태
 
-```text
-저번 거 얼마야?
-그 사람 알려줘
-금액이랑 규정 전부 비교해줘
-```
-
-### 대화형 원본 기록 확인
-
-답변에 구조화된 인물·금액 정보가 포함되면 웹 UI에서 이름과 금액을 눌러 다음 내용을 확인할 수 있다.
-
-- 인물 카드의 실제 원본 데이터 컬럼
-- 같은 이름으로 조회된 서로 다른 원본 행
-- 답변 금액에 연결된 납부·지급 기록
-- 계산과 상세 조회에 사용된 문서·행 정보
-
-E4에서는 이 결과를 바탕으로 현재 데이터에서 실행 가능성이 검증된 후속 질문을 자동으로 반환할 계획이다.
-
----
-
-## 9. 최종 목표
-
-이 프로젝트의 최종 목표는 문서를 많이 읽는 에이전트가 아니라, **장학재단 문서의 원본 구조를 보존하고, 질문 의도를 안전하고 빠르게 분류하며, 사용자가 인물과 금액의 원본 기록까지 직접 검증할 수 있게 답하는 업무형 에이전트**를 만드는 것이다.
-
-고도화의 기준은 다음 세 문장으로 정리할 수 있다.
-
-> 문서 적재 단계에서는 원본 구조를 임의로 바꾸지 않는다.  
-> 질문 분류 단계에서는 검증된 질문만 빠르게 실행하고, 확신할 수 없는 요청을 임의로 실행하지 않는다.
-> 질문 답변 단계에서는 결과만 보여 주지 않고 인물 카드와 금액의 원본 기록까지 연결한다.
+- 구조화 조회와 문서 검색 경로 분리
+- 스키마 기반 빠른 질문 계획과 LLM 질문 계획 지원
+- 원본 컬럼 기반 인물 카드와 계산 상세 조회 지원
+- 날짜 범위, 마스킹 이름, 동명이인, 다중 금액 컬럼 처리
+- 질문 원문과 개인정보를 서버 로그에 기록하지 않음
+- 전체 자동화 회귀 테스트 310개 통과 기준
