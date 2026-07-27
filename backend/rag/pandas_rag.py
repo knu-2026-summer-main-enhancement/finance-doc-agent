@@ -22,6 +22,8 @@ from pandas_engine.query_executor import (
     QueryPlanExecutionError,
     execute_query_plan,
 )
+from pandas_engine.aggregation import amount_column_clarification, resolve_amount_column
+from pandas_engine.money import money_series
 from pandas_engine.formatter import (
     _format_pandas_result,
     _format_scalar_result,
@@ -38,6 +40,7 @@ from rag.cancellation import raise_if_cancelled
 from utils.semantic_schema import infer_column_meaning
 from pandas_engine.interactive import build_interactive_result, build_interactive_dataframe
 from pandas_engine.query_plan import QueryPlan
+from utils.table_parser import normalize_person_name
 
 logger = logging.getLogger("uvicorn.error")
 _interactive_result: ContextVar[dict | None] = ContextVar("interactive_result", default=None)
@@ -55,6 +58,461 @@ _NUMERIC_COMPARISON_FILTER = re.compile(
     r"|(?:(?:>=|<=|>|<)\s*\d)",
     re.IGNORECASE,
 )
+_YEAR_COMPARISON = re.compile(
+    r"(?<!\d)((?:19|20)\d{2})\s*년.*?(?<!\d)((?:19|20)\d{2})\s*년"
+)
+_COMPARISON_WORD = re.compile(r"비교|차이|증감|증가|감소")
+_YEAR_NON_PAYER = re.compile(
+    r"(?<!\d)(?P<paid_year>(?:19|20)\d{2})\s*년(?:에|도)?"
+    r".{0,30}?(?:낸|납부(?:한)?|결제(?:한)?)"
+    r".{0,40}?(?:중(?:에)?|가운데(?:에서)?|에서)\s*"
+    r"(?<!\d)(?P<missing_year>(?:19|20)\d{2})\s*년(?:에|도)?"
+    r".{0,30}?(?:안\s*낸|안낸|미납|납부\s*안|결제\s*안|내지\s*않)",
+)
+
+
+def _year_series(df: pd.DataFrame) -> pd.Series | None:
+    """Return a schema-grounded year series without relying on header names."""
+
+    for column in df.columns:
+        meaning = infer_column_meaning(str(column), df[column])
+        if meaning.concept == "temporal" and meaning.role == "year":
+            return pd.to_numeric(df[column], errors="coerce").astype("Int64")
+    for column in df.columns:
+        meaning = infer_column_meaning(str(column), df[column])
+        if meaning.concept == "temporal" and meaning.role in {"date", "year_month"}:
+            dates = pd.to_datetime(df[column], errors="coerce")
+            if dates.notna().any():
+                return dates.dt.year.astype("Int64")
+    return None
+
+
+def _month_series(df: pd.DataFrame) -> pd.Series | None:
+    for column in df.columns:
+        meaning = infer_column_meaning(str(column), df[column])
+        if meaning.concept == "temporal" and meaning.role == "month":
+            return pd.to_numeric(df[column], errors="coerce").astype("Int64")
+    for column in df.columns:
+        meaning = infer_column_meaning(str(column), df[column])
+        if meaning.concept == "temporal" and meaning.role in {"date", "year_month"}:
+            dates = pd.to_datetime(df[column], errors="coerce")
+            if dates.notna().any():
+                return dates.dt.month.astype("Int64")
+    return None
+
+
+def _person_name_column(df: pd.DataFrame) -> object | None:
+    for column in df.columns:
+        meaning = infer_column_meaning(str(column), df[column])
+        if (
+            meaning.concept == "entity"
+            and meaning.role == "entity_name"
+            and meaning.qualifier == "person"
+        ):
+            return column
+    return None
+
+
+def _explicit_year_pair(question: str) -> tuple[int, int] | None:
+    years = [int(value) for value in re.findall(r"(?<!\d)((?:19|20)\d{2})\s*년", question)]
+    unique_years = list(dict.fromkeys(years))
+    if len(unique_years) != 2:
+        return None
+    return unique_years[0], unique_years[1]
+
+
+def _collect_year_person_totals(
+    question: str,
+    dataframes: dict[str, pd.DataFrame],
+    first_year: int,
+    second_year: int,
+) -> tuple[dict[int, dict[str, tuple[str, float]]], list[str], str | None]:
+    """Collect unique people and their paid totals for two years in one source."""
+
+    sources = list(dict.fromkeys(_df_sources.get(alias, alias) for alias in dataframes))
+    if len(sources) != 1:
+        return {}, sources, "문서 내 비교는 한 번에 한 문서를 선택했을 때만 지원합니다. 비교할 문서를 하나 선택해 주세요."
+
+    people = {first_year: {}, second_year: {}}
+    usable_frames = 0
+    for df in dataframes.values():
+        years = _year_series(df)
+        person_column = _person_name_column(df)
+        if years is None or person_column is None:
+            continue
+        selection = resolve_amount_column(df, question)
+        if len(selection.candidates) > 1 and selection.selected is None:
+            return {}, sources, amount_column_clarification(selection.candidates)
+        amounts = money_series(df, selection.selected) if selection.selected else None
+        usable_frames += 1
+        for year in people:
+            mask = years.eq(year).fillna(False)
+            if amounts is not None:
+                mask = mask & amounts.gt(0).fillna(False)
+            for index, raw_name in df.loc[mask, person_column].dropna().items():
+                display_name = str(raw_name).strip()
+                normalized_name = normalize_person_name(display_name)
+                if not normalized_name:
+                    continue
+                amount = float(amounts.loc[index]) if amounts is not None and pd.notna(amounts.loc[index]) else 0.0
+                existing = people[year].get(normalized_name)
+                people[year][normalized_name] = (
+                    existing[0] if existing else display_name,
+                    (existing[1] if existing else 0.0) + amount,
+                )
+    if not usable_frames:
+        return {}, sources, "선택한 문서에서 연도와 사람 이름 컬럼을 함께 찾지 못했습니다."
+    return people, sources, None
+
+
+def _format_person_list(title: str, people: list[tuple[str, float]], sources: list[str], evidence: str) -> tuple[str, list[str], str]:
+    lines = [title, ""]
+    if people:
+        lines.extend(f"- {name}" for name, _ in people[:200])
+        if len(people) > 200:
+            lines.append(f"- 외 {len(people) - 200:,}명")
+    else:
+        lines.append("- 해당 없음")
+    lines.extend(("", "조회 근거:", f"- 문서: {sources[0]}", f"- 비교 조건: {evidence}"))
+    return "\n".join(lines), sources, "pandas"
+
+
+def _answer_year_person_comparison(
+    question: str,
+    dataframes: dict[str, pd.DataFrame],
+) -> tuple[str, list[str], str] | None:
+    """Answer yearly people-set and person-total comparison questions."""
+
+    pair = _explicit_year_pair(question)
+    if pair is None:
+        return None
+    first_year, second_year = pair
+    compact = re.sub(r"\s+", "", question)
+    is_people_comparison = any(token in compact for token in ("인원비교", "비교해줘", "비교해주세요"))
+    kind: str | None = None
+    if re.search(r"둘다.*(?:낸|납부)|모두.*(?:낸|납부)|양쪽.*(?:낸|납부)", compact):
+        kind = "both"
+    elif re.search(r"안냈다가.*(?:낸|납부)", compact):
+        kind = "later_only"
+    elif re.search(r"더많이낸|금액이늘|증가.*사람", compact):
+        kind = "increased"
+    elif re.search(r"금액이줄|덜낸|감소.*사람", compact):
+        kind = "decreased"
+    elif "인원" in compact and is_people_comparison:
+        kind = "count"
+    if kind is None:
+        return None
+
+    people, sources, error = _collect_year_person_totals(question, dataframes, first_year, second_year)
+    if error:
+        return error, sources, "pandas"
+    first, second = people[first_year], people[second_year]
+    first_names, second_names = set(first), set(second)
+
+    if kind == "count":
+        difference = len(second_names) - len(first_names)
+        answer = "\n".join((
+            f"{first_year}년과 {second_year}년 납부 인원을 비교했습니다.",
+            "",
+            f"- {first_year}년: {len(first_names):,}명",
+            f"- {second_year}년: {len(second_names):,}명",
+            f"- 변화: {difference:+,}명",
+            "",
+            "조회 근거:",
+            f"- 문서: {sources[0]}",
+            f"- 비교 조건: {first_year}년 납부 기록, {second_year}년 납부 기록",
+        ))
+        return answer, sources, "pandas"
+    if kind == "both":
+        names = sorted(first_names & second_names)
+        return _format_person_list(
+            f"{first_year}년과 {second_year}년에 모두 납부한 사람은 {len(names):,}명입니다.",
+            [(first[name][0], first[name][1]) for name in names],
+            sources,
+            f"{first_year}년과 {second_year}년 납부 기록 모두 있음",
+        )
+    if kind == "later_only":
+        names = sorted(second_names - first_names)
+        return _format_person_list(
+            f"{first_year}년에는 납부 기록이 없고 {second_year}년에 납부한 사람은 {len(names):,}명입니다.",
+            [(second[name][0], second[name][1]) for name in names],
+            sources,
+            f"{first_year}년 납부 기록에는 없고 {second_year}년 납부 기록에는 있음",
+        )
+
+    shared = first_names & second_names
+    if kind == "increased":
+        names = sorted(name for name in shared if second[name][1] > first[name][1])
+        title = f"{first_year}년보다 {second_year}년에 더 많이 납부한 사람은 {len(names):,}명입니다."
+        evidence = f"같은 사람의 {first_year}년·{second_year}년 납부 금액 합계 비교, 증가한 경우만 표시"
+    else:
+        names = sorted(name for name in shared if second[name][1] < first[name][1])
+        title = f"{first_year}년보다 {second_year}년에 납부 금액이 줄어든 사람은 {len(names):,}명입니다."
+        evidence = f"같은 사람의 {first_year}년·{second_year}년 납부 금액 합계 비교, 감소한 경우만 표시"
+    return _format_person_list(title, [(first[name][0], first[name][1]) for name in names], sources, evidence)
+
+
+def _answer_period_payment_comparison(
+    question: str,
+    dataframes: dict[str, pd.DataFrame],
+) -> tuple[str, list[str], str] | None:
+    """Compare two months or the first/second half of one document."""
+
+    month_values = [int(value) for value in re.findall(r"(?<!\d)(1[0-2]|[1-9])\s*월", question)]
+    unique_months = list(dict.fromkeys(month_values))
+    compact = re.sub(r"\s+", "", question)
+    half_requested = "상반기" in compact and "하반기" in compact
+    if not (len(unique_months) == 2 or half_requested) or not _COMPARISON_WORD.search(question):
+        return None
+    labels = (f"{unique_months[0]}월", f"{unique_months[1]}월") if unique_months else ("상반기", "하반기")
+    sources = list(dict.fromkeys(_df_sources.get(alias, alias) for alias in dataframes))
+    if len(sources) != 1:
+        return "문서 내 기간 비교는 한 번에 한 문서를 선택했을 때만 지원합니다. 비교할 문서를 하나 선택해 주세요.", sources, "pandas"
+
+    totals = [0.0, 0.0]
+    people = [set(), set()]
+    usable_frames = 0
+    for df in dataframes.values():
+        months = _month_series(df)
+        selection = resolve_amount_column(df, question)
+        if months is None or selection.selected is None:
+            if months is not None and len(selection.candidates) > 1:
+                return amount_column_clarification(selection.candidates), sources, "pandas"
+            continue
+        usable_frames += 1
+        amounts = money_series(df, selection.selected)
+        person_column = _person_name_column(df)
+        masks = (
+            (months.le(6).fillna(False), months.ge(7).fillna(False))
+            if half_requested else
+            (months.eq(unique_months[0]).fillna(False), months.eq(unique_months[1]).fillna(False))
+        )
+        for index, mask in enumerate(masks):
+            paid_mask = mask & amounts.gt(0).fillna(False)
+            totals[index] += float(amounts[paid_mask].sum())
+            if person_column is not None:
+                people[index].update(
+                    normalize_person_name(name)
+                    for name in df.loc[paid_mask, person_column].dropna().astype(str)
+                    if normalize_person_name(name)
+                )
+    if not usable_frames:
+        return "선택한 문서에서 월 또는 날짜와 금액 컬럼을 함께 찾지 못했습니다.", sources, "pandas"
+    difference = totals[1] - totals[0]
+    rate = None if totals[0] == 0 else difference / totals[0] * 100
+    change = f"{difference:+,.0f}원" + (f" ({rate:+.1f}%)" if rate is not None else "")
+    return "\n".join((
+        f"{labels[0]}과 {labels[1]} 납부 현황을 비교했습니다.",
+        "",
+        f"- {labels[0]}: {totals[0]:,.0f}원, {len(people[0]):,}명",
+        f"- {labels[1]}: {totals[1]:,.0f}원, {len(people[1]):,}명",
+        f"- 금액 변화: {change}",
+        f"- 인원 변화: {len(people[1]) - len(people[0]):+,}명",
+        "",
+        "조회 근거:",
+        f"- 문서: {sources[0]}",
+        f"- 비교 조건: {labels[0]}, {labels[1]}",
+    )), sources, "pandas"
+
+
+def _answer_group_payment_comparison(
+    question: str,
+    dataframes: dict[str, pd.DataFrame],
+) -> tuple[str, list[str], str] | None:
+    """Summarize payment people, total, and available rate by department/cohort."""
+
+    compact = re.sub(r"\s+", "", question)
+    group_qualifier = "department" if "학과별" in compact else "cohort" if "기수별" in compact else None
+    if group_qualifier is None or not any(token in compact for token in ("비교", "납부율", "납부인원", "금액")):
+        return None
+    sources = list(dict.fromkeys(_df_sources.get(alias, alias) for alias in dataframes))
+    if len(sources) != 1:
+        return "학과·기수별 비교는 한 번에 한 문서를 선택했을 때만 지원합니다. 비교할 문서를 하나 선택해 주세요.", sources, "pandas"
+    groups: dict[str, dict[str, object]] = {}
+    usable_frames = 0
+    for df in dataframes.values():
+        group_column = next((column for column in df.columns if infer_column_meaning(str(column), df[column]).qualifier == group_qualifier), None)
+        person_column = _person_name_column(df)
+        selection = resolve_amount_column(df, question)
+        if group_column is None or person_column is None or selection.selected is None:
+            if group_column is not None and person_column is not None and len(selection.candidates) > 1:
+                return amount_column_clarification(selection.candidates), sources, "pandas"
+            continue
+        usable_frames += 1
+        amounts = money_series(df, selection.selected)
+        for index, raw_group in df[group_column].dropna().items():
+            group = str(raw_group).strip()
+            raw_name = df.at[index, person_column]
+            name = normalize_person_name(str(raw_name).strip()) if pd.notna(raw_name) else ""
+            if not group or not name:
+                continue
+            entry = groups.setdefault(group, {"all": set(), "paid": set(), "amount": 0.0})
+            entry["all"].add(name)
+            amount = float(amounts.loc[index]) if pd.notna(amounts.loc[index]) else 0.0
+            if amount > 0:
+                entry["paid"].add(name)
+                entry["amount"] += amount
+    if not usable_frames:
+        label = "학과" if group_qualifier == "department" else "기수"
+        return f"선택한 문서에서 {label}, 사람 이름, 금액 컬럼을 함께 찾지 못했습니다.", sources, "pandas"
+    label = "학과" if group_qualifier == "department" else "기수"
+    lines = [f"{label}별 납부 현황입니다.", ""]
+    for group, entry in sorted(groups.items(), key=lambda item: (-float(item[1]["amount"]), item[0])):
+        total_people = len(entry["all"])
+        paid_people = len(entry["paid"])
+        rate = paid_people / total_people * 100 if total_people else 0.0
+        lines.append(f"- {group}: 납부 {paid_people:,}명 / 전체 {total_people:,}명 ({rate:.1f}%), {float(entry['amount']):,.0f}원")
+    lines.extend(("", "조회 근거:", f"- 문서: {sources[0]}", f"- 비교 기준: {label}별 고유 인원과 납부 금액"))
+    return "\n".join(lines), sources, "pandas"
+
+
+def _answer_year_nonpayer_comparison(
+    question: str,
+    dataframes: dict[str, pd.DataFrame],
+) -> tuple[str, list[str], str] | None:
+    """List people recorded in the first year's payments but not the second."""
+
+    match = _YEAR_NON_PAYER.search(question)
+    if match is None:
+        return None
+    paid_year = int(match.group("paid_year"))
+    missing_year = int(match.group("missing_year"))
+    if paid_year == missing_year:
+        return "서로 다른 두 연도를 입력해 주세요.", [], "pandas"
+
+    sources = list(dict.fromkeys(_df_sources.get(alias, alias) for alias in dataframes))
+    if len(sources) != 1:
+        return (
+            "연도별 미납자 비교는 한 번에 한 문서를 선택했을 때만 지원합니다. 비교할 문서를 하나 선택해 주세요.",
+            sources,
+            "pandas",
+        )
+
+    paid_people: dict[str, str] = {}
+    later_people: set[str] = set()
+    usable_frames = 0
+    for df in dataframes.values():
+        years = _year_series(df)
+        person_column = _person_name_column(df)
+        if years is None or person_column is None:
+            continue
+        usable_frames += 1
+        amounts = None
+        selection = resolve_amount_column(df, question)
+        if selection.selected is not None:
+            amounts = money_series(df, selection.selected)
+        for year, collection in ((paid_year, paid_people), (missing_year, later_people)):
+            mask = years.eq(year).fillna(False)
+            if amounts is not None:
+                mask = mask & amounts.gt(0).fillna(False)
+            for raw_name in df.loc[mask, person_column].dropna().astype(str):
+                display_name = raw_name.strip()
+                normalized_name = normalize_person_name(display_name)
+                if not normalized_name:
+                    continue
+                if isinstance(collection, dict):
+                    collection.setdefault(normalized_name, display_name)
+                else:
+                    collection.add(normalized_name)
+
+    if not usable_frames:
+        return (
+            "선택한 문서에서 연도와 사람 이름 컬럼을 함께 찾지 못했습니다.",
+            sources,
+            "pandas",
+        )
+
+    missing_people = [
+        display_name for normalized_name, display_name in paid_people.items()
+        if normalized_name not in later_people
+    ]
+    missing_people.sort(key=lambda value: value.casefold())
+    lines = [
+        f"{paid_year}년에 납부했지만 {missing_year}년에는 납부 기록이 없는 사람은 {len(missing_people):,}명입니다.",
+        "",
+    ]
+    if missing_people:
+        lines.extend(f"- {name}" for name in missing_people[:200])
+        if len(missing_people) > 200:
+            lines.append(f"- 외 {len(missing_people) - 200:,}명")
+    else:
+        lines.append("- 해당 없음")
+    lines.extend((
+        "",
+        "조회 근거:",
+        f"- 문서: {sources[0]}",
+        f"- 비교 조건: {paid_year}년 납부 기록에는 있고 {missing_year}년 납부 기록에는 없음",
+        f"- 인원 수: {paid_year}년 {len(paid_people):,}명, {missing_year}년 {len(later_people):,}명",
+    ))
+    return "\n".join(lines), sources, "pandas"
+
+
+def _answer_year_amount_comparison(
+    question: str,
+    dataframes: dict[str, pd.DataFrame],
+) -> tuple[str, list[str], str] | None:
+    """Compare the same amount field for two explicit years in one document."""
+
+    match = _YEAR_COMPARISON.search(question)
+    if match is None or not _COMPARISON_WORD.search(question):
+        return None
+    first_year, second_year = (int(value) for value in match.groups())
+    if first_year == second_year:
+        return "서로 다른 두 연도를 입력해 주세요.", [], "pandas"
+
+    sources = list(dict.fromkeys(_df_sources.get(alias, alias) for alias in dataframes))
+    if len(sources) != 1:
+        return (
+            "문서 내 비교는 한 번에 한 문서를 선택했을 때만 지원합니다. 비교할 문서를 하나 선택해 주세요.",
+            sources,
+            "pandas",
+        )
+
+    totals = {first_year: 0.0, second_year: 0.0}
+    rows = {first_year: 0, second_year: 0}
+    amount_labels: set[str] = set()
+    usable_frames = 0
+    for df in dataframes.values():
+        years = _year_series(df)
+        selection = resolve_amount_column(df, question)
+        if years is None or selection.selected is None:
+            if years is not None and len(selection.candidates) > 1:
+                return amount_column_clarification(selection.candidates), sources, "pandas"
+            continue
+        usable_frames += 1
+        amount_labels.add(selection.selected)
+        amounts = money_series(df, selection.selected)
+        for year in totals:
+            mask = years.eq(year).fillna(False)
+            totals[year] += float(amounts[mask].sum())
+            rows[year] += int(mask.sum())
+
+    if not usable_frames:
+        return (
+            "선택한 문서에서 연도와 금액 컬럼을 함께 찾지 못했습니다.",
+            sources,
+            "pandas",
+        )
+
+    difference = totals[second_year] - totals[first_year]
+    rate = None if totals[first_year] == 0 else difference / totals[first_year] * 100
+    label = next(iter(amount_labels), "금액")
+    change = f"{difference:+,.0f}원"
+    if rate is not None:
+        change += f" ({rate:+.1f}%)"
+    answer = "\n".join((
+        f"{first_year}년과 {second_year}년 {label}을 비교했습니다.",
+        "",
+        f"- {first_year}년: {totals[first_year]:,.0f}원 ({rows[first_year]:,}건)",
+        f"- {second_year}년: {totals[second_year]:,.0f}원 ({rows[second_year]:,}건)",
+        f"- 변화: {change}",
+        "",
+        "조회 근거:",
+        f"- 문서: {sources[0]}",
+        f"- 비교 조건: {first_year}년, {second_year}년",
+        f"- 대상 컬럼: {label}",
+    ))
+    return answer, sources, "pandas"
 
 
 def _answer_extreme_value_comparison(
@@ -307,6 +765,26 @@ async def _answer_pandas(
     if not scoped_dataframes:
         message = "선택한 문서에서 조회 가능한 표 데이터를 찾을 수 없습니다." if source_scope_active() else "현재 로드된 데이터프레임이 없습니다."
         return message, [], "pandas"
+
+    year_nonpayer_comparison = _answer_year_nonpayer_comparison(question, scoped_dataframes)
+    if year_nonpayer_comparison is not None:
+        return year_nonpayer_comparison
+
+    year_person_comparison = _answer_year_person_comparison(question, scoped_dataframes)
+    if year_person_comparison is not None:
+        return year_person_comparison
+
+    period_comparison = _answer_period_payment_comparison(question, scoped_dataframes)
+    if period_comparison is not None:
+        return period_comparison
+
+    group_comparison = _answer_group_payment_comparison(question, scoped_dataframes)
+    if group_comparison is not None:
+        return group_comparison
+
+    year_comparison = _answer_year_amount_comparison(question, scoped_dataframes)
+    if year_comparison is not None:
+        return year_comparison
 
     analysis = analysis or analyze_question(question)
 
