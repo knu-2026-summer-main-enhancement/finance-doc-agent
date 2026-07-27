@@ -850,7 +850,7 @@ function resizeTextarea() {
 }
 
 function syncMobileComposerInset() {
-  if (window.innerWidth > 820 || !document.documentElement.classList.contains("ui-v3")) {
+  if (!document.documentElement.classList.contains("ui-v3")) {
     document.documentElement.style.removeProperty("--composer-inset");
     return;
   }
@@ -872,9 +872,11 @@ let suggestionHideTimer = null;
 function hideQuestionSuggestions() {
   clearTimeout(suggestionHideTimer);
   elements.questionAutocomplete.classList.remove("visible");
+  syncMobileComposerInset();
   suggestionHideTimer = window.setTimeout(() => {
     elements.questionAutocomplete.hidden = true;
     elements.questionAutocomplete.replaceChildren();
+    syncMobileComposerInset();
   }, window.innerWidth <= 820 ? 220 : 0);
   elements.questionInput.setAttribute("aria-expanded", "false");
   elements.questionInput.removeAttribute("aria-activedescendant");
@@ -969,10 +971,14 @@ function renderQuestionSuggestions(suggestions, query = elements.questionInput.v
     if (wasHidden) {
       elements.questionAutocomplete.classList.remove("visible");
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => elements.questionAutocomplete.classList.add("visible"));
+        requestAnimationFrame(() => {
+          elements.questionAutocomplete.classList.add("visible");
+          syncMobileComposerInset();
+        });
       });
     } else {
       elements.questionAutocomplete.classList.add("visible");
+      syncMobileComposerInset();
     }
   } else {
     hideQuestionSuggestions();

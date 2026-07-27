@@ -27,7 +27,9 @@ _YEAR_RANGE = re.compile(
 _MONTH = re.compile(r"(?<!\d)(1[0-2]|[1-9])\s*월")
 _COHORT = re.compile(r"(?<!\d)(\d{1,3})\s*(?:기|회)(?!\d)")
 _MONEY = re.compile(r"(?<!\d)(\d[\d,]*(?:\s*(?:만원|천원|원))?)(?!\d)")
-_PERSON_COUNT = re.compile(r"(?:사람|인원|회원).*?(?:몇\s*명|수)|몇\s*명")
+_PERSON_COUNT = re.compile(
+    r"(?:사람|인원|회원).*?(?:몇\s*명|수)|몇\s*명|(?:총|전체|모든)\s*(?:인원|회원|사람)"
+)
 _SUM = re.compile(r"(?:총합|합계|총액|얼마(?:야|예|지|냈))")
 _MEAN = re.compile(r"(?:평균|평균값|평균액)")
 _MEDIAN = re.compile(r"(?:중앙값|중간값|중앙\s*금액)")
@@ -42,7 +44,9 @@ _MIN_VALUE = re.compile(
     r"(?:가장|제일)\s*(?:작은|낮은)\s*(?:값|금액|돈|액)|"
     r"(?:값|금액|돈|액).{0,8}?(?:가장|제일)\s*(?:작은|낮은))"
 )
-_ROW_COUNT = re.compile(r"(?:몇\s*번|몇\s*회|횟수)")
+_ROW_COUNT = re.compile(
+    r"(?:몇\s*(?:번|회|건)|횟수|(?:총|전체)\s*(?:기록|건수|행)(?:은|이|가)?\s*(?:몇|얼마|알려|보여)?)"
+)
 _MISSING = re.compile(
     r"(?:비어\s*있|안\s*적|미입력|미등록|누락|공백|"
     r"등록\s*되지\s*않|등록되지\s*않|없(?:는|어|어?))"
@@ -856,7 +860,7 @@ def build_auto_schema_grounded_plan(
         hints = ("lookup_amount", "structured_query")
     elif any(token in normalized for token in ("전화번호", "이메일", "전공", "학과")):
         hints = ("lookup_field", "structured_query")
-    elif re.search(r"(?:사람|인원|회원).*?(?:몇명|수)|몇명", normalized):
+    elif re.search(r"(?:사람|인원|회원).*?(?:몇명|수)|몇명|(?:총|전체|모든)(?:인원|회원|사람)", normalized):
         hints = ("count_records", "structured_query")
     elif _MEDIAN.search(question):
         hints = ("median_amount", "structured_query")
@@ -883,6 +887,8 @@ def build_auto_schema_grounded_plan(
         normalized,
     ):
         hints = ("structured_query",)
+    elif _ROW_COUNT.search(question):
+        hints = ("count_records",)
     elif re.search(r"(?:총합|합계|총액|얼마|금액|돈)", normalized):
         hints = ("sum_amount", "structured_query")
     else:

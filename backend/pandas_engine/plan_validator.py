@@ -32,7 +32,7 @@ _ORDERABLE_TYPES = _NUMERIC_TYPES | {"date", "year_month"}
 _STRING_TYPES = {"string"}
 _PLAN_COMPARISON_OPERATORS = {"gt", "gte", "lt", "lte", "between"}
 _PERSON_COUNT_QUESTION = re.compile(
-    r"(?:사람|인원|회원)\s*(?:은|이|가)?\s*(?:몇\s*명|수)|몇\s*명",
+    r"(?:사람|인원|회원)\s*(?:은|이|가)?\s*(?:몇\s*명|수)|몇\s*명|(?:총|전체|모든)\s*(?:인원|회원|사람)",
     re.IGNORECASE,
 )
 _PERSON_DISPLAY_SUFFIX = re.compile(r"\s*[\(\[\{][^\]\)\}]*[\]\)\}]\s*$")

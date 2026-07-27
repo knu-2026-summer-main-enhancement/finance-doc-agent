@@ -6,7 +6,13 @@ from unittest.mock import patch
 import pandas as pd
 
 from rag.pandas_rag import (
+    _AMBIGUOUS_SUMMARY_QUESTION,
     _answer_group_payment_comparison,
+    _answer_extreme_group_amount,
+    _answer_extreme_month_amount,
+    _answer_extreme_period_count,
+    _answer_lowest_year_amount,
+    _answer_most_frequent_person,
     _answer_period_payment_comparison,
     _answer_year_amount_comparison,
     _answer_year_nonpayer_comparison,
@@ -15,6 +21,84 @@ from rag.pandas_rag import (
 
 
 class YearAmountComparisonTests(unittest.TestCase):
+    def test_month_amount_extreme_uses_monthly_total(self) -> None:
+        frame = pd.DataFrame({"월": [1, 1, 2, 2], "결제_금액": [1, 999, 400, 400]})
+        with patch("rag.pandas_rag._df_sources", {"df_fee": "회비.xlsx"}):
+            high, _, _ = _answer_extreme_month_amount("돈이 가장 많은 달은 언제야?", {"df_fee": frame})
+            low, _, _ = _answer_extreme_month_amount("돈이 가장 적은 달은 언제야?", {"df_fee": frame})
+
+        self.assertIn("1월", high)
+        self.assertIn("1,000원", high)
+        self.assertIn("2월", low)
+        self.assertIn("800원", low)
+
+    def test_period_count_extreme_groups_rows_by_year(self) -> None:
+        frame = pd.DataFrame({"연도": [2024, 2024, 2025, 2025, 2025]})
+        with patch("rag.pandas_rag._df_sources", {"df_fee": "회비.xlsx"}):
+            answer, _, _ = _answer_extreme_period_count(
+                "횟수가 가장 많은 년도는 언제야?", {"df_fee": frame}
+            )
+
+        self.assertIn("2025년", answer)
+        self.assertIn("3건", answer)
+
+    def test_group_amount_extreme_sums_department_amounts(self) -> None:
+        frame = pd.DataFrame({
+            "학과": ["경영", "경영", "컴퓨터"],
+            "결제_금액": [100, 100, 150],
+        })
+        with patch("rag.pandas_rag._df_sources", {"df_fee": "회비.xlsx"}):
+            answer, _, _ = _answer_extreme_group_amount(
+                "돈을 가장 많이 낸 학과는?", {"df_fee": frame}
+            )
+
+        self.assertIn("경영", answer)
+        self.assertIn("200원", answer)
+
+    def test_ranks_people_by_record_frequency_not_payment_amount(self) -> None:
+        frame = pd.DataFrame({
+            "회원명": ["김하나", "김하나", "김하나", "이둘"],
+            "결제_금액": [1_000, 1_000, 1_000, 9_999_999],
+        })
+        with patch("rag.pandas_rag._df_sources", {"df_fee": "회비.xlsx"}):
+            answer, _, route = _answer_most_frequent_person(
+                "횟수가 가장 많은 사람", {"df_fee": frame}
+            )
+            least_answer, _, _ = _answer_most_frequent_person(
+                "횟수가 가장 적은 사람", {"df_fee": frame}
+            )
+
+        self.assertEqual(route, "pandas")
+        self.assertIn("김하나: 3건", answer)
+        self.assertNotIn("이둘: 3건", answer)
+        self.assertIn("기록 횟수가 가장 적은", least_answer)
+        self.assertIn("이둘: 1건", least_answer)
+
+    def test_finds_lowest_year_by_yearly_total_not_single_row(self) -> None:
+        frame = pd.DataFrame({
+            "연도": [2024, 2024, 2025, 2025],
+            "결제_금액": [1, 999, 400, 400],
+        })
+        with patch("rag.pandas_rag._df_sources", {"df_fee": "회비.xlsx"}):
+            answer, sources, route = _answer_lowest_year_amount(
+                "돈이 가장 적은 년도는 언제야?", {"df_fee": frame}
+            )
+            highest_answer, _, _ = _answer_lowest_year_amount(
+                "돈이 가장 많은 년도는 언제야?", {"df_fee": frame}
+            )
+
+        self.assertEqual(route, "pandas")
+        self.assertEqual(sources, ["회비.xlsx"])
+        self.assertIn("2025년", answer)
+        self.assertIn("800원", answer)
+        self.assertIn("2024년", highest_answer)
+        self.assertIn("1,000원", highest_answer)
+
+    def test_short_summary_question_requires_a_metric(self) -> None:
+        self.assertIsNotNone(_AMBIGUOUS_SUMMARY_QUESTION.fullmatch("총"))
+        self.assertIsNotNone(_AMBIGUOUS_SUMMARY_QUESTION.fullmatch("합계?"))
+        self.assertIsNone(_AMBIGUOUS_SUMMARY_QUESTION.fullmatch("총 인원 알려줘"))
+
     def test_compares_months_and_halves(self) -> None:
         frame = pd.DataFrame({
             "월": [1, 1, 2, 2, 7, 8],

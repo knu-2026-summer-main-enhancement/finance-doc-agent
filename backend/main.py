@@ -61,7 +61,7 @@ from rag.router import (
     pandas_strategy_for_operations,
     route_operations,
 )
-from rag.guard import check_question, check_question_decision
+from rag.guard import check_question, check_question_decision, is_ambiguous_summary_question
 from rag.guide import build_guide_response
 from rag.vector import _answer_vector, _stream_vector
 from rag.pandas_rag import _answer_pandas, current_interactive_result
@@ -138,6 +138,8 @@ def _schedule_shadow_question_engine(
 async def _resolve_llm_question(question: str) -> QuestionResolution:
     """Resolve a question through one deterministic planning boundary first."""
     dataframes = scoped_mapping(_df_namespace, _df_sources)
+    if is_ambiguous_summary_question(question):
+        return QuestionResolution(check_question(question), "GUIDE", None)
     candidates = ambiguous_person_lookup_candidates(question, dataframes=dataframes)
     if candidates:
         return QuestionResolution(

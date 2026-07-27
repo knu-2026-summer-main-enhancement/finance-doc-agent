@@ -412,6 +412,20 @@ class DeterministicQueryPlanTest(unittest.TestCase):
         self.assertEqual(plan.operation, "count")
         self.assertEqual(plan.distinct_by, ("회원명",))
 
+    def test_total_people_uses_distinct_person_column(self):
+        plan = self._plan("총 인원 알려줘", "count_records")
+
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.operation, "count")
+        self.assertEqual(plan.distinct_by, ("회원명",))
+
+    def test_total_records_is_count_even_with_amount_wording(self):
+        plan = self._plan("총 기록 얼마야?", "sum_amount")
+
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.operation, "count")
+        self.assertFalse(plan.distinct_by)
+
     def test_contact_value_reverse_lookup_returns_person(self):
         plan = self._plan("second@example.com 이메일을 가진 사람 누구야?", "lookup_field")
         self.assertIsNotNone(plan)

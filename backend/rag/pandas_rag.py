@@ -58,6 +58,9 @@ _NUMERIC_COMPARISON_FILTER = re.compile(
     r"|(?:(?:>=|<=|>|<)\s*\d)",
     re.IGNORECASE,
 )
+_AMBIGUOUS_SUMMARY_QUESTION = re.compile(
+    r"^\s*(?:총|전체|합계|총합|얼마)\s*[?!。.]*\s*$"
+)
 _YEAR_COMPARISON = re.compile(
     r"(?<!\d)((?:19|20)\d{2})\s*년.*?(?<!\d)((?:19|20)\d{2})\s*년"
 )
@@ -68,6 +71,28 @@ _YEAR_NON_PAYER = re.compile(
     r".{0,40}?(?:중(?:에)?|가운데(?:에서)?|에서)\s*"
     r"(?<!\d)(?P<missing_year>(?:19|20)\d{2})\s*년(?:에|도)?"
     r".{0,30}?(?:안\s*낸|안낸|미납|납부\s*안|결제\s*안|내지\s*않)",
+)
+_LOWEST_YEAR_AMOUNT = re.compile(
+    r"(?:가장|제일|최저).{0,12}(?:적|낮).{0,12}(?:년도|연도|년)|"
+    r"(?:년도|연도|년).{0,12}(?:가장|제일|최저).{0,12}(?:적|낮)"
+)
+_HIGHEST_YEAR_AMOUNT = re.compile(
+    r"(?:가장|제일|최고).{0,12}(?:많|크|높).{0,12}(?:년도|연도|년)|"
+    r"(?:년도|연도|년).{0,12}(?:가장|제일|최고).{0,12}(?:많|크|높)"
+)
+_LOWEST_MONTH_AMOUNT = re.compile(
+    r"(?:가장|제일|최저).{0,12}(?:적|낮).{0,12}(?:월|달)|(?:월|달).{0,12}(?:가장|제일|최저).{0,12}(?:적|낮)"
+)
+_HIGHEST_MONTH_AMOUNT = re.compile(
+    r"(?:가장|제일|최고).{0,12}(?:많|크|높).{0,12}(?:월|달)|(?:월|달).{0,12}(?:가장|제일|최고).{0,12}(?:많|크|높)"
+)
+_EXTREME_PERIOD_COUNT = re.compile(
+    r"(?:횟수|기록\s*수|건수).{0,18}(?:가장|제일|최고|최저).{0,18}(?:년도|연도|년|월|달)|"
+    r"(?:년도|연도|년|월|달).{0,18}(?:횟수|기록\s*수|건수).{0,18}(?:가장|제일|최고|최저)"
+)
+_MOST_FREQUENT_PERSON = re.compile(
+    r"(?:횟수|몇\s*번|가장\s*자주|제일\s*자주).{0,20}(?:많은|많이|높은)?.{0,20}(?:사람|회원|인원)|"
+    r"(?:사람|회원|인원).{0,20}(?:횟수|몇\s*번|가장\s*자주|제일\s*자주)"
 )
 
 
@@ -111,6 +136,16 @@ def _person_name_column(df: pd.DataFrame) -> object | None:
         ):
             return column
     return None
+
+
+def _source_row_count(dataframes: dict[str, pd.DataFrame]) -> int:
+    return sum(len(df) for df in dataframes.values())
+
+
+def _compact_breakdown(values: dict[object, float | int], suffix: str) -> str:
+    return ", ".join(
+        f"{key}{suffix} {value:,.0f}" for key, value in sorted(values.items())
+    )
 
 
 def _explicit_year_pair(question: str) -> tuple[int, int] | None:
@@ -311,7 +346,9 @@ def _answer_period_payment_comparison(
         "",
         "조회 근거:",
         f"- 문서: {sources[0]}",
+        f"- 원본 행 수: {_source_row_count(dataframes):,}개",
         f"- 비교 조건: {labels[0]}, {labels[1]}",
+        "- 적용 조건: 결제 금액이 0원 초과",
     )), sources, "pandas"
 
 
@@ -329,6 +366,7 @@ def _answer_group_payment_comparison(
     if len(sources) != 1:
         return "학과·기수별 비교는 한 번에 한 문서를 선택했을 때만 지원합니다. 비교할 문서를 하나 선택해 주세요.", sources, "pandas"
     groups: dict[str, dict[str, object]] = {}
+    amount_labels: set[str] = set()
     usable_frames = 0
     for df in dataframes.values():
         group_column = next((column for column in df.columns if infer_column_meaning(str(column), df[column]).qualifier == group_qualifier), None)
@@ -339,6 +377,7 @@ def _answer_group_payment_comparison(
                 return amount_column_clarification(selection.candidates), sources, "pandas"
             continue
         usable_frames += 1
+        amount_labels.add(selection.selected)
         amounts = money_series(df, selection.selected)
         for index, raw_group in df[group_column].dropna().items():
             group = str(raw_group).strip()
@@ -362,7 +401,13 @@ def _answer_group_payment_comparison(
         paid_people = len(entry["paid"])
         rate = paid_people / total_people * 100 if total_people else 0.0
         lines.append(f"- {group}: 납부 {paid_people:,}명 / 전체 {total_people:,}명 ({rate:.1f}%), {float(entry['amount']):,.0f}원")
-    lines.extend(("", "조회 근거:", f"- 문서: {sources[0]}", f"- 비교 기준: {label}별 고유 인원과 납부 금액"))
+    lines.extend((
+        "", "조회 근거:", f"- 문서: {sources[0]}",
+        f"- 원본 행 수: {_source_row_count(dataframes):,}개",
+        "- 적용 조건: 결제 금액이 0원 초과인 행을 납부 인원·금액에 반영",
+        f"- 대상 컬럼: {', '.join(sorted(amount_labels))}",
+        f"- 비교 기준: {label}별 고유 인원과 납부 금액",
+    ))
     return "\n".join(lines), sources, "pandas"
 
 
@@ -513,6 +558,275 @@ def _answer_year_amount_comparison(
         f"- 대상 컬럼: {label}",
     ))
     return answer, sources, "pandas"
+
+
+def _answer_lowest_year_amount(
+    question: str,
+    dataframes: dict[str, pd.DataFrame],
+) -> tuple[str, list[str], str] | None:
+    """Find the year with the smallest summed payment amount, not the smallest row."""
+
+    is_highest = bool(_HIGHEST_YEAR_AMOUNT.search(question))
+    if not is_highest and not _LOWEST_YEAR_AMOUNT.search(question):
+        return None
+    sources = list(dict.fromkeys(_df_sources.get(alias, alias) for alias in dataframes))
+    if len(sources) != 1:
+        return "연도별 금액 비교는 한 번에 한 문서를 선택했을 때만 지원합니다. 비교할 문서를 하나 선택해 주세요.", sources, "pandas"
+    totals: dict[int, float] = {}
+    amount_labels: set[str] = set()
+    usable_frames = 0
+    for df in dataframes.values():
+        years = _year_series(df)
+        selection = resolve_amount_column(df, question)
+        if years is None or selection.selected is None:
+            if years is not None and len(selection.candidates) > 1:
+                return amount_column_clarification(selection.candidates), sources, "pandas"
+            continue
+        usable_frames += 1
+        amount_labels.add(selection.selected)
+        amounts = money_series(df, selection.selected)
+        for year in sorted(years.dropna().unique()):
+            year_number = int(year)
+            mask = years.eq(year_number).fillna(False)
+            totals[year_number] = totals.get(year_number, 0.0) + float(amounts[mask].sum())
+    if not usable_frames or not totals:
+        return "선택한 문서에서 연도와 금액 컬럼을 함께 찾지 못했습니다.", sources, "pandas"
+    extreme = max(totals.values()) if is_highest else min(totals.values())
+    years = sorted(year for year, total in totals.items() if total == extreme)
+    label = next(iter(amount_labels), "금액")
+    year_text = ", ".join(f"{year}년" for year in years)
+    comparison_label = "가장 많은" if is_highest else "가장 적은"
+    extreme_label = "최댓값" if is_highest else "최솟값"
+    return "\n".join((
+        f"연도별 {label} 합계가 {comparison_label} 때는 {year_text}입니다.",
+        "",
+        f"- {year_text}: {extreme:,.0f}원",
+        f"- 비교한 연도: {', '.join(f'{year}년' for year in sorted(totals))}",
+        "",
+        "조회 근거:",
+        f"- 문서: {sources[0]}",
+        f"- 원본 행 수: {_source_row_count(dataframes):,}개",
+        f"- 계산 방식: 연도별 {label} 합계를 계산한 뒤 {extreme_label} 선택",
+        f"- 대상 컬럼: {label}",
+        f"- 연도별 합계: {_compact_breakdown(totals, '년')}",
+    )), sources, "pandas"
+
+
+def _answer_extreme_month_amount(
+    question: str,
+    dataframes: dict[str, pd.DataFrame],
+) -> tuple[str, list[str], str] | None:
+    """Find the month with the largest/smallest summed payment amount."""
+
+    is_highest = bool(_HIGHEST_MONTH_AMOUNT.search(question))
+    if not is_highest and not _LOWEST_MONTH_AMOUNT.search(question):
+        return None
+    sources = list(dict.fromkeys(_df_sources.get(alias, alias) for alias in dataframes))
+    if len(sources) != 1:
+        return "월별 금액 비교는 한 번에 한 문서를 선택했을 때만 지원합니다. 비교할 문서를 하나 선택해 주세요.", sources, "pandas"
+    totals: dict[int, float] = {}
+    amount_labels: set[str] = set()
+    usable_frames = 0
+    for df in dataframes.values():
+        months = _month_series(df)
+        selection = resolve_amount_column(df, question)
+        if months is None or selection.selected is None:
+            if months is not None and len(selection.candidates) > 1:
+                return amount_column_clarification(selection.candidates), sources, "pandas"
+            continue
+        usable_frames += 1
+        amount_labels.add(selection.selected)
+        amounts = money_series(df, selection.selected)
+        for month in sorted(months.dropna().unique()):
+            month_number = int(month)
+            mask = months.eq(month_number).fillna(False)
+            totals[month_number] = totals.get(month_number, 0.0) + float(amounts[mask].sum())
+    if not usable_frames or not totals:
+        return "선택한 문서에서 월 또는 날짜와 금액 컬럼을 함께 찾지 못했습니다.", sources, "pandas"
+    extreme = max(totals.values()) if is_highest else min(totals.values())
+    months = sorted(month for month, total in totals.items() if total == extreme)
+    label = next(iter(amount_labels), "금액")
+    month_text = ", ".join(f"{month}월" for month in months)
+    comparison_label = "가장 많은" if is_highest else "가장 적은"
+    extreme_label = "최댓값" if is_highest else "최솟값"
+    return "\n".join((
+        f"월별 {label} 합계가 {comparison_label} 때는 {month_text}입니다.",
+        "",
+        f"- {month_text}: {extreme:,.0f}원",
+        f"- 비교한 월: {', '.join(f'{month}월' for month in sorted(totals))}",
+        "",
+        "조회 근거:",
+        f"- 문서: {sources[0]}",
+        f"- 원본 행 수: {_source_row_count(dataframes):,}개",
+        f"- 계산 방식: 월별 {label} 합계를 계산한 뒤 {extreme_label} 선택",
+        f"- 대상 컬럼: {label}",
+        f"- 월별 합계: {_compact_breakdown(totals, '월')}",
+    )), sources, "pandas"
+
+
+def _answer_extreme_period_count(
+    question: str,
+    dataframes: dict[str, pd.DataFrame],
+) -> tuple[str, list[str], str] | None:
+    """Find the period with the greatest/smallest number of records."""
+
+    if not _EXTREME_PERIOD_COUNT.search(question):
+        return None
+    is_highest = bool(re.search(r"가장\s*(?:많|높)|제일\s*(?:많|높)|최고", question))
+    is_month = bool(re.search(r"월|달", question)) and not bool(re.search(r"(?:년도|연도|년)", question))
+    sources = list(dict.fromkeys(_df_sources.get(alias, alias) for alias in dataframes))
+    if len(sources) != 1:
+        return "기간별 횟수 비교는 한 번에 한 문서를 선택했을 때만 지원합니다. 비교할 문서를 하나 선택해 주세요.", sources, "pandas"
+    counts: dict[int, int] = {}
+    usable_frames = 0
+    payment_only = bool(re.search(r"납부|결제|낸", question))
+    for df in dataframes.values():
+        periods = _month_series(df) if is_month else _year_series(df)
+        if periods is None:
+            continue
+        mask = periods.notna()
+        if payment_only:
+            selection = resolve_amount_column(df, question)
+            if selection.selected is None:
+                if len(selection.candidates) > 1:
+                    return amount_column_clarification(selection.candidates), sources, "pandas"
+                continue
+            mask = mask & money_series(df, selection.selected).gt(0).fillna(False)
+        usable_frames += 1
+        for value, count in periods[mask].value_counts().items():
+            counts[int(value)] = counts.get(int(value), 0) + int(count)
+    if not usable_frames or not counts:
+        label = "월" if is_month else "연도"
+        return f"선택한 문서에서 {label} 또는 기록 컬럼을 찾지 못했습니다.", sources, "pandas"
+    extreme = max(counts.values()) if is_highest else min(counts.values())
+    values = sorted(value for value, count in counts.items() if count == extreme)
+    suffix = "월" if is_month else "년"
+    period_text = ", ".join(f"{value}{suffix}" for value in values)
+    comparison_label = "가장 많은" if is_highest else "가장 적은"
+    return "\n".join((
+        f"{comparison_label} 기록 횟수의 기간은 {period_text}입니다.",
+        "",
+        f"- {period_text}: {extreme:,}건",
+        f"- 비교한 기간: {', '.join(f'{value}{suffix}' for value in sorted(counts))}",
+        "",
+        "조회 근거:",
+        f"- 문서: {sources[0]}",
+        f"- 원본 행 수: {_source_row_count(dataframes):,}개",
+        f"- 계산 방식: {'월' if is_month else '연도'}별 기록 행 수를 집계한 뒤 {'최댓값' if is_highest else '최솟값'} 선택",
+        f"- 적용 조건: {'결제 금액이 0원 초과' if payment_only else '없음'}",
+        f"- 기간별 기록 수: {_compact_breakdown(counts, suffix)}",
+    )), sources, "pandas"
+
+
+def _answer_extreme_group_amount(
+    question: str,
+    dataframes: dict[str, pd.DataFrame],
+) -> tuple[str, list[str], str] | None:
+    """Rank a semantic group by summed amount without requiring the word '별'."""
+
+    group_terms = (("학과", "department"), ("기수", "cohort"), ("회비 구분", "fee_type"))
+    match = next(((label, qualifier) for label, qualifier in group_terms if label in question), None)
+    if match is None or not re.search(r"가장|제일|최고|최저", question):
+        return None
+    label, qualifier = match
+    is_highest = bool(re.search(r"가장\s*(?:많|크|높)|제일\s*(?:많|크|높)|최고", question))
+    sources = list(dict.fromkeys(_df_sources.get(alias, alias) for alias in dataframes))
+    if len(sources) != 1:
+        return f"{label}별 금액 비교는 한 번에 한 문서를 선택했을 때만 지원합니다. 비교할 문서를 하나 선택해 주세요.", sources, "pandas"
+    totals: dict[str, float] = {}
+    amount_labels: set[str] = set()
+    usable_frames = 0
+    for df in dataframes.values():
+        group_column = next((column for column in df.columns if infer_column_meaning(str(column), df[column]).qualifier == qualifier), None)
+        selection = resolve_amount_column(df, question)
+        if group_column is None or selection.selected is None:
+            if group_column is not None and len(selection.candidates) > 1:
+                return amount_column_clarification(selection.candidates), sources, "pandas"
+            continue
+        usable_frames += 1
+        amount_labels.add(selection.selected)
+        amounts = money_series(df, selection.selected)
+        for group, amount in amounts.groupby(df[group_column].astype("string").str.strip()).sum().items():
+            if pd.isna(group) or not str(group):
+                continue
+            totals[str(group)] = totals.get(str(group), 0.0) + float(amount)
+    if not usable_frames or not totals:
+        return f"선택한 문서에서 {label}와 금액 컬럼을 함께 찾지 못했습니다.", sources, "pandas"
+    extreme = max(totals.values()) if is_highest else min(totals.values())
+    groups = sorted(group for group, total in totals.items() if total == extreme)
+    group_text = ", ".join(groups)
+    comparison_label = "가장 많은" if is_highest else "가장 적은"
+    return "\n".join((
+        f"금액 합계가 {comparison_label} {label}는 {group_text}입니다.",
+        "",
+        f"- {group_text}: {extreme:,.0f}원",
+        "",
+        "조회 근거:",
+        f"- 문서: {sources[0]}",
+        f"- 원본 행 수: {_source_row_count(dataframes):,}개",
+        f"- 계산 방식: {label}별 금액 합계를 계산한 뒤 {'최댓값' if is_highest else '최솟값'} 선택",
+        f"- 대상 컬럼: {', '.join(sorted(amount_labels))}",
+        f"- 비교한 {label} 수: {len(totals):,}개",
+        f"- {label}별 합계: {', '.join(f'{group} {amount:,.0f}원' for group, amount in sorted(totals.items()))}",
+    )), sources, "pandas"
+
+
+def _answer_most_frequent_person(
+    question: str,
+    dataframes: dict[str, pd.DataFrame],
+) -> tuple[str, list[str], str] | None:
+    """Rank people by record count when the question explicitly asks frequency."""
+
+    if not _MOST_FREQUENT_PERSON.search(question):
+        return None
+    counts: dict[str, tuple[str, int]] = {}
+    sources = list(dict.fromkeys(_df_sources.get(alias, alias) for alias in dataframes))
+    usable_frames = 0
+    payment_only = bool(re.search(r"납부|결제|낸", question))
+    for df in dataframes.values():
+        person_column = _person_name_column(df)
+        if person_column is None:
+            continue
+        mask = df[person_column].notna()
+        if payment_only:
+            selection = resolve_amount_column(df, question)
+            if selection.selected is None:
+                if len(selection.candidates) > 1:
+                    return amount_column_clarification(selection.candidates), sources, "pandas"
+                continue
+            mask = mask & money_series(df, selection.selected).gt(0).fillna(False)
+        usable_frames += 1
+        for raw_name in df.loc[mask, person_column].astype(str):
+            display_name = raw_name.strip()
+            normalized_name = normalize_person_name(display_name)
+            if not normalized_name:
+                continue
+            previous = counts.get(normalized_name)
+            counts[normalized_name] = (
+                previous[0] if previous else display_name,
+                (previous[1] if previous else 0) + 1,
+            )
+    if not usable_frames or not counts:
+        return "선택한 문서에서 사람 이름 컬럼을 찾지 못했습니다.", sources, "pandas"
+    is_least = bool(re.search(r"가장\s*(?:적|작|낮)|제일\s*(?:적|작|낮)|최소", question))
+    frequency = (
+        min(count for _, count in counts.values())
+        if is_least else max(count for _, count in counts.values())
+    )
+    people = sorted(name for name, count in counts.values() if count == frequency)
+    label = "가장 적은" if is_least else "가장 많은"
+    lines = [f"기록 횟수가 {label} 사람은 {len(people):,}명입니다.", ""]
+    lines.extend(f"- {name}: {frequency:,}건" for name in people)
+    lines.extend((
+        "",
+        "조회 근거:",
+        f"- 문서: {', '.join(sources)}",
+        f"- 원본 행 수: {_source_row_count(dataframes):,}개",
+        f"- 계산 방식: 회원명별 기록 행 수를 집계한 뒤 {'최솟값' if is_least else '최댓값'} 선택",
+        f"- 적용 조건: {'결제 금액이 0원 초과' if payment_only else '없음'}",
+        f"- 비교한 고유 인원: {len(counts):,}명",
+    ))
+    return "\n".join(lines), sources, "pandas"
 
 
 def _answer_extreme_value_comparison(
@@ -761,10 +1075,28 @@ async def _answer_pandas(
 ) -> tuple[str, list[str], str]:
     clear_interactive_result()
     raise_if_cancelled()
+    if _AMBIGUOUS_SUMMARY_QUESTION.fullmatch(question):
+        return (
+            "무엇을 확인할지 알려주세요. 예: 총 인원, 총 기록 수, 총 금액",
+            [],
+            "pandas",
+        )
     scoped_dataframes = scoped_mapping(_df_namespace, _df_sources)
     if not scoped_dataframes:
         message = "선택한 문서에서 조회 가능한 표 데이터를 찾을 수 없습니다." if source_scope_active() else "현재 로드된 데이터프레임이 없습니다."
         return message, [], "pandas"
+
+    most_frequent_person = _answer_most_frequent_person(question, scoped_dataframes)
+    if most_frequent_person is not None:
+        return most_frequent_person
+
+    extreme_period_count = _answer_extreme_period_count(question, scoped_dataframes)
+    if extreme_period_count is not None:
+        return extreme_period_count
+
+    extreme_group_amount = _answer_extreme_group_amount(question, scoped_dataframes)
+    if extreme_group_amount is not None:
+        return extreme_group_amount
 
     year_nonpayer_comparison = _answer_year_nonpayer_comparison(question, scoped_dataframes)
     if year_nonpayer_comparison is not None:
@@ -781,6 +1113,14 @@ async def _answer_pandas(
     group_comparison = _answer_group_payment_comparison(question, scoped_dataframes)
     if group_comparison is not None:
         return group_comparison
+
+    lowest_year_amount = _answer_lowest_year_amount(question, scoped_dataframes)
+    if lowest_year_amount is not None:
+        return lowest_year_amount
+
+    extreme_month_amount = _answer_extreme_month_amount(question, scoped_dataframes)
+    if extreme_month_amount is not None:
+        return extreme_month_amount
 
     year_comparison = _answer_year_amount_comparison(question, scoped_dataframes)
     if year_comparison is not None:

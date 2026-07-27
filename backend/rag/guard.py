@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Literal
 
 from rag.question_analyzer import QuestionAnalysis, analyze_question
@@ -9,6 +10,9 @@ from rag.router import engines_for_operations
 
 
 GuardStatus = Literal["PASS", "GUIDE"]
+_AMBIGUOUS_SUMMARY_QUESTION = re.compile(
+    r"^\s*(?:총|전체|합계|총합|얼마)\s*[?!。.]*\s*$"
+)
 
 
 @dataclass
@@ -22,6 +26,10 @@ class GuardResult:
     analysis: QuestionAnalysis | None = field(default=None, repr=False)
 
 
+def is_ambiguous_summary_question(question: str) -> bool:
+    return bool(_AMBIGUOUS_SUMMARY_QUESTION.fullmatch(str(question or "")))
+
+
 def check_question(question: str) -> GuardResult:
     analysis = analyze_question(question)
     if analysis.is_empty:
@@ -29,7 +37,16 @@ def check_question(question: str) -> GuardResult:
             status="GUIDE",
             reason_code="EMPTY_QUESTION",
             reason="질문 내용이 비어 있습니다.",
-            suggestions=["조회할 이름, 기수, 발행번호 또는 문서 내용을 입력해 주세요."],
+            suggestions=["조회할 문서, 기간, 항목 또는 이름을 입력해 주세요."],
+            analysis=analysis,
+        )
+
+    if is_ambiguous_summary_question(question):
+        return GuardResult(
+            status="GUIDE",
+            reason_code="AMBIGUOUS_SUMMARY",
+            reason="인원·기록 수·금액 중 어떤 합계를 확인할지 알 수 없습니다.",
+            suggestions=["총 인원 알려줘", "총 기록 수 알려줘", "총 금액 알려줘"],
             analysis=analysis,
         )
 
@@ -38,7 +55,7 @@ def check_question(question: str) -> GuardResult:
             status="GUIDE",
             reason_code="MEANINGLESS_INPUT",
             reason="문서 조회 의도를 확인하기 어렵습니다.",
-            suggestions=["예: 2025-008 출연금액 알려줘", "예: 이 문서의 지급 기준을 설명해줘"],
+            suggestions=["예: 2025년 결제 금액 합계 알려줘", "예: 이 문서의 지급 기준을 설명해줘"],
             analysis=analysis,
         )
 
@@ -47,7 +64,7 @@ def check_question(question: str) -> GuardResult:
             status="GUIDE",
             reason_code="VAGUE_REFERENCE",
             reason="문맥이 필요한 표현이 포함되어 있습니다.",
-            suggestions=["이름, 기수, 발행번호, 연도 또는 문서명을 포함해 주세요."],
+            suggestions=["문서명, 기간, 항목, 이름 또는 부서를 포함해 주세요."],
             analysis=analysis,
         )
 
@@ -56,7 +73,7 @@ def check_question(question: str) -> GuardResult:
             status="GUIDE",
             reason_code="AMBIGUOUS_SCOPE",
             reason="조회할 대상이나 범위가 부족합니다.",
-            suggestions=["예: 58기 출연자 명단 알려줘", "예: 2025-008 출연금액 알려줘"],
+            suggestions=["예: 2025년 결제 내역 보여줘", "예: 회비.xlsx의 총 금액 알려줘"],
             analysis=analysis,
         )
 
