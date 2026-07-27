@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from core.llm import get_llm_code
 from core.privacy import question_log_metadata
+from rag.cancellation import await_cancellable
 from rag.prompts import (
     _QUESTION_ENGINE_REPAIR_TEMPLATE,
     _QUESTION_ENGINE_TEMPLATE,
@@ -265,7 +266,7 @@ async def decide_question(
     )
     responses: list[str] = []
 
-    raw = await model.ainvoke(prompt)
+    raw = await await_cancellable(model.ainvoke(prompt))
     responses.append(_response_text(raw))
     try:
         return _align_broad_field_projection_operation(
@@ -293,7 +294,7 @@ async def decide_question(
         error=error_message,
         response=responses[0][:2500],
     )
-    repaired = await model.ainvoke(repair_prompt)
+    repaired = await await_cancellable(model.ainvoke(repair_prompt))
     responses.append(_response_text(repaired))
     try:
         return _align_broad_field_projection_operation(

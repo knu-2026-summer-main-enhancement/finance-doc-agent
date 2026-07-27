@@ -36,7 +36,7 @@ from rag.query_planner import (
 )
 from rag.question_analyzer import QuestionAnalysis, analyze_question
 from rag.deterministic_query_plan import build_schema_grounded_plan
-from rag.cancellation import raise_if_cancelled
+from rag.cancellation import await_cancellable, raise_if_cancelled
 from utils.semantic_schema import infer_column_meaning
 from pandas_engine.interactive import build_interactive_result, build_interactive_dataframe
 from pandas_engine.query_plan import QueryPlan
@@ -939,7 +939,9 @@ async def _answer_query_plan(
             operation_hint=operation_hint,
         )
         if early_validation.is_executable:
-            execution = await asyncio.to_thread(execute_query_plan, early_validation)
+            execution = await await_cancellable(
+                asyncio.to_thread(execute_query_plan, early_validation)
+            )
             raise_if_cancelled()
             answer = _format_query_execution_result(execution, question)
             _interactive_result.set(build_interactive_result(execution, answer=answer))
@@ -967,7 +969,9 @@ async def _answer_query_plan(
                 operation_hint=operation_hint,
             )
             if fallback_validation.is_executable:
-                execution = await asyncio.to_thread(execute_query_plan, fallback_validation)
+                execution = await await_cancellable(
+                    asyncio.to_thread(execute_query_plan, fallback_validation)
+                )
                 raise_if_cancelled()
                 answer = _format_query_execution_result(execution, question)
                 _interactive_result.set(build_interactive_result(execution, answer=answer))
@@ -1024,7 +1028,9 @@ async def _answer_query_plan(
                 operation_hint=operation_hint,
             )
             if fallback_validation.is_executable:
-                execution = await asyncio.to_thread(execute_query_plan, fallback_validation)
+                execution = await await_cancellable(
+                    asyncio.to_thread(execute_query_plan, fallback_validation)
+                )
                 raise_if_cancelled()
                 answer = _format_query_execution_result(execution, question)
                 _interactive_result.set(build_interactive_result(execution, answer=answer))
@@ -1048,7 +1054,9 @@ async def _answer_query_plan(
         )
 
     try:
-        execution = await asyncio.to_thread(execute_query_plan, validation)
+        execution = await await_cancellable(
+            asyncio.to_thread(execute_query_plan, validation)
+        )
         raise_if_cancelled()
     except QueryPlanExecutionError as exc:
         logger.error("[PANDAS] QueryPlan 실행 차단 | err=%s", exc)
@@ -1201,11 +1209,13 @@ async def _answer_pandas(
 
     # 기본 통계는 LLM 코드 생성이나 VECTOR 검색으로 넘기지 않고 검증된 함수로 계산한다.
     if analysis.aggregation_intents:
-        direct_result, direct_sources = await asyncio.to_thread(
-            _query_pandas_direct,
-            question,
-            aggregation_intents=analysis.aggregation_intents,
-            date_filter=analysis.date_filter,
+        direct_result, direct_sources = await await_cancellable(
+            asyncio.to_thread(
+                _query_pandas_direct,
+                question,
+                aggregation_intents=analysis.aggregation_intents,
+                date_filter=analysis.date_filter,
+            )
         )
         raise_if_cancelled()
         if direct_result is None:
@@ -1262,11 +1272,13 @@ async def _answer_pandas(
         return "조회된 데이터가 없습니다.", [], "pandas"
 
     # 2단계: 키워드 직접 조회 (LLM 코드 생성 없음)
-    direct_result, direct_sources = await asyncio.to_thread(
-        _query_pandas_direct,
-        question,
-        aggregation_intents=analysis.aggregation_intents,
-        date_filter=analysis.date_filter,
+    direct_result, direct_sources = await await_cancellable(
+        asyncio.to_thread(
+            _query_pandas_direct,
+            question,
+            aggregation_intents=analysis.aggregation_intents,
+            date_filter=analysis.date_filter,
+        )
     )
     raise_if_cancelled()
     if direct_result is not None:

@@ -15,6 +15,7 @@ from core.privacy import question_log_metadata
 from rag.prompts import RAG_PROMPT, DOC_EXPLAIN_RAG_PROMPT, MULTI_QUERY_PROMPT
 from rag.question_analyzer import QuestionAnalysis
 from rag.question_detectors import is_vector_override_question
+from rag.cancellation import await_cancellable, next_cancellable, raise_if_cancelled
 from datastore.scope import selected_sources
 
 logger = logging.getLogger("uvicorn.error")
@@ -88,7 +89,9 @@ async def _expanded_queries(question: str, is_doc_explain: bool) -> list[str]:
         return queries
 
     try:
-        raw_variants = await get_llm_code().ainvoke(MULTI_QUERY_PROMPT.format(question=question))
+        raw_variants = await await_cancellable(
+            get_llm_code().ainvoke(MULTI_QUERY_PROMPT.format(question=question))
+        )
         variants = [line.strip() for line in raw_variants.strip().split("\n") if line.strip()]
         for variant in variants[:2]:
             if variant not in queries:
@@ -207,8 +210,10 @@ async def _answer_vector(
     if prepared.immediate_answer:
         return prepared.immediate_answer, prepared.source_files or [], "vector"
 
-    answer = await (prepared.prompt | get_llm_rag() | StrOutputParser()).ainvoke(
-        {"context": prepared.context, "question": question}
+    answer = await await_cancellable(
+        (prepared.prompt | get_llm_rag() | StrOutputParser()).ainvoke(
+            {"context": prepared.context, "question": question}
+        )
     )
     raise_if_cancelled()
     has_vector_override = (
@@ -238,5 +243,9 @@ async def _stream_vector(question: str) -> AsyncIterator[str]:
         return
 
     chain = prepared.prompt | get_llm_rag() | StrOutputParser()
-    async for chunk in chain.astream({"context": prepared.context, "question": question}):
-        yield chunk
+    iterator = chain.astream({"context": prepared.context, "question": question})
+    while True:
+        try:
+            yield await next_cancellable(iterator)
+        except StopAsyncIteration:
+            return

@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from core.llm import get_llm_code
 from datastore.schema import _get_df_schema_filtered
+from rag.cancellation import await_cancellable
 from pandas_engine.plan_validator import (
     PlanValidationResult,
     validate_query_plan,
@@ -310,7 +311,7 @@ async def generate_query_plan(
     responses: list[str] = []
     first_error_message = ""
 
-    raw = await model.ainvoke(original_prompt)
+    raw = await await_cancellable(model.ainvoke(original_prompt))
     responses.append(_response_text(raw))
     try:
         plan = _align_plan_with_operation_hint(
@@ -346,7 +347,7 @@ async def generate_query_plan(
             schema=resolved_schema,
         ),
     )
-    repaired = await model.ainvoke(repair_prompt)
+    repaired = await await_cancellable(model.ainvoke(repair_prompt))
     responses.append(_response_text(repaired))
     try:
         plan = _align_plan_with_operation_hint(
