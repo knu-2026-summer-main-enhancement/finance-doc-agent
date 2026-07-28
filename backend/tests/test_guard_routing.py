@@ -11,6 +11,7 @@ from main import (
     ChatResponse,
     _route_with_guard,
     _schedule_shadow_question_engine,
+    _should_return_guide,
 )
 from rag.guard import check_question, check_question_decision
 from rag.question_analyzer import analyze_question
@@ -210,6 +211,16 @@ class GuardRoutingTest(unittest.TestCase):
 
         self.assertEqual(ChatRequest(question=question).mode, "auto")
         self.assertEqual(ChatRequest(question=question, mode="natural").mode, "natural")
+
+    def test_natural_mode_bypasses_only_semantic_guide_reasons(self):
+        semantic_result = check_question("출연금액 합계 평균 알려줘")
+        invalid_result = check_question("")
+
+        self.assertEqual(semantic_result.reason_code, "MULTIPLE_AGGREGATIONS")
+        self.assertFalse(_should_return_guide(semantic_result, "natural"))
+        self.assertTrue(_should_return_guide(semantic_result, "auto"))
+        self.assertEqual(invalid_result.reason_code, "EMPTY_QUESTION")
+        self.assertTrue(_should_return_guide(invalid_result, "natural"))
 
     def test_result_how_and_procedure_how_are_distinguished(self):
         for question, operation in (

@@ -124,6 +124,36 @@ def _route_with_guard(
     return _route(question, analysis=guard_result.analysis)
 
 
+_NATURAL_MODE_BYPASS_GUARD_REASONS = frozenset(
+    {
+        "AMBIGUOUS_SUMMARY",
+        "VAGUE_REFERENCE",
+        "AMBIGUOUS_SCOPE",
+        "CROSS_ENGINE_QUERY",
+        "COMPARISON_NOT_SUPPORTED",
+        "MULTIPLE_AGGREGATIONS",
+        "MULTI_OPERATION",
+        "MULTI_REQUEST",
+    }
+)
+
+
+def _should_return_guide(
+    guard_result,
+    mode: Literal["auto", "natural"] = "auto",
+) -> bool:
+    """Keep input validation while natural document Q&A handles semantics."""
+
+    if guard_result.status != "GUIDE":
+        return False
+    if (
+        mode == "natural"
+        and guard_result.reason_code in _NATURAL_MODE_BYPASS_GUARD_REASONS
+    ):
+        return False
+    return True
+
+
 def _schedule_shadow_question_engine(
     background_tasks: BackgroundTasks,
     question: str,
@@ -645,7 +675,7 @@ async def chat(
                 pandas_strategy = None
                 prepared_plan = None
 
-            if guard_result.status == "GUIDE":
+            if _should_return_guide(guard_result, req.mode):
                 _schedule_shadow_question_engine(
                     background_tasks,
                     req.question,
@@ -779,7 +809,7 @@ async def chat_stream(req: ChatRequest, _: None = Depends(_verify_api_key)):
                     pandas_strategy = None
                     prepared_plan = None
 
-                if guard_result.status == "GUIDE":
+                if _should_return_guide(guard_result, req.mode):
                     logger.info("[GUARD] GUIDE(stream) | reason=%s", guard_result.reason_code)
                     yield build_guide_response(guard_result)
                     return
