@@ -51,6 +51,14 @@ class InteractiveResultTest(unittest.TestCase):
         self.assertEqual(len(detail["contributors"]), 1)
         self.assertFalse({"source", "표시명", "엔티티 타입", "person_candidate_key", "전화번호"} & set(detail["contributors"][0]))
 
+    def test_scalar_count_never_exposes_a_record_page(self):
+        result = build_interactive_result(self._execute("count"))
+
+        self.assertEqual(result["kind"], "scalar")
+        self.assertEqual(result["records"], [])
+        self.assertIsNone(result["records_detail_ref"])
+        self.assertIsNone(result["page"])
+
     def test_calculation_detail_serializes_only_requested_contributor_page(self):
         result = build_interactive_result(self._execute("sum", "결제 금액"), page_size=1)
         reference = result["calculation"]["detail_ref"]

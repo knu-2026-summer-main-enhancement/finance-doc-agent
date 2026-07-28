@@ -331,9 +331,10 @@ def _inline_segments(answer: str, entities: list[dict[str, Any]], calculation: d
 def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 50, answer: str | None = None) -> dict[str, Any]:
     """Return a bounded JSON-safe result contract for the current execution."""
     frame = result.value if isinstance(result.value, pd.DataFrame) else result.matched_frame
+    is_record_result = isinstance(result.value, pd.DataFrame)
     records: list[dict[str, Any]] = []
     entities: list[dict[str, Any]] = []
-    if isinstance(frame, pd.DataFrame):
+    if is_record_result and isinstance(frame, pd.DataFrame):
         if result.operation == "person_totals":
             for _, row in frame.head(page_size).iterrows():
                 # Executor-created summaries contain only display label, amount
@@ -373,7 +374,7 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 5
         ]
     total = int(len(frame)) if isinstance(frame, pd.DataFrame) else 0
     records_detail_ref = None
-    if isinstance(frame, pd.DataFrame) and total > page_size:
+    if is_record_result and isinstance(frame, pd.DataFrame) and total > page_size:
         records_detail_ref = "records_" + uuid4().hex
         _store_detail(records_detail_ref, {
             "version": "1",
@@ -405,14 +406,14 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 5
             calculation["formula"] = {"numerator": _json_value(result.value * result.valid_rows), "denominator": result.valid_rows}
     payload = {
         "version": "1",
-        "kind": "records" if isinstance(result.value, pd.DataFrame) else "scalar",
+        "kind": "records" if is_record_result else "scalar",
         "operation": result.operation,
         "records": records,
         "entities": entities,
         "name_list": name_list,
         "calculation": calculation,
         "records_detail_ref": records_detail_ref,
-        "page": {"offset": 0, "limit": page_size, "total": total, "has_more": total > page_size} if isinstance(frame, pd.DataFrame) else None,
+        "page": {"offset": 0, "limit": page_size, "total": total, "has_more": total > page_size} if is_record_result else None,
     }
     if answer is not None:
         payload["inline_segments"] = (
