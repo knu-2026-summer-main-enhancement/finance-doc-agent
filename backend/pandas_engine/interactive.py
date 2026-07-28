@@ -10,6 +10,7 @@ from hashlib import sha256
 import re
 from time import monotonic
 from typing import Any
+from uuid import uuid4
 
 import pandas as pd
 
@@ -58,6 +59,31 @@ def get_interactive_detail(reference: str, *, offset: int = 0, limit: int = 50) 
     if detail is None:
         return None
     _DETAILS.move_to_end(reference)
+    if detail.get("kind") == "records_detail":
+        record_frame = detail.get("_record_frame")
+        if not isinstance(record_frame, pd.DataFrame):
+            record_frame = pd.DataFrame()
+        page_frame = record_frame.iloc[offset:offset + limit]
+        page_items = _visible_records(page_frame)
+        record_entities = []
+        for _, row in page_frame.iterrows():
+            entity = _entity_for_row(row)
+            record_entities.append(
+                {
+                    "display_name": entity["display_name"],
+                    "detail_ref": entity["detail_ref"],
+                }
+                if entity else None
+            )
+        return {
+            **{key: value for key, value in detail.items() if not key.startswith("_")},
+            "records": page_items,
+            "record_entities": record_entities,
+            "page": {
+                "offset": offset, "limit": limit, "total": len(record_frame),
+                "has_more": offset + len(page_items) < len(record_frame),
+            },
+        }
     if detail.get("kind") != "calculation_detail":
         return {key: value for key, value in detail.items() if not key.startswith("_")}
     contributor_frame = detail.get("_contributor_frame")
@@ -339,7 +365,22 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 5
                 if answer is None and len(inline_entities) >= page_size:
                     break
         entities = inline_entities[:page_size]
+    name_list = None
+    if result.operation == "list" and answer and "\n- " in answer:
+        name_list = [
+            {"display_name": entity["display_name"], "detail_ref": entity["detail_ref"]}
+            for entity in inline_entities
+        ]
     total = int(len(frame)) if isinstance(frame, pd.DataFrame) else 0
+    records_detail_ref = None
+    if isinstance(frame, pd.DataFrame) and total > page_size:
+        records_detail_ref = "records_" + uuid4().hex
+        _store_detail(records_detail_ref, {
+            "version": "1",
+            "kind": "records_detail",
+            "title": "조회 결과 전체 목록",
+            "_record_frame": frame,
+        })
     calculation = None
     if result.operation in {"sum", "mean", "median", "mode", "min", "max", "count", "group_sum", "person_totals"}:
         calculation_id = "calc_" + sha256((result.source_file + result.operation + str(result.target)).encode()).hexdigest()[:20]
@@ -368,11 +409,15 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 5
         "operation": result.operation,
         "records": records,
         "entities": entities,
+        "name_list": name_list,
         "calculation": calculation,
+        "records_detail_ref": records_detail_ref,
         "page": {"offset": 0, "limit": page_size, "total": total, "has_more": total > page_size} if isinstance(frame, pd.DataFrame) else None,
     }
     if answer is not None:
-        payload["inline_segments"] = _inline_segments(answer, inline_entities, calculation)
+        payload["inline_segments"] = (
+            [] if name_list is not None else _inline_segments(answer, inline_entities, calculation)
+        )
     return payload
 
 
@@ -396,9 +441,19 @@ def build_interactive_dataframe(frame: pd.DataFrame, *, page_size: int = 50, ans
             if answer is None and len(inline_entities) >= page_size:
                 break
     entities = inline_entities[:page_size]
+    records_detail_ref = None
+    if len(frame) > page_size:
+        records_detail_ref = "records_" + uuid4().hex
+        _store_detail(records_detail_ref, {
+            "version": "1",
+            "kind": "records_detail",
+            "title": "조회 결과 전체 목록",
+            "_record_frame": frame,
+        })
     payload = {
         "version": "1", "kind": "records", "operation": "list",
         "records": records, "entities": entities, "calculation": None,
+        "records_detail_ref": records_detail_ref,
         "page": {"offset": 0, "limit": page_size, "total": int(len(frame)), "has_more": len(frame) > page_size},
     }
     if answer is not None:

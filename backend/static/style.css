@@ -194,6 +194,14 @@ button { color: inherit; }
 .document-evidence-item { overflow-wrap: anywhere; line-height: 1.5; }
 .message-actions { display: flex; gap: 6px; margin-top: 12px; }
 .message-actions[hidden] { display: none; }
+.records-more-button { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--accent-dark); background: #fff; font-size: 12px; font-weight: 800; cursor: pointer; transition: .15s ease; }
+.records-more-button:hover { border-color: var(--accent); background: var(--accent-soft); transform: translateY(-1px); }
+.record-continuation { white-space: pre-wrap; }
+.expandable-name-list { margin-top: 8px; }
+.expandable-name-extra { overflow: hidden; }
+.expandable-name-extra[hidden] { display: none; }
+.expandable-name-row { min-height: 1.72em; }
+.expandable-name-row[hidden] { display: none; }
 .message-action { display: grid; place-items: center; width: 29px; height: 29px; padding: 0; border: 1px solid #dddaf2; border-radius: 8px; color: #6255b8; background: #faf9ff; font-size: 16px; line-height: 1; cursor: pointer; }
 .message-action:hover { border-color: #b9b1f4; background: var(--accent-soft); }
 .message-action:focus-visible { outline: 3px solid rgba(118,103,232,.2); outline-offset: 2px; }
@@ -383,6 +391,8 @@ html.ui-v3 .top-actions { margin-left: auto; }
 html.ui-v3 .secondary-button { display: grid; place-items: center; width: 40px; min-width: 40px; height: 40px; padding: 0; border-radius: 50%; }
 html.ui-v3 .secondary-button { border-color: #2163ad; background: #2163ad; box-shadow: none; }
 html.ui-v3 .secondary-button:hover { border-color: #184b86; background: #184b86; box-shadow: none; }
+html.ui-v3 .records-more-button { border-color: #b9d5dc; border-radius: 999px; color: #21647a; background: #f7fbfc; }
+html.ui-v3 .records-more-button:hover { border-color: #77aebb; background: #e8f5f8; }
 html.ui-v3 .clear-chat-label { display: none; }
 html.ui-v3 .scope-summary { position: fixed; top: 72px; left: 16px; z-index: 17; display: block; max-width: calc(100vw - 32px); padding: 6px 9px; border-color: #cbdcf2; border-radius: 7px; color: #245d9d; background: #edf4fd; box-shadow: 0 3px 9px rgba(27,55,65,.08); font-size: 10px; }
 html.ui-v3 .chat-area { padding: 60px 16px 112px; }

@@ -65,6 +65,22 @@ class InteractiveResultTest(unittest.TestCase):
         self.assertEqual(len(second["contributors"]), 1)
         self.assertFalse(second["page"]["has_more"])
 
+    def test_record_list_detail_pages_remaining_rows(self):
+        result = build_interactive_result(self._execute("list"), page_size=1)
+
+        reference = result["records_detail_ref"]
+        self.assertIsNotNone(reference)
+        first = get_interactive_detail(reference, offset=0, limit=1)
+        second = get_interactive_detail(reference, offset=1, limit=1)
+
+        self.assertEqual(first["kind"], "records_detail")
+        self.assertEqual(len(first["records"]), 1)
+        self.assertEqual(first["record_entities"][0]["display_name"], "홍길동")
+        self.assertTrue(first["record_entities"][0]["detail_ref"].startswith("ent_"))
+        self.assertTrue(first["page"]["has_more"])
+        self.assertEqual(len(second["records"]), 1)
+        self.assertFalse(second["page"]["has_more"])
+
     def test_expired_detail_is_removed(self):
         with patch("pandas_engine.interactive.monotonic", return_value=100.0):
             result = build_interactive_result(self._execute("sum", "결제 금액"))

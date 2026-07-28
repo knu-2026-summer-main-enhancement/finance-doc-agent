@@ -267,7 +267,7 @@ def _format_list_result(df: pd.DataFrame, question: str = "") -> str:
                 key=lambda column: int(df[column].dropna().nunique()),
             )
             names = display[person_column].astype(str).tolist()
-            name_preview_limit = 200
+            name_preview_limit = 1000000
             if len(names) > name_preview_limit:
                 header += (
                     f"(전체 {len(names)}명 중 처음 "

@@ -422,13 +422,11 @@ def _result_1_contact_records() -> dict[str, dict[str, object]]:
     return records
 
 
-@app.get("/contacts/names")
 def result_1_contact_names(_: None = Depends(_verify_api_key)):
     """Names from member tables that can reveal a contact card when clicked in the UI."""
     return {"names": [record["name"] for record in _result_1_contact_records().values()]}
 
 
-@app.get("/contacts/{name}")
 def result_1_contact(name: str, _: None = Depends(_verify_api_key)):
     record = _result_1_contact_records().get(normalize_person_name(name))
     if record is None:
