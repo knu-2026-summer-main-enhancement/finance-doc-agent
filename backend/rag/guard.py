@@ -37,6 +37,10 @@ def is_ambiguous_ranking_question(question: str) -> bool:
     return bool(_AMBIGUOUS_RANKING_QUESTION.fullmatch(str(question or "")))
 
 
+def is_incomplete_question(question: str) -> bool:
+    return len(re.sub(r"[\s?!。.]+", "", str(question or ""))) < 2
+
+
 def check_question(question: str) -> GuardResult:
     analysis = analyze_question(question)
     if analysis.is_empty:
@@ -54,6 +58,15 @@ def check_question(question: str) -> GuardResult:
             reason_code="AMBIGUOUS_SUMMARY",
             reason="인원·기록 수·금액 중 어떤 합계를 확인할지 알 수 없습니다.",
             suggestions=["총 인원 알려줘", "총 기록 수 알려줘", "총 금액 알려줘"],
+            analysis=analysis,
+        )
+
+    if is_incomplete_question(question):
+        return GuardResult(
+            status="GUIDE",
+            reason_code="INCOMPLETE_QUESTION",
+            reason="질문이 너무 짧아 조회 대상을 알 수 없습니다.",
+            suggestions=["예: 2025년 납부 내역 보여줘", "예: 총 금액 알려줘"],
             analysis=analysis,
         )
 

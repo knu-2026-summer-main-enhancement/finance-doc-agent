@@ -34,6 +34,12 @@ class GuardRoutingTest(unittest.TestCase):
         self.assertEqual(result.reason_code, "AMBIGUOUS_SUMMARY")
         self.assertIn("총 인원 알려줘", result.suggestions)
 
+    def test_one_character_fragment_is_not_queried_as_a_list(self):
+        result = check_question("중")
+
+        self.assertEqual(result.status, "GUIDE")
+        self.assertEqual(result.reason_code, "INCOMPLETE_QUESTION")
+
     def test_ambiguous_ranking_uses_guide_response(self):
         result = check_question("가장 많은")
 

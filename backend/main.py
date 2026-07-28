@@ -65,6 +65,7 @@ from rag.router import (
 from rag.guard import (
     check_question,
     check_question_decision,
+    is_incomplete_question,
     is_ambiguous_ranking_question,
     is_ambiguous_summary_question,
 )
@@ -585,6 +586,13 @@ async def chat(
         with document_scope(req.sources) as selected:
             if selected:
                 logger.info("[SCOPE] 선택 문서 | sources=%s", list(selected))
+            if is_incomplete_question(req.question):
+                guard_result = check_question(req.question)
+                return ChatResponse(
+                    answer=build_guide_response(guard_result),
+                    source="guide",
+                    sources=[],
+                )
             use_llm_engine = (
                 QUESTION_ENGINE_MODE == "llm"
                 and req.mode == "auto"
@@ -738,6 +746,9 @@ async def chat_stream(req: ChatRequest, _: None = Depends(_verify_api_key)):
     async def generate() -> AsyncIterator[str]:
         try:
             with document_scope(req.sources):
+                if is_incomplete_question(req.question):
+                    yield build_guide_response(check_question(req.question))
+                    return
                 use_llm_engine = (
                     QUESTION_ENGINE_MODE == "llm"
                     and req.mode == "auto"
