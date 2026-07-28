@@ -63,9 +63,11 @@ from utils.parquet_store import DATAFRAME_DIR  # noqa: E402
 
 from utils.manifest import (  # noqa: E402
     ensure_manifest_table,
+    get_manifest_status,
     is_current_successful_ingestion,
     upsert_manifest,
 )
+from utils.chroma_store import count_chroma_documents  # noqa: E402
 from utils.semantic_schema import SCHEMA_VERSION  # noqa: E402
 from utils.parsers.xlsx_parser import ingest_xlsx  # noqa: E402
 from utils.parsers.pdf_parser import ingest_pdf_hybrid  # noqa: E402
@@ -97,8 +99,18 @@ def process_file(file_path: str):
     file_hash   = compute_file_md5(file_path)
 
     if is_current_successful_ingestion(source, file_hash, SCHEMA_VERSION):
-        logger.info("생략(변경 없음) | file=%s", file_path)
-        return
+        manifest = get_manifest_status(source) or {}
+        expected_chunks = int(manifest.get("chroma_doc_count") or 0)
+        actual_chunks = count_chroma_documents(source)
+        if expected_chunks == 0 or actual_chunks >= expected_chunks:
+            logger.info("생략(변경 없음) | file=%s", file_path)
+            return
+        logger.warning(
+            "Chroma 복구 적재 | file=%s manifest_chunks=%d actual_chunks=%d",
+            file_path,
+            expected_chunks,
+            actual_chunks,
+        )
 
     logger.info("시작 | file=%s type=%s category=%s", file_path, ext, category)
     upsert_manifest(source, source_path, file_hash, ext, category, "IN_PROGRESS")

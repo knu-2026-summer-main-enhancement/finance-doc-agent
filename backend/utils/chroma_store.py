@@ -54,6 +54,17 @@ def delete_from_chroma(source: str) -> int:
         return 0
 
 
+def count_chroma_documents(source: str) -> int:
+    """Return the currently stored Chroma chunk count for one source file."""
+    collection = _get_collection()
+    try:
+        existing = collection.get(where={"source": source}, include=[])
+        return len(existing.get("ids") or [])
+    except Exception:
+        logger.warning("Chroma 청크 수 확인 실패 | source=%s", source)
+        return 0
+
+
 def save_to_chroma(
     file_path: str,
     chunk_records: list[dict],
@@ -100,7 +111,21 @@ def save_to_chroma(
         if item.get("page") is not None:
             meta["page"] = item["page"]
         extra_metadata = item.get("metadata") or {}
-        for key in ("document_id", "table_id", "row_id", "schema_version", "mapping_fingerprint"):
+        for key in (
+            "document_id",
+            "table_id",
+            "row_id",
+            "schema_version",
+            "mapping_fingerprint",
+            "content_type",
+            "section_schema_version",
+            "section_id",
+            "parent_id",
+            "section_title",
+            "section_index",
+            "child_index",
+            "child_count",
+        ):
             value = extra_metadata.get(key)
             if value not in (None, ""):
                 meta[key] = value

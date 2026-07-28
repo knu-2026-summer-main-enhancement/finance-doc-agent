@@ -476,6 +476,7 @@ function appendMessage(
   sources = [],
   retryRequest = null,
   actionsHidden = false,
+  evidence = [],
 ) {
   const message = document.createElement("article");
   message.className = `message ${role}`;
@@ -508,6 +509,27 @@ function appendMessage(
       sourceRow.append(chip);
     });
     message.append(sourceRow);
+  }
+  if (role === "assistant" && evidence.length) {
+    const details = document.createElement("details");
+    details.className = "document-evidence";
+    const summary = document.createElement("summary");
+    summary.textContent = `근거 ${evidence.length}개`;
+    const list = document.createElement("div");
+    list.className = "document-evidence-list";
+    evidence.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "document-evidence-item";
+      const location = [
+        item.source,
+        item.page ? `p.${item.page}` : "",
+      ].filter(Boolean).join(" · ");
+      const title = item.section_title ? ` — ${item.section_title}` : "";
+      row.textContent = `${location}${title}`;
+      list.append(row);
+    });
+    details.append(summary, list);
+    message.append(details);
   }
   if (role === "assistant" && retryRequest) {
     const actions = document.createElement("div");
@@ -745,6 +767,8 @@ async function sendQuestion(question, options = {}) {
       data.source || "",
       data.sources || [],
       request,
+      false,
+      data.evidence || [],
     );
     renderInlineSegments(message.querySelector(".message-body"), data.result?.inline_segments, data.answer || "");
   } catch (error) {

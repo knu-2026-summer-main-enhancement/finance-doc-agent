@@ -63,7 +63,12 @@ from rag.router import (
 )
 from rag.guard import check_question, check_question_decision, is_ambiguous_summary_question
 from rag.guide import build_guide_response
-from rag.vector import _answer_vector, _stream_vector
+from rag.vector import (
+    _answer_vector,
+    _is_numeric_eligibility_question,
+    _stream_vector,
+    current_vector_evidence,
+)
 from rag.pandas_rag import _answer_pandas, current_interactive_result
 from pandas_engine.interactive import get_interactive_detail
 from rag.question_engine import (
@@ -289,6 +294,7 @@ class ChatResponse(BaseModel):
     source: str  #소스,
     sources: list[str] = Field(default_factory=list) #출처
     result: dict | None = None
+    evidence: list[dict] = Field(default_factory=list)
 
 class ChatSuggestionRequest(BaseModel):
     query: str = ""
@@ -571,7 +577,18 @@ async def chat(
                 QUESTION_ENGINE_MODE == "llm"
                 and req.mode == "auto"
             )
-            if use_llm_engine:
+            force_numeric_vector = _is_numeric_eligibility_question(
+                req.question
+            )
+            if use_llm_engine and force_numeric_vector:
+                # Numeric eligibility still uses the LLM for the judgment.
+                # This bypasses only the upper classification LLM, which can
+                # reject colloquial criterion questions before Vector retrieval.
+                guard_result = check_question(req.question)
+                route = "VECTOR"
+                pandas_strategy = None
+                prepared_plan = None
+            elif use_llm_engine:
                 try:
                     resolution = await _resolve_llm_question(req.question)
                     guard_result = resolution.guard_result
@@ -660,7 +677,17 @@ async def chat(
                     analysis=guard_result.analysis,
                 )
                 interactive_result = None
-            return ChatResponse(answer=answer, source=actual_route, sources=sources, result=interactive_result if route == "PANDAS" else None)
+            return ChatResponse(
+                answer=answer,
+                source=actual_route,
+                sources=sources,
+                result=interactive_result if route == "PANDAS" else None,
+                evidence=(
+                    current_vector_evidence()
+                    if actual_route == "vector"
+                    else []
+                ),
+            )
     except RequestCancelled:
         logger.info("[CHAT] cancelled | request_id=%s", request_id or "unknown")
         raise HTTPException(status_code=499, detail="답변 생성을 중단했습니다.")

@@ -11,9 +11,16 @@ EMBED_MODEL         = os.getenv("EMBED_MODEL", "bge-m3")
 CHROMA_HOST         = os.getenv("CHROMA_HOST", "localhost")
 CHROMA_PORT         = int(os.getenv("CHROMA_PORT", "8000"))
 COLLECTION_NAME     = os.getenv("COLLECTION_NAME", "scholarship_rules")
-VECTOR_MIN_RELEVANCE = float(os.getenv("VECTOR_MIN_RELEVANCE", "0.35"))
 VECTOR_SEARCH_K      = max(1, int(os.getenv("VECTOR_SEARCH_K", "8")))
 VECTOR_SEARCH_FETCH_K = max(VECTOR_SEARCH_K, int(os.getenv("VECTOR_SEARCH_FETCH_K", "30")))
+VECTOR_RELATIVE_SCORE_MARGIN = max(
+    0.0,
+    float(os.getenv("VECTOR_RELATIVE_SCORE_MARGIN", "0.18")),
+)
+VECTOR_RERANK_SCORE_MARGIN = max(
+    0.0,
+    float(os.getenv("VECTOR_RERANK_SCORE_MARGIN", "0.12")),
+)
 QUESTION_ENGINE_MODE = os.getenv("QUESTION_ENGINE_MODE", "legacy").strip().lower()
 if QUESTION_ENGINE_MODE not in {"legacy", "shadow", "llm"}:
     QUESTION_ENGINE_MODE = "legacy"

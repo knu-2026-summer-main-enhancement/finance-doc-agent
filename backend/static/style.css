@@ -160,6 +160,13 @@ button { color: inherit; }
 .route-badge.error { color: #943b3b; background: #f7e4e4; }
 .source-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .source-chip, .selected-chip { max-width: 260px; overflow: hidden; padding: 5px 9px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: #637069; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.document-evidence { margin-top: 8px; color: #747080; font-size: 10px; }
+.document-evidence summary { display: inline-flex; align-items: center; gap: 5px; color: #7167aa; font-weight: 700; cursor: pointer; list-style: none; }
+.document-evidence summary::-webkit-details-marker { display: none; }
+.document-evidence summary::before { content: "▸"; transition: transform .18s ease; }
+.document-evidence[open] summary::before { transform: rotate(90deg); }
+.document-evidence-list { display: grid; gap: 4px; margin-top: 6px; padding-left: 11px; border-left: 2px solid #d8d1f4; }
+.document-evidence-item { overflow-wrap: anywhere; line-height: 1.5; }
 .message-actions { display: flex; gap: 6px; margin-top: 12px; }
 .message-actions[hidden] { display: none; }
 .message-action { display: grid; place-items: center; width: 29px; height: 29px; padding: 0; border: 1px solid #dddaf2; border-radius: 8px; color: #6255b8; background: #faf9ff; font-size: 16px; line-height: 1; cursor: pointer; }
