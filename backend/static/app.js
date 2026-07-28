@@ -24,6 +24,11 @@ const elements = {
   clearChat: document.getElementById("clearChat"),
   chatArea: document.getElementById("chatArea"),
   selectedFiles: document.getElementById("selectedFiles"),
+  queryModeRow: document.getElementById("queryModeRow"),
+  naturalMode: document.getElementById("naturalMode"),
+  modeHelpWrap: document.getElementById("modeHelpWrap"),
+  modeHelpButton: document.getElementById("modeHelpButton"),
+  modeHelpPopover: document.getElementById("modeHelpPopover"),
   chatForm: document.getElementById("chatForm"),
   questionInput: document.getElementById("questionInput"),
   questionAutocomplete: document.getElementById("questionAutocomplete"),
@@ -69,6 +74,7 @@ const state = {
   dateAutocomplete: { actions: [] },
   suggestionUsage: new Map(),
   documentsLoaded: false,
+  ingestPolls: new Map(),
 };
 
 const initialChat = elements.chatArea.innerHTML;
@@ -174,7 +180,17 @@ function renderDocuments() {
     deleteButton.title = `${source} 삭제`;
     deleteButton.setAttribute("aria-label", `${source} 삭제`);
     deleteButton.addEventListener("click", () => deleteDocument(source));
-    row.append(button, renameButton, deleteButton);
+    const supportsSections = (item.metadata?.capabilities || []).includes("list_sections");
+    const sectionButton = document.createElement("button");
+    sectionButton.type = "button";
+    sectionButton.className = "sections-document";
+    sectionButton.textContent = "목차";
+    sectionButton.title = `${source} 섹션 보기`;
+    sectionButton.setAttribute("aria-label", `${source} 섹션 보기`);
+    sectionButton.hidden = !supportsSections;
+    sectionButton.addEventListener("click", () => openDocumentSections(source));
+    row.classList.toggle("has-sections", supportsSections);
+    row.append(button, sectionButton, renameButton, deleteButton);
     elements.documentList.append(row);
   });
 }
@@ -213,7 +229,10 @@ async function loadDocuments() {
   state.documentsLoaded = false;
   elements.documentList.innerHTML = '<div class="document-loading">문서 목록을 불러오는 중입니다.</div>';
   try {
-    const response = await fetch("/documents", { headers: apiHeaders() });
+    const response = await fetch("/documents", {
+      headers: apiHeaders(),
+      cache: "no-store",
+    });
     if (!response.ok) throw new Error(await errorMessage(response));
     const data = await response.json();
     state.documents = Array.isArray(data.files) ? data.files : [];
@@ -402,32 +421,54 @@ function selectUploadFile(file) {
   elements.uploadFileName.textContent = file.name;
 }
 
-async function pollIngestStatus(filename, attempts = 90) {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    await new Promise((resolve) => window.setTimeout(resolve, 2000));
+async function pollIngestStatus(filename) {
+  const pollToken = Symbol(filename);
+  state.ingestPolls.set(filename, pollToken);
+  const deadline = Date.now() + (30 * 60 * 1000);
+  let transientErrors = 0;
+  while (Date.now() < deadline && state.ingestPolls.get(filename) === pollToken) {
+    const elapsed = (30 * 60 * 1000) - (deadline - Date.now());
+    const delay = elapsed < 2 * 60 * 1000 ? 2000 : 5000;
+    await new Promise((resolve) => window.setTimeout(resolve, delay));
     try {
-      const response = await fetch(`/status?source=${encodeURIComponent(filename)}`, { headers: apiHeaders() });
+      const response = await fetch(`/status?source=${encodeURIComponent(filename)}`, {
+        headers: apiHeaders(),
+        cache: "no-store",
+      });
       if (response.status === 404) continue;
       if (!response.ok) throw new Error(await errorMessage(response));
       const status = await response.json();
+      transientErrors = 0;
       if (status.status === "SUCCESS") {
         elements.uploadProgressText.textContent = "적재 완료";
         await loadDocuments();
         showToast(`'${filename}' 적재가 완료됐습니다.`);
+        state.ingestPolls.delete(filename);
         return;
       }
       if (status.status === "FAILED") {
-        throw new Error(status.error_message || "문서 적재에 실패했습니다.");
+        const message = status.error_message || "문서 적재에 실패했습니다.";
+        elements.uploadProgressText.textContent = "적재 실패";
+        showToast(message);
+        state.ingestPolls.delete(filename);
+        await loadDocuments();
+        return;
       }
       elements.uploadProgressText.textContent = "문서 분석 및 적재 중";
     } catch (error) {
-      elements.uploadProgressText.textContent = "상태 확인 실패";
+      transientErrors += 1;
+      if (transientErrors < 5) continue;
+      elements.uploadProgressText.textContent = "상태 확인 재시도 필요";
       showToast(error.message);
+      state.ingestPolls.delete(filename);
       return;
     }
   }
-  elements.uploadProgressText.textContent = "적재 상태는 문서 목록에서 확인하세요";
-  loadDocuments();
+  if (state.ingestPolls.get(filename) === pollToken) {
+    state.ingestPolls.delete(filename);
+    elements.uploadProgressText.textContent = "적재가 오래 걸리고 있습니다";
+    await loadDocuments();
+  }
 }
 
 async function uploadDocument(event) {
@@ -460,6 +501,7 @@ async function uploadDocument(event) {
     elements.uploadFile.value = "";
     elements.filenameOverride.value = "";
     elements.uploadFileName.textContent = "파일 선택";
+    await loadDocuments();
     pollIngestStatus(filename);
   } catch (error) {
     elements.uploadProgress.hidden = true;
@@ -717,6 +759,91 @@ function renderDetail(detail) {
   if (!elements.detailDialog.open) elements.detailDialog.showModal();
 }
 
+function sectionPageLabel(section) {
+  if (!section.start_page) return "페이지 정보 없음";
+  return section.start_page === section.end_page
+    ? `${section.start_page}쪽`
+    : `${section.start_page}~${section.end_page}쪽`;
+}
+
+async function openDocumentSections(source) {
+  elements.detailTitle.textContent = `${source} · 목차`;
+  elements.detailBody.innerHTML = '<div class="document-loading">섹션을 불러오는 중입니다.</div>';
+  elements.detailMore.hidden = true;
+  if (!elements.detailDialog.open) elements.detailDialog.showModal();
+  try {
+    const response = await fetch(
+      `/documents/${encodeURIComponent(source)}/sections`,
+      { headers: apiHeaders() }
+    );
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const data = await response.json();
+    elements.detailBody.replaceChildren();
+    const summary = document.createElement("p");
+    summary.className = "section-browser-summary";
+    summary.textContent = `${data.statistics?.section_count || 0}개 섹션 · ${data.statistics?.page_count || 0}쪽`;
+    elements.detailBody.append(summary);
+    (data.sections || []).forEach((section) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "section-browser-item";
+      const title = document.createElement("strong");
+      title.textContent = section.title;
+      const meta = document.createElement("small");
+      meta.textContent = `${sectionPageLabel(section)} · ${section.chunk_count}개 조각`;
+      button.append(title, meta);
+      button.addEventListener("click", () => openDocumentSection(source, section.section_id));
+      elements.detailBody.append(button);
+    });
+  } catch (error) {
+    elements.detailBody.textContent = `섹션 조회 실패: ${error.message}`;
+  }
+}
+
+async function openDocumentSection(source, sectionId) {
+  elements.detailTitle.textContent = "섹션 내용";
+  elements.detailBody.innerHTML = '<div class="document-loading">섹션 내용을 불러오는 중입니다.</div>';
+  try {
+    const response = await fetch(
+      `/documents/${encodeURIComponent(source)}/sections/${encodeURIComponent(sectionId)}`,
+      { headers: apiHeaders() }
+    );
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const section = await response.json();
+    elements.detailTitle.textContent = section.title || "섹션 내용";
+    elements.detailBody.replaceChildren();
+
+    const actions = document.createElement("div");
+    actions.className = "section-browser-actions";
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "section-browser-action secondary";
+    back.textContent = "목차로";
+    back.addEventListener("click", () => openDocumentSections(source));
+    const ask = document.createElement("button");
+    ask.type = "button";
+    ask.className = "section-browser-action primary";
+    ask.textContent = "이 섹션 질문하기";
+    ask.addEventListener("click", () => {
+      elements.detailDialog.close();
+      elements.questionInput.value = `${section.title}에 대해 알려줘`;
+      resizeTextarea();
+      elements.questionInput.focus();
+    });
+    actions.append(back, ask);
+
+    const meta = document.createElement("p");
+    meta.className = "section-browser-summary";
+    meta.textContent = `${sectionPageLabel(section)} · ${section.chunk_count}개 조각`;
+    const content = document.createElement("div");
+    content.className = "section-browser-content";
+    content.textContent = section.content || "표시할 섹션 내용이 없습니다.";
+    elements.detailBody.append(actions, meta, content);
+  } catch (error) {
+    elements.detailBody.textContent = `섹션 내용 조회 실패: ${error.message}`;
+  }
+}
+
 async function openDetail(reference, offset = 0) {
   try {
     const response = await fetch(`/chat/details/${encodeURIComponent(reference)}?offset=${offset}&limit=50`, { headers: apiHeaders() });
@@ -742,7 +869,7 @@ async function sendQuestion(question, options = {}) {
     question: value,
     request_id: requestId,
     sources: options.sources ? [...options.sources] : [...state.selected],
-    mode: "auto",
+    mode: options.mode || (elements.naturalMode.checked ? "natural" : "auto"),
   };
   elements.questionInput.value = "";
   hideQuestionSuggestions();
@@ -855,6 +982,7 @@ function setChatBusy(busy) {
   elements.sendButton.setAttribute("aria-label", busy ? "답변 생성 중단" : "질문 전송");
   elements.sendButton.querySelector("[data-send-label]").textContent = busy ? "중단" : "전송";
   elements.sendButton.querySelector("[data-send-icon]").textContent = busy ? "■" : "→";
+  elements.naturalMode.disabled = busy;
 }
 
 function stopChat() {
@@ -922,6 +1050,11 @@ function setSuggestionIndex(index) {
 
 function chooseQuestionSuggestion(text, operation = "") {
   recordSuggestionUsage(operation);
+  if (operation === "list_document_sections" && state.selected.size === 1) {
+    hideQuestionSuggestions();
+    openDocumentSections([...state.selected][0]);
+    return;
+  }
   elements.questionInput.value = text;
   resizeTextarea();
   hideQuestionSuggestions();
@@ -1039,6 +1172,20 @@ async function primeQuestionCatalog() {
     const data = await response.json();
     if (scopeKey === suggestionScopeKey()) {
       state.suggestionCatalog = data.suggestions || [];
+      if (state.selected.size === 1) {
+        const selectedDocument = state.documents.find(
+          (item) => item.source === [...state.selected][0]
+        );
+        if ((selectedDocument?.metadata?.capabilities || []).includes("list_sections")) {
+          state.suggestionCatalog.unshift({
+            text: "이 문서의 전체 섹션 보여줘",
+            label: "문서 목차",
+            operation: "list_document_sections",
+            path: "vector",
+            path_label: "AI 문서 검색",
+          });
+        }
+      }
       state.personAutocomplete = {
         names: Array.isArray(data.person_names) ? data.person_names : [],
         actions: Array.isArray(data.person_actions) ? data.person_actions : [],
@@ -1052,7 +1199,7 @@ async function primeQuestionCatalog() {
         personAutocomplete: state.personAutocomplete,
         dateAutocomplete: state.dateAutocomplete,
       });
-      if (document.activeElement === elements.questionInput) {
+      if (document.activeElement === elements.questionInput && !elements.naturalMode.checked) {
         showLocalQuestionSuggestions();
       }
     }
@@ -1151,7 +1298,7 @@ function remotePersonPrefix(query) {
 }
 
 function scheduleRemotePersonSearch(query) {
-  if (state.personAutocomplete.mode !== "remote" || state.busy) return;
+  if (state.personAutocomplete.mode !== "remote" || elements.naturalMode.checked || state.busy) return;
   const prefix = remotePersonPrefix(query);
   if (!prefix) {
     state.personSuggestionController?.abort();
@@ -1277,7 +1424,7 @@ function rankUnifiedSuggestions(query) {
 }
 
 function showLocalQuestionSuggestions() {
-  if (state.busy) {
+  if (elements.naturalMode.checked || state.busy) {
     hideQuestionSuggestions();
     return;
   }
@@ -1305,10 +1452,33 @@ function setUploadPanelOpen(open) {
   elements.uploadToggle.setAttribute("aria-label", open ? "문서 업로드 닫기" : "문서 업로드 열기");
 }
 
-function updateQuestionPlaceholder() {
-  elements.questionInput.placeholder = document.documentElement.classList.contains("ui-v3")
-    ? "질문을 입력하세요..."
-    : "문서에 대해 질문하세요.";
+function setModeHelpOpen(open) {
+  elements.modeHelpPopover.hidden = !open;
+  elements.modeHelpButton.setAttribute("aria-expanded", String(open));
+}
+
+function updateNaturalMode() {
+  const active = elements.naturalMode.checked;
+  hideQuestionSuggestions();
+  elements.queryModeRow.classList.toggle("active", active);
+  elements.questionInput.placeholder = active
+    ? "선택한 문서의 의미와 문맥으로 검색하세요."
+    : (document.documentElement.classList.contains("ui-v3")
+      ? "질문을 입력하세요..."
+      : "문서에 대해 질문하세요.");
+}
+
+function setNaturalMode(active) {
+  if (active && !elements.naturalMode.checked) {
+    const confirmed = window.confirm(
+      "주의: AI 문서 검색은 의미가 비슷한 내용을 바탕으로 답변하므로 중요한 내용을 누락하거나 틀린 답변을 만들 수 있습니다.\n\n"
+      + "금액·인원·통계 계산이나 원본 확인이 필요한 질문에는 사용하지 마세요. 그래도 AI 문서 검색을 켤까요?",
+    );
+    if (!confirmed) return false;
+  }
+  elements.naturalMode.checked = active;
+  updateNaturalMode();
+  return true;
 }
 
 elements.chatForm.addEventListener("submit", (event) => {
@@ -1379,6 +1549,9 @@ document.addEventListener("pointerdown", (event) => {
   ) {
     setUploadPanelOpen(false);
   }
+  if (!elements.modeHelpPopover.hidden && !elements.modeHelpWrap.contains(event.target)) {
+    setModeHelpOpen(false);
+  }
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
@@ -1394,7 +1567,22 @@ document.addEventListener("keydown", (event) => {
       setUploadPanelOpen(false);
       elements.uploadToggle.focus();
     }
+    if (!elements.modeHelpPopover.hidden) {
+      setModeHelpOpen(false);
+      elements.modeHelpButton.focus();
+    }
   }
+});
+elements.naturalMode.addEventListener("change", () => {
+  if (elements.naturalMode.checked) {
+    elements.naturalMode.checked = false;
+    setNaturalMode(true);
+    return;
+  }
+  updateNaturalMode();
+});
+elements.modeHelpButton.addEventListener("click", () => {
+  setModeHelpOpen(elements.modeHelpPopover.hidden);
 });
 elements.renameForm.addEventListener("submit", submitRenameDocument);
 elements.renameCancel.addEventListener("click", closeRenameModal);
@@ -1448,7 +1636,7 @@ elements.quickAttach.addEventListener("click", () => {
 });
 bindSuggestions();
 loadDocuments();
-updateQuestionPlaceholder();
+updateNaturalMode();
 const composerResizeObserver = new ResizeObserver(syncMobileComposerInset);
 composerResizeObserver.observe(document.querySelector(".composer-wrap"));
 window.addEventListener("resize", syncMobileComposerInset);

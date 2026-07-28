@@ -28,12 +28,13 @@ logger = logging.getLogger("ingest")
 
 OCR_DPI  = 300
 OCR_LANG = "kor+eng"
-PDF_SECTION_SCHEMA_VERSION = "pdf-section-v1"
+PDF_SECTION_SCHEMA_VERSION = "pdf-section-v2"
 _SECTION_HEADING_RE = re.compile(
     r"^(?:"
     r"[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅪⅫ]"
     r"|(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII)[.)]?"
     r"|제\s*\d+\s*장"
+    r"|\d{1,3}[.)]"
     r")\s+\S.{0,78}$",
     re.MULTILINE,
 )
@@ -374,6 +375,8 @@ def ingest_pdf_hybrid(file_path: str, file_hash: str, category: str) -> int:
                         chunk_records.append({"text": fallback_text, "page": page_num})
 
     _normalize_section_child_metadata(chunk_records)
+    for record in chunk_records:
+        record.setdefault("metadata", {})["parser_version"] = PDF_SECTION_SCHEMA_VERSION
 
     if parsed_tables:
         overview = _make_doc_overview_chunk(doc_label, source_file, parsed_tables)

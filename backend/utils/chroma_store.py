@@ -65,6 +65,32 @@ def count_chroma_documents(source: str) -> int:
         return 0
 
 
+def get_chroma_source_records(source: str) -> list[dict]:
+    """Return stored text and metadata for one document without embedding work."""
+    collection = _get_collection()
+    result = collection.get(
+        where={"source": os.path.basename(source)},
+        include=["documents", "metadatas"],
+    )
+    documents = result.get("documents") or []
+    metadatas = result.get("metadatas") or []
+    return [
+        {
+            "text": str(document or ""),
+            "metadata": metadata or {},
+        }
+        for document, metadata in zip(documents, metadatas)
+    ]
+
+
+def chroma_source_has_metadata(source: str, key: str, value: str) -> bool:
+    """Check whether at least one stored chunk carries a parser/schema marker."""
+    return any(
+        str((record.get("metadata") or {}).get(key, "")) == str(value)
+        for record in get_chroma_source_records(source)
+    )
+
+
 def save_to_chroma(
     file_path: str,
     chunk_records: list[dict],
@@ -119,6 +145,7 @@ def save_to_chroma(
             "mapping_fingerprint",
             "content_type",
             "section_schema_version",
+            "parser_version",
             "section_id",
             "parent_id",
             "section_title",

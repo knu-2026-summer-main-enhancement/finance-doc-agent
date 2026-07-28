@@ -127,7 +127,7 @@ class ConfirmedMergedCellTest(unittest.TestCase):
 
         self.assertEqual(
             _detect_section_headings(page_text),
-            ["Ⅰ 추진배경", "Ⅱ 관련근거"],
+            ["Ⅰ 추진배경", "Ⅱ 관련근거", "1. 선발대상"],
         )
 
     def test_long_section_is_split_into_children_with_shared_parent(self):

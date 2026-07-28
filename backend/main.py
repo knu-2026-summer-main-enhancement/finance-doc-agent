@@ -36,9 +36,10 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 #자유롭게 import할 수 있음 
 
 # 도메인 모듈 (config → security/llm/datastore/rag 순으로 의존)
-from utils.ingest import process_file, ensure_manifest_table
+from utils.ingest import process_file, ensure_manifest_table, mark_ingestion_started
 from utils.parsers.image_table_ocr_parser import IMAGE_EXTS
 from utils.manifest import get_manifest_status, get_all_manifest_entries, delete_manifest
+from utils.document_structure import document_structure, document_section
 from core.config import (
     OLLAMA_BASE_URL, OLLAMA_MODEL, EMBED_MODEL,
     CHROMA_HOST, CHROMA_PORT, DATA_FOLDER,
@@ -804,6 +805,7 @@ def ingest(req: IngestRequest, background_tasks: BackgroundTasks, _: None = Depe
     safe_path = _validate_ingest_path(req.file_path)
     if not os.path.exists(safe_path):
         raise HTTPException(status_code=404, detail=f"파일 없음: {safe_path}")
+    mark_ingestion_started(safe_path)
     background_tasks.add_task(_process_and_reload, safe_path) #백그라운드 작업으로 넘기기
     return StatusResponse(status="accepted", message=f"'{safe_path}' 처리를 시작했습니다.")
 
@@ -836,6 +838,7 @@ def ingest_upload(
             shutil.copyfileobj(file.file, f)
     finally:
         file.file.close()
+    mark_ingestion_started(dest)
     background_tasks.add_task(_process_and_reload, dest)
     return StatusResponse(status="accepted", message=f"'{filename}' 업로드 완료, 색인을 시작했습니다.", filename=filename)
 
@@ -844,7 +847,58 @@ def ingest_upload(
 def documents(_: None = Depends(_verify_api_key)):
     """색인된 문서 전체 목록과 상태를 반환한다. n8n·Slack 문서목록 명령용."""
     entries = get_all_manifest_entries()
+    for entry in entries:
+        if entry.get("status") != "SUCCESS":
+            continue
+        try:
+            entry["metadata"] = document_structure(
+                entry["source"],
+                file_type=entry.get("file_type"),
+            )
+        except Exception:
+            logger.exception(
+                "문서 구조 메타데이터 조회 실패 | source=%s",
+                entry.get("source"),
+            )
     return {"count": len(entries), "files": entries}
+
+
+@app.get("/documents/{source}/sections")
+def document_sections(source: str, _: None = Depends(_verify_api_key)):
+    """저장된 섹션 메타데이터로 가벼운 문서 목차를 반환한다."""
+    source = os.path.basename(source)
+    manifest = get_manifest_status(source)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail=f"'{source}' 문서를 찾을 수 없습니다.")
+    structure = document_structure(source, file_type=manifest.get("file_type"))
+    if "list_sections" not in structure["capabilities"]:
+        raise HTTPException(
+            status_code=409,
+            detail="이 문서에서는 조회 가능한 섹션 구조가 검출되지 않았습니다.",
+        )
+    return {
+        "source": source,
+        "document_type": structure["document_type"],
+        "capabilities": structure["capabilities"],
+        "statistics": structure["statistics"],
+        "sections": structure["sections"],
+    }
+
+
+@app.get("/documents/{source}/sections/{section_id}")
+def document_section_detail(
+    source: str,
+    section_id: str,
+    _: None = Depends(_verify_api_key),
+):
+    """선택한 섹션의 자식 청크만 순서대로 결합해 반환한다."""
+    source = os.path.basename(source)
+    if get_manifest_status(source) is None:
+        raise HTTPException(status_code=404, detail=f"'{source}' 문서를 찾을 수 없습니다.")
+    section = document_section(source, section_id)
+    if section is None:
+        raise HTTPException(status_code=404, detail="해당 섹션을 찾을 수 없습니다.")
+    return section
 
 
 @app.get("/status") #특정 파일의 색인상태를 조회한다.
@@ -935,6 +989,7 @@ def rename_document(
     delete_from_chroma(source)
     drop_dataframe_by_source(source)
     delete_manifest(source)
+    mark_ingestion_started(new_path)
     _load_dataframes()
     background_tasks.add_task(_process_and_reload, new_path)
     return StatusResponse(

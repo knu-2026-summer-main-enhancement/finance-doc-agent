@@ -67,10 +67,10 @@ from utils.manifest import (  # noqa: E402
     is_current_successful_ingestion,
     upsert_manifest,
 )
-from utils.chroma_store import count_chroma_documents  # noqa: E402
+from utils.chroma_store import count_chroma_documents, chroma_source_has_metadata  # noqa: E402
 from utils.semantic_schema import SCHEMA_VERSION  # noqa: E402
 from utils.parsers.xlsx_parser import ingest_xlsx  # noqa: E402
-from utils.parsers.pdf_parser import ingest_pdf_hybrid  # noqa: E402
+from utils.parsers.pdf_parser import ingest_pdf_hybrid, PDF_SECTION_SCHEMA_VERSION  # noqa: E402
 from utils.parsers.hwp_parser import convert_hwp_to_html_and_ingest  # noqa: E402
 from utils.parsers.image_table_ocr_parser import IMAGE_EXTS, ingest_image_table  # noqa: E402
 
@@ -88,6 +88,19 @@ def infer_category(file_path: str) -> str:
     return "uncategorized" if parent.lower() == "data" else parent
 
 
+def mark_ingestion_started(file_path: str) -> None:
+    """Expose IN_PROGRESS before a background worker can return a stale SUCCESS."""
+    source = os.path.basename(file_path)
+    upsert_manifest(
+        source,
+        os.path.abspath(file_path),
+        compute_file_md5(file_path),
+        os.path.splitext(file_path)[1].lower().lstrip("."),
+        infer_category(file_path),
+        "IN_PROGRESS",
+    )
+
+
 # ---------------------------------------------------------------------------
 # 단일 파일 처리 진입점
 # ---------------------------------------------------------------------------
@@ -102,15 +115,33 @@ def process_file(file_path: str):
         manifest = get_manifest_status(source) or {}
         expected_chunks = int(manifest.get("chroma_doc_count") or 0)
         actual_chunks = count_chroma_documents(source)
-        if expected_chunks == 0 or actual_chunks >= expected_chunks:
+        parser_is_current = (
+            ext != "pdf"
+            or chroma_source_has_metadata(
+                source,
+                "parser_version",
+                PDF_SECTION_SCHEMA_VERSION,
+            )
+        )
+        if (
+            parser_is_current
+            and (expected_chunks == 0 or actual_chunks >= expected_chunks)
+        ):
             logger.info("생략(변경 없음) | file=%s", file_path)
             return
-        logger.warning(
-            "Chroma 복구 적재 | file=%s manifest_chunks=%d actual_chunks=%d",
-            file_path,
-            expected_chunks,
-            actual_chunks,
-        )
+        if not parser_is_current:
+            logger.info(
+                "PDF 파서 버전 변경으로 재적재 | file=%s version=%s",
+                file_path,
+                PDF_SECTION_SCHEMA_VERSION,
+            )
+        else:
+            logger.warning(
+                "Chroma 복구 적재 | file=%s manifest_chunks=%d actual_chunks=%d",
+                file_path,
+                expected_chunks,
+                actual_chunks,
+            )
 
     logger.info("시작 | file=%s type=%s category=%s", file_path, ext, category)
     upsert_manifest(source, source_path, file_hash, ext, category, "IN_PROGRESS")

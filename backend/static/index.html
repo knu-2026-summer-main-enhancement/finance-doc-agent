@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light">
   <title>문서 조회 에이전트</title>
   <script>const root = document.documentElement; root.classList.add("ui-v3"); const syncLayout = () => root.classList.toggle("ui-v2", window.innerWidth > 820); syncLayout(); window.addEventListener("resize", syncLayout);</script>
-  <link rel="stylesheet" href="/static/style.css?v=20260724-2">
+  <link rel="stylesheet" href="/static/style.css?v=20260728-1">
 </head>
 <body>
   <div class="app-shell">
@@ -84,6 +84,20 @@
 
       <footer class="composer-wrap">
         <div class="selected-files" id="selectedFiles"></div>
+        <div class="query-mode-row" id="queryModeRow">
+          <label class="natural-mode-option" for="naturalMode">
+            <input id="naturalMode" type="checkbox">
+            <span class="mode-switch" aria-hidden="true"><i></i></span>
+            <span>AI 문서 검색</span>
+          </label>
+          <div class="mode-help-wrap" id="modeHelpWrap">
+            <button class="mode-help-button" id="modeHelpButton" type="button" aria-expanded="false" aria-controls="modeHelpPopover" aria-label="AI 문서 검색 주의사항">i</button>
+            <div class="mode-help-popover" id="modeHelpPopover" role="note" hidden>
+              <strong>주의</strong>
+              <p>선택한 문서의 의미가 비슷한 내용을 찾아 AI가 답변합니다. 누락되거나 부정확한 답변이 생성될 수 있으므로 금액·인원·통계 계산이나 원본 확인이 필요한 질문에는 사용하지 마세요.</p>
+            </div>
+          </div>
+        </div>
         <div class="question-autocomplete" id="questionAutocomplete" role="listbox" aria-label="빠른 질문 추천" hidden></div>
         <form class="composer" id="chatForm">
           <button class="quick-attach-button" id="quickAttach" type="button" aria-label="문서 첨부" title="문서 첨부">＋</button>
@@ -138,6 +152,6 @@
     <button class="secondary-button" id="detailMore" type="button" hidden>더 보기</button>
   </dialog>
   <div class="toast" id="toast" role="status"></div>
-  <script src="/static/app.js?v=20260727-1" defer></script>
+  <script src="/static/app.js?v=20260728-3" defer></script>
 </body>
 </html>
