@@ -284,6 +284,21 @@ def _is_visible_column(column: object, series: pd.Series, *, include_contact: bo
     return True
 
 
+def _is_fee_category_column(key: str) -> bool:
+    compact = re.sub(r"[\s_-]+", "", key).casefold()
+    return "회비" in compact and "구분" in compact
+
+
+def _is_payment_history_only_field(key: str, meaning: Any) -> bool:
+    compact = re.sub(r"[\s_-]+", "", key).casefold()
+    return (
+        meaning.data_type == "money"
+        or meaning.concept == "temporal"
+        or compact in {"년", "월", "일"}
+        or _is_fee_category_column(key)
+    )
+
+
 def _payment_history_for_row(row: pd.Series, name_column: str) -> dict[str, Any] | None:
     fields: list[dict[str, Any]] = []
     has_money = False
@@ -296,7 +311,7 @@ def _payment_history_for_row(row: pd.Series, name_column: str) -> dict[str, Any]
         ):
             continue
         meaning = infer_column_meaning(key, pd.Series([row[column]]))
-        if meaning.data_type == "money" or meaning.concept == "temporal" or meaning.role == "category":
+        if _is_payment_history_only_field(key, meaning) or meaning.role == "category":
             value = _json_value(row[column])
             fields.append({"column": key, "value": value, "data_type": meaning.data_type, "role": meaning.role})
             has_money = has_money or meaning.data_type == "money"
@@ -331,6 +346,8 @@ def _entity_for_row(row: pd.Series) -> dict[str, Any] | None:
         ):
             continue
         meaning = infer_column_meaning(key, pd.Series([row[column]]))
+        if _is_payment_history_only_field(key, meaning):
+            continue
         value = _json_value(row[column])
         attribute = {"column": key, "role": meaning.role, "value": value, "missing": value is None}
         detail_attributes.append(attribute)

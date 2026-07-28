@@ -267,3 +267,30 @@ class InteractiveResultTest(unittest.TestCase):
         card_columns = {attribute["column"] for attribute in detail["attributes"]}
         self.assertFalse({"_ocr_confidence_min", "_ocr_low_confidence_cells", "ocrconfidence", "표시명"} & card_columns)
         self.assertFalse({"_ocr_confidence_min", "_ocr_low_confidence_cells", "ocrconfidence"} & set(result["records"][0]))
+
+    def test_payment_fields_are_shown_only_in_payment_history(self):
+        df = self.df.copy()
+        df["년"] = [2025, 2025]
+        df["월"] = [1, 2]
+        df["일"] = [3, 4]
+        df["회비 구분"] = ["정회원", "정회원"]
+        df.attrs["source_columns"] = [
+            "회원명", "전공", "전화번호", "결제 금액", "년", "월", "일", "회비 구분",
+        ]
+        df.attrs["semantic_schema"] = attach_semantic_schema(
+            df, var_name="df_payment", source_file="payment.xlsx", dataframe_dir=".",
+        )
+        execution = execute_query_plan(validate_query_plan(
+            QueryPlan(status="ready", dataframe="df_payment", operation="list"),
+            dataframes={"df_payment": df}, source_by_alias={"df_payment": "payment.xlsx"},
+        ))
+
+        result = build_interactive_result(execution)
+        detail = get_interactive_detail(result["entities"][0]["detail_ref"])
+        detail_columns = {item["column"] for item in detail["attributes"]}
+        history_columns = {
+            field["column"] for history in detail["payment_history"]
+            for field in history["fields"]
+        }
+        self.assertFalse({"년", "월", "일", "회비 구분", "결제 금액"} & detail_columns)
+        self.assertTrue({"년", "월", "일", "회비 구분", "결제 금액"} <= history_columns)
