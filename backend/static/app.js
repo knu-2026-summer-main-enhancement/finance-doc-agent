@@ -253,7 +253,7 @@ function deleteDocument(source) {
   window.setTimeout(() => elements.deleteCancel.focus(), 0);
 }
 
-async function loadContactNames() {
+/* Removed Result_1 contact-card implementation.
   if (state.contactNamesPromise) return state.contactNamesPromise;
   state.contactNamesPromise = fetch("/contacts/names", { headers: apiHeaders() })
     .then(async (response) => {
@@ -331,6 +331,8 @@ async function toggleContactCard(button) {
     showToast("연락처 정보를 불러오지 못했습니다.");
   }
 }
+
+*/
 
 function closeDeleteModal() {
   elements.deleteModal.hidden = true;

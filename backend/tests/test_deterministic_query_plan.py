@@ -419,6 +419,12 @@ class DeterministicQueryPlanTest(unittest.TestCase):
         self.assertEqual(plan.operation, "count")
         self.assertEqual(plan.distinct_by, ("회원명",))
 
+    def test_all_members_show_request_returns_a_list_not_a_count(self):
+        plan = self._plan("모든 회원 보여줘", "structured_query")
+
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.operation, "list")
+
     def test_total_records_is_count_even_with_amount_wording(self):
         plan = self._plan("총 기록 얼마야?", "sum_amount")
 

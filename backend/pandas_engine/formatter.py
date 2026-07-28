@@ -25,7 +25,10 @@ _DISPLAY_ORDER = (
 )
 _AMOUNT_QUESTION_RE = re.compile(r"얼마|금액|총액|합계|출연금|지급액|장학금|지원금|수혜금|후원금|기부금")
 _SUM_WORD_RE = re.compile(r"총|합계|전체|누적|합산|모두|다")
-_GENERIC_LIST_RE = re.compile(r"목록|명단|리스트")
+_GENERIC_LIST_RE = re.compile(
+    r"목록|명단|리스트|전체\s*(?:기록|내역|데이터|회원|사람)|"
+    r"모든\s*(?:기록|내역|데이터|회원|사람)"
+)
 _EXPLICIT_LIST_FIELD_RE = re.compile(
     r"금액|회비|납부|결제|후원|기부|학과|전공|전화|이메일|연락처|"
     r"기수|날짜|일자|연도|월별|기관|지급처|발행번호"
@@ -267,7 +270,7 @@ def _format_list_result(df: pd.DataFrame, question: str = "") -> str:
                 key=lambda column: int(df[column].dropna().nunique()),
             )
             names = display[person_column].astype(str).tolist()
-            name_preview_limit = 1000000
+            name_preview_limit = 200
             if len(names) > name_preview_limit:
                 header += (
                     f"(전체 {len(names)}명 중 처음 "
@@ -285,9 +288,8 @@ def _format_list_result(df: pd.DataFrame, question: str = "") -> str:
             display = display.sort_values(by=sort_cols)
         except Exception:
             pass
-    preview_limit = 50
+    preview_limit = 200
     if len(display) > preview_limit:
-        header += f"(처음 {preview_limit}건 표시, 나머지는 목록에서 조회)\n"
         display = display.head(preview_limit)
     return warning + header + display.to_string(index=False)
 

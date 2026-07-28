@@ -659,7 +659,8 @@ def build_schema_grounded_plan(
         )))
         return QueryPlan(status="ready", dataframe=alias, operation="list", filters=tuple(filters), select=select)
 
-    people_count = bool(_PERSON_COUNT.search(question))
+    person_list_request = bool(re.search(r"(?:보여줘|보여|목록|명단|리스트|조회)", question))
+    people_count = bool(_PERSON_COUNT.search(question)) and not person_list_request
     ordinal_match = _ORDINAL.search(question)
     korean_ordinal_match = _KOREAN_ORDINAL.search(question)
     rank_position = (

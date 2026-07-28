@@ -34,6 +34,13 @@ class GuardRoutingTest(unittest.TestCase):
         self.assertEqual(result.reason_code, "AMBIGUOUS_SUMMARY")
         self.assertIn("총 인원 알려줘", result.suggestions)
 
+    def test_ambiguous_ranking_uses_guide_response(self):
+        result = check_question("가장 많은")
+
+        self.assertEqual(result.status, "GUIDE")
+        self.assertEqual(result.reason_code, "AMBIGUOUS_RANKING")
+        self.assertIn("가장 큰 금액은?", result.suggestions)
+
     def test_shadow_engine_is_opt_in_and_queued_without_changing_route(self):
         tasks = BackgroundTasks()
         with patch("main.QUESTION_ENGINE_MODE", "legacy"):

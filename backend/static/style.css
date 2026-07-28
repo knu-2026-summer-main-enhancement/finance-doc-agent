@@ -166,12 +166,6 @@ button { color: inherit; }
 .message.user .message-body { max-width: 78%; padding: 13px 17px; border-radius: 18px 18px 4px 18px; color: #fff; background: var(--accent); }
 .message-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .message-body { line-height: 1.72; white-space: pre-wrap; word-break: break-word; }
-.contact-name-wrap { position: relative; display: inline; }
-.contact-name { display: inline; padding: 0; border: 0; border-bottom: 1px dashed #8e84ca; color: #554aa0; background: transparent; font: inherit; font-weight: 700; cursor: pointer; }
-.contact-name:hover { color: #3f357e; border-bottom-style: solid; }
-.contact-name:focus-visible { outline: 2px solid rgba(118,103,232,.35); outline-offset: 2px; border-radius: 2px; }
-.contact-card { position: absolute; top: calc(100% + 7px); left: 0; z-index: 24; display: block; width: max-content; max-width: min(430px, calc(100vw - 48px)); padding: 7px 9px; border: 1px solid #dcd7f3; border-radius: 8px; color: #625d75; background: #fff; box-shadow: 0 8px 20px rgba(49,42,101,.14); font-size: 10px; font-weight: 500; line-height: 1.55; white-space: pre-line; }
-.contact-card.loading { color: #8a84a9; }
 .calculation-evidence { margin-top: 11px; padding-left: 11px; border-left: 2px solid #d8d1f4; color: #747080; }
 .calculation-evidence summary { display: inline-flex; align-items: center; gap: 6px; padding: 3px 0; color: #7167aa; font-size: 11px; font-weight: 700; cursor: pointer; user-select: none; list-style: none; }
 .calculation-evidence summary::-webkit-details-marker { display: none; }
@@ -366,7 +360,6 @@ html.ui-v2 .natural-mode-option { color: #657780; }
 html.ui-v2 .query-mode-row.active .natural-mode-option { color: #1d657a; }
 html.ui-v2 .mode-switch { border-color: #c4d3d8; background: #e2e9eb; }
 html.ui-v2 .natural-mode-option input:checked + .mode-switch { border-color: #286a80; background: #286a80; }
-html.ui-v2 .contact-name { border-bottom-color: #5d9bad; color: #1f6278; }
 html.ui-v2 .calculation-evidence { border-left-color: #9fc8d3; }
 
 /* V3: compact, mobile-first text chat layout (available at /ui-v3) */

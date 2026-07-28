@@ -62,7 +62,12 @@ from rag.router import (
     pandas_strategy_for_operations,
     route_operations,
 )
-from rag.guard import check_question, check_question_decision, is_ambiguous_summary_question
+from rag.guard import (
+    check_question,
+    check_question_decision,
+    is_ambiguous_ranking_question,
+    is_ambiguous_summary_question,
+)
 from rag.guide import build_guide_response
 from rag.vector import (
     _answer_vector,
@@ -144,7 +149,7 @@ def _schedule_shadow_question_engine(
 async def _resolve_llm_question(question: str) -> QuestionResolution:
     """Resolve a question through one deterministic planning boundary first."""
     dataframes = scoped_mapping(_df_namespace, _df_sources)
-    if is_ambiguous_summary_question(question):
+    if is_ambiguous_summary_question(question) or is_ambiguous_ranking_question(question):
         return QuestionResolution(check_question(question), "GUIDE", None)
     candidates = ambiguous_person_lookup_candidates(question, dataframes=dataframes)
     if candidates:
@@ -440,8 +445,8 @@ def result_1_contact(name: str, _: None = Depends(_verify_api_key)):
 
 
 @app.get("/chat/details/{reference}")
-def chat_detail(reference: str, offset: int = 0, limit: int = 50, _: None = Depends(_verify_api_key)):
-    if offset < 0 or not 1 <= limit <= 100:
+def chat_detail(reference: str, offset: int = 0, limit: int = 200, _: None = Depends(_verify_api_key)):
+    if offset < 0 or not 1 <= limit <= 200:
         raise HTTPException(status_code=400, detail="offset/limit 범위가 올바르지 않습니다.")
     detail = get_interactive_detail(reference, offset=offset, limit=limit)
     if detail is None:

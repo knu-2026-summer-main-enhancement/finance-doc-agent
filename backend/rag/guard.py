@@ -13,6 +13,9 @@ GuardStatus = Literal["PASS", "GUIDE"]
 _AMBIGUOUS_SUMMARY_QUESTION = re.compile(
     r"^\s*(?:총|전체|합계|총합|얼마)\s*[?!。.]*\s*$"
 )
+_AMBIGUOUS_RANKING_QUESTION = re.compile(
+    r"^\s*(?:가장|제일)\s*(?:많은|큰|높은|적은|작은|낮은)\s*[?!。.]*\s*$"
+)
 
 
 @dataclass
@@ -28,6 +31,10 @@ class GuardResult:
 
 def is_ambiguous_summary_question(question: str) -> bool:
     return bool(_AMBIGUOUS_SUMMARY_QUESTION.fullmatch(str(question or "")))
+
+
+def is_ambiguous_ranking_question(question: str) -> bool:
+    return bool(_AMBIGUOUS_RANKING_QUESTION.fullmatch(str(question or "")))
 
 
 def check_question(question: str) -> GuardResult:
@@ -47,6 +54,15 @@ def check_question(question: str) -> GuardResult:
             reason_code="AMBIGUOUS_SUMMARY",
             reason="인원·기록 수·금액 중 어떤 합계를 확인할지 알 수 없습니다.",
             suggestions=["총 인원 알려줘", "총 기록 수 알려줘", "총 금액 알려줘"],
+            analysis=analysis,
+        )
+
+    if is_ambiguous_ranking_question(question):
+        return GuardResult(
+            status="GUIDE",
+            reason_code="AMBIGUOUS_RANKING",
+            reason="무엇을 기준으로 가장 많은지 알 수 없습니다.",
+            suggestions=["가장 큰 금액은?", "횟수가 가장 많은 사람은?", "납부 인원이 가장 많은 연도는?"],
             analysis=analysis,
         )
 
