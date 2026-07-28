@@ -38,7 +38,11 @@ from rag.question_analyzer import QuestionAnalysis, analyze_question
 from rag.deterministic_query_plan import build_schema_grounded_plan
 from rag.cancellation import await_cancellable, raise_if_cancelled
 from utils.semantic_schema import infer_column_meaning
-from pandas_engine.interactive import build_interactive_result, build_interactive_dataframe
+from pandas_engine.interactive import (
+    build_interactive_result,
+    build_interactive_dataframe,
+    build_interactive_people_list,
+)
 from pandas_engine.query_plan import QueryPlan
 from utils.table_parser import normalize_person_name
 
@@ -260,12 +264,20 @@ def _answer_year_person_comparison(
         return answer, sources, "pandas"
     if kind == "both":
         names = sorted(first_names & second_names)
-        return _format_person_list(
+        response = _format_person_list(
             f"{first_year}년과 {second_year}년에 모두 납부한 사람은 {len(names):,}명입니다.",
             [(first[name][0], first[name][1]) for name in names],
             sources,
             f"{first_year}년과 {second_year}년 납부 기록 모두 있음",
         )
+        answer, _, _ = response
+        source_frame = pd.concat(list(dataframes.values()), ignore_index=True)
+        interactive = build_interactive_people_list(
+            [first[name][0] for name in names], source_frame, answer,
+        )
+        if interactive is not None:
+            _interactive_result.set(interactive)
+        return response
     if kind == "later_only":
         names = sorted(second_names - first_names)
         return _format_person_list(
@@ -884,6 +896,14 @@ def _format_direct_dataframe_with_evidence(
             and meaning.qualifier == "person"
         )
     ]
+    if re.search(r"(?:전체|모든)\s*(?:회원|사람|인원).*(?:보여|목록|명단|리스트|조회)", question):
+        if person_columns:
+            person_column = max(
+                person_columns,
+                key=lambda column: int(df[column].dropna().nunique()),
+            )
+            df = df.drop_duplicates(subset=[person_column], keep="first").copy()
+            person_columns = [person_column]
     lines = [
         _format_dataframe_result_for_question(df, question),
         "",

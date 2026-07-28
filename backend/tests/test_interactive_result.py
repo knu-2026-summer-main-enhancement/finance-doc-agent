@@ -4,10 +4,15 @@ from unittest.mock import patch
 import pandas as pd
 
 import pandas_engine.interactive as interactive
-from pandas_engine.interactive import build_interactive_result, get_interactive_detail
+from pandas_engine.formatter import _format_query_execution_result
+from pandas_engine.interactive import (
+    build_interactive_result,
+    get_interactive_detail,
+    get_interactive_record_entity,
+)
 from pandas_engine.plan_validator import validate_query_plan
 from pandas_engine.query_executor import execute_query_plan
-from pandas_engine.query_plan import QueryPlan
+from pandas_engine.query_plan import FilterCondition, QueryPlan
 from utils.semantic_schema import attach_semantic_schema
 
 
@@ -84,10 +89,26 @@ class InteractiveResultTest(unittest.TestCase):
         self.assertEqual(first["kind"], "records_detail")
         self.assertEqual(len(first["records"]), 1)
         self.assertEqual(first["record_entities"][0]["display_name"], "홍길동")
-        self.assertTrue(first["record_entities"][0]["detail_ref"].startswith("ent_"))
+        self.assertEqual(first["record_entities"][0]["row_index"], 0)
+        self.assertEqual(get_interactive_record_entity(reference, 0)["kind"], "entity_detail")
         self.assertTrue(first["page"]["has_more"])
         self.assertEqual(len(second["records"]), 1)
         self.assertFalse(second["page"]["has_more"])
+
+    def test_short_person_list_uses_the_same_merged_detail_link(self):
+        answer = "총 2건\n회원명\n홍길동\n홍길동"
+        plan = QueryPlan(status="ready", dataframe="df0", operation="list", select=("회원명",))
+        execution = execute_query_plan(validate_query_plan(
+            plan, dataframes=self.mapping, source_by_alias={"df0": "test.xlsx"},
+        ))
+        result = build_interactive_result(execution, answer=answer)
+
+        self.assertIsNotNone(result["records_detail_ref"])
+        self.assertEqual([item["display_name"] for item in result["name_list"]], ["홍길동", "홍길동"])
+        detail = get_interactive_record_entity(
+            result["records_detail_ref"], result["name_list"][0]["row_index"],
+        )
+        self.assertEqual(len(detail["payment_history"]), 2)
 
     def test_expired_detail_is_removed(self):
         with patch("pandas_engine.interactive.monotonic", return_value=100.0):
@@ -132,9 +153,36 @@ class InteractiveResultTest(unittest.TestCase):
         execution = execute_query_plan(validate_query_plan(plan, dataframes={"df_many": df}, source_by_alias={"df_many": "many.xlsx"}))
         answer = "\n".join(df["회원명"].tolist())
         result = build_interactive_result(execution, page_size=50, answer=answer)
-        linked_names = [segment["text"] for segment in result["inline_segments"] if segment.get("kind") == "entity"]
+        linked_names = [
+            segment["text"] for segment in result["inline_segments"]
+            if segment.get("kind") in {"entity", "record_entity"}
+        ]
         self.assertEqual(len(result["entities"]), 50)
         self.assertEqual(len(linked_names), 55)
+
+    def test_single_person_payment_answer_keeps_a_clickable_name(self):
+        plan = QueryPlan(
+            status="ready", dataframe="df0", operation="sum", target="결제 금액",
+            filters=(FilterCondition(column="회원명", operator="eq", value="홍길동"),),
+        )
+        execution = execute_query_plan(validate_query_plan(
+            plan, dataframes=self.mapping, source_by_alias={"df0": "test.xlsx"},
+        ))
+        answer = _format_query_execution_result(execution, "홍길동 납부 내역 알려줘")
+        self.assertIn("홍길동", answer)
+        result = build_interactive_result(execution, answer=answer)
+        links = [
+            segment for segment in result["inline_segments"]
+            if segment.get("kind") in {"entity", "record_entity"}
+        ]
+        self.assertTrue(links)
+        self.assertTrue(all(segment["text"] == "홍길동" for segment in links))
+        self.assertEqual(result["person_detail"]["display_name"], "홍길동")
+        self.assertTrue(any(segment.get("result_ref") for segment in links))
+        detail = get_interactive_record_entity(
+            result["person_detail"]["result_ref"], result["person_detail"]["row_index"],
+        )
+        self.assertEqual(len(detail["payment_history"]), 2)
 
     def test_different_names_with_same_mask_candidate_keep_both_links(self):
         df = pd.DataFrame({
@@ -161,7 +209,7 @@ class InteractiveResultTest(unittest.TestCase):
         linked_names = [
             segment["text"]
             for segment in result["inline_segments"]
-            if segment.get("kind") == "entity"
+            if segment.get("kind") in {"entity", "record_entity"}
         ]
         self.assertEqual(linked_names, ["이종호", "이정호"])
         self.assertEqual(len({entity["entity_id"] for entity in result["entities"]}), 2)
@@ -178,9 +226,16 @@ class InteractiveResultTest(unittest.TestCase):
         )
         execution = execute_query_plan(validate_query_plan(plan, dataframes={"df_group": df}, source_by_alias={"df_group": "group.xlsx"}))
         result = build_interactive_result(execution, answer="홍길동 30,000")
-        name_segments = [segment for segment in result["inline_segments"] if segment.get("kind") == "entity"]
+        name_segments = [
+            segment for segment in result["inline_segments"]
+            if segment.get("kind") in {"entity", "record_entity"}
+        ]
         self.assertEqual(len(name_segments), 1)
-        detail = get_interactive_detail(name_segments[0]["detail_ref"])
+        detail = (
+            get_interactive_record_entity(name_segments[0]["result_ref"], name_segments[0]["row_index"])
+            if name_segments[0].get("result_ref")
+            else get_interactive_detail(name_segments[0]["detail_ref"])
+        )
         self.assertIn("전공", [attribute["column"] for attribute in detail["attributes"]])
         self.assertEqual(len(detail["payment_history"]), 2)
         amounts = [

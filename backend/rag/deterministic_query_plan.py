@@ -783,7 +783,18 @@ def build_schema_grounded_plan(
             )
         if rank_position is not None:
             return None
-        return QueryPlan(status="ready", dataframe=alias, operation="list", filters=tuple(filters), select=select)
+        distinct_by = (
+            (str(person),)
+            if person is not None and re.search(
+                r"(?:전체|모든)\s*(?:회원|사람|인원).*(?:보여|목록|명단|리스트|조회)",
+                question,
+            )
+            else ()
+        )
+        return QueryPlan(
+            status="ready", dataframe=alias, operation="list", filters=tuple(filters),
+            select=select, distinct_by=distinct_by,
+        )
     return None
 
 

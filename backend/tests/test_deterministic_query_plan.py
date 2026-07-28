@@ -424,6 +424,7 @@ class DeterministicQueryPlanTest(unittest.TestCase):
 
         self.assertIsNotNone(plan)
         self.assertEqual(plan.operation, "list")
+        self.assertEqual(plan.distinct_by, ("회원명",))
 
     def test_total_records_is_count_even_with_amount_wording(self):
         plan = self._plan("총 기록 얼마야?", "sum_amount")

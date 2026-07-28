@@ -76,7 +76,7 @@ from rag.vector import (
     current_vector_evidence,
 )
 from rag.pandas_rag import _answer_pandas, current_interactive_result
-from pandas_engine.interactive import get_interactive_detail
+from pandas_engine.interactive import get_interactive_detail, get_interactive_record_entity
 from rag.question_engine import (
     QuestionEngineError,
     compare_shadow_decision,
@@ -451,6 +451,14 @@ def chat_detail(reference: str, offset: int = 0, limit: int = 200, _: None = Dep
     detail = get_interactive_detail(reference, offset=offset, limit=limit)
     if detail is None:
         raise HTTPException(status_code=404, detail="상세 조회 정보가 없거나 만료되었습니다.")
+    return detail
+
+
+@app.get("/chat/results/{reference}/person/{row_index}")
+def chat_result_person(reference: str, row_index: int, _: None = Depends(_verify_api_key)):
+    detail = get_interactive_record_entity(reference, row_index)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="인물 상세 정보를 찾을 수 없습니다.")
     return detail
 
 

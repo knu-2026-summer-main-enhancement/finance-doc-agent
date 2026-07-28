@@ -642,13 +642,17 @@ function evidenceMatch(text) {
     .sort((left, right) => left.index - right.index)[0];
 }
 
-function renderExpandableNameList(body, names, fullAnswer = "") {
+function renderExpandableNameList(body, names, resultReference, fullAnswer = "") {
   const initialVisibleCount = 200;
-  const firstItem = fullAnswer.indexOf("\n- ");
-  if (!Array.isArray(names) || !names.length || firstItem < 0) return false;
+  if (!Array.isArray(names) || !names.length || !resultReference) return false;
   const evidence = evidenceMatch(fullAnswer);
-  const listEnd = evidence ? evidence.index : fullAnswer.length;
-  body.replaceChildren(document.createTextNode(fullAnswer.slice(0, firstItem).trimEnd()));
+  const answerEnd = evidence ? evidence.index : fullAnswer.length;
+  const firstNameIndex = fullAnswer.indexOf(names[0].display_name);
+  const heading = (firstNameIndex >= 0
+    ? fullAnswer.slice(0, firstNameIndex)
+    : fullAnswer.slice(0, answerEnd)
+  ).trimEnd();
+  body.replaceChildren(document.createTextNode(heading));
   const list = document.createElement("div");
   list.className = "expandable-name-list";
   const extraRows = document.createElement("div");
@@ -663,7 +667,7 @@ function renderExpandableNameList(body, names, fullAnswer = "") {
     button.className = "inline-detail-link entity";
     button.textContent = entry.display_name;
     button.title = "인물 정보와 납부 기록 보기";
-    button.addEventListener("click", () => openDetail(entry.detail_ref));
+    button.addEventListener("click", () => openRecordEntity(resultReference, entry.row_index));
     row.append(button);
     if (index >= initialVisibleCount) extraRows.append(row);
     else list.append(row);
@@ -695,7 +699,7 @@ function renderExpandableNameList(body, names, fullAnswer = "") {
     });
     body.append(toggle);
   }
-  if (evidence) body.append(document.createTextNode(`\n\n${fullAnswer.slice(listEnd)}`));
+  if (evidence) body.append(document.createTextNode(`\n\n${fullAnswer.slice(evidence.index)}`));
   collapseEvidence(body);
   return true;
 }
@@ -707,16 +711,22 @@ function renderInlineSegments(body, segments, fullAnswer = "") {
   }
   body.replaceChildren();
   segments.forEach((segment) => {
-    if (!segment.detail_ref) {
+    if (!segment.detail_ref && !segment.result_ref) {
       body.append(document.createTextNode(segment.text || ""));
       return;
     }
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `inline-detail-link ${segment.kind || "detail"}`;
+    button.className = `inline-detail-link ${segment.kind === "record_entity" ? "entity" : (segment.kind || "detail")}`;
     button.textContent = segment.text || "상세 보기";
-    button.title = segment.kind === "entity" ? "인물 정보와 납부 기록 보기" : "금액 계산 근거 보기";
-    button.addEventListener("click", () => openDetail(segment.detail_ref));
+    button.title = (segment.kind === "entity" || segment.kind === "record_entity") ? "인물 정보와 납부 기록 보기" : "금액 계산 근거 보기";
+    button.addEventListener("click", () => {
+      if (segment.result_ref) {
+        openRecordEntity(segment.result_ref, segment.row_index);
+      } else {
+        openDetail(segment.detail_ref);
+      }
+    });
     body.append(button);
   });
   // Interactive segments omit calculation evidence, so restore the original
@@ -926,7 +936,21 @@ async function openDetail(reference, offset = 0) {
   }
 }
 
-function appendRecordRows(message, records, columns, recordEntities = [], bulletList = false) {
+async function openRecordEntity(resultReference, rowIndex) {
+  try {
+    const response = await fetch(
+      `/chat/results/${encodeURIComponent(resultReference)}/person/${rowIndex}`,
+      { headers: apiHeaders() },
+    );
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const detail = await response.json();
+    renderDetail(detail);
+  } catch (error) {
+    showToast(error.message || "인물 정보를 불러오지 못했습니다.");
+  }
+}
+
+function appendRecordRows(message, records, columns, recordEntities = [], bulletList = false, resultReference = "") {
   if (!records?.length) return;
   const body = message.querySelector(".message-body");
   const evidence = body.querySelector(".calculation-evidence");
@@ -944,7 +968,7 @@ function appendRecordRows(message, records, columns, recordEntities = [], bullet
         button.className = "inline-detail-link entity";
         button.textContent = name;
         button.title = "인물 정보와 납부 기록 보기";
-        button.addEventListener("click", () => openDetail(entity.detail_ref));
+        button.addEventListener("click", () => openRecordEntity(resultReference, entity.row_index));
         continuation.append(button);
       } else {
         continuation.append(document.createTextNode(name));
@@ -972,7 +996,7 @@ function appendRecordRows(message, records, columns, recordEntities = [], bullet
         name.className = "inline-detail-link entity";
         name.textContent = value;
         name.title = "인물 정보와 납부 기록 보기";
-        name.addEventListener("click", () => openDetail(entity.detail_ref));
+        name.addEventListener("click", () => openRecordEntity(resultReference, entity.row_index));
         continuation.append(name);
         linked = true;
       } else {
@@ -1011,7 +1035,10 @@ function appendRecordsMoreAction(message, result) {
       );
       if (!response.ok) throw new Error(await errorMessage(response));
       const detail = await response.json();
-      appendRecordRows(message, detail.records, columns, detail.record_entities || [], bulletList);
+      appendRecordRows(
+        message, detail.records, columns, detail.record_entities || [], bulletList,
+        result.records_detail_ref,
+      );
       offset = (Number(detail.page?.offset) || offset) + (detail.records?.length || 0);
       if (detail.page?.has_more) {
         updateLabel(Number(detail.page.total) || offset);
@@ -1071,7 +1098,8 @@ async function sendQuestion(question, options = {}) {
       data.evidence || [],
     );
     const renderedNameList = renderExpandableNameList(
-      message.querySelector(".message-body"), data.result?.name_list, data.answer || "",
+      message.querySelector(".message-body"), data.result?.name_list,
+      data.result?.records_detail_ref, data.answer || "",
     );
     if (!renderedNameList) {
       renderInlineSegments(message.querySelector(".message-body"), data.result?.inline_segments, data.answer || "");

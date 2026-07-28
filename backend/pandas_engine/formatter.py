@@ -461,8 +461,16 @@ def _format_query_execution_result(
         else:
             formatted_value = _format_number(value)
         suffix = "원" if result.target_data_type == "money" else ""
+        person_prefix = ""
+        if isinstance(result.matched_frame, pd.DataFrame):
+            groups = _entity_groups(result.matched_frame)
+            if len(groups) == 1:
+                group = groups[0]
+                name = str(group.get("name") or "").strip()
+                if name and not _group_is_organization(group):
+                    person_prefix = f"{name}님의 "
         answer = (
-            f"{result.target or '대상 컬럼'} {operation_label}은 "
+            f"{person_prefix}{result.target or '대상 컬럼'} {operation_label}은 "
             f"{formatted_value}{suffix}입니다."
         )
     return answer + "\n\n" + _format_query_plan_evidence(result)
@@ -707,6 +715,11 @@ def _format_dataframe_for_amount_question(df: pd.DataFrame, question: str) -> st
         prefix = f"{label}의 "
     elif _group_is_organization(group) and name:
         prefix = f"{name}의 "
+    elif name:
+        # Keep the queried person's name in a single-person amount answer.
+        # Besides making the response easier to read, the UI uses that exact
+        # text to attach the person-detail interaction.
+        prefix = f"{name}님의 "
     else:
         prefix = ""
 
