@@ -37,7 +37,11 @@ from langchain_ollama import OllamaEmbeddings
 from utils.ingest import process_file, ensure_manifest_table, mark_ingestion_started
 from utils.parsers.image_table_ocr_parser import IMAGE_EXTS
 from utils.manifest import get_manifest_status, get_all_manifest_entries, delete_manifest
-from utils.document_structure import document_structure, document_section
+from utils.document_structure import (
+    document_structure,
+    document_section,
+    suggested_section_titles,
+)
 from core.config import (
     OLLAMA_BASE_URL, OLLAMA_MODEL, EMBED_MODEL,
     CHROMA_HOST, CHROMA_PORT, DATA_FOLDER,
@@ -420,6 +424,35 @@ def chat_suggestions(
 ):
     if len(req.query) > 200:
         raise HTTPException(status_code=400, detail="query가 너무 깁니다.")
+    section_suggestions: list[dict[str, str]] = []
+    if req.catalog and len(req.sources) == 1:
+        source = os.path.basename(req.sources[0])
+        manifest = get_manifest_status(source)
+        if manifest and manifest.get("status") == "SUCCESS":
+            structure = document_structure(source, file_type=manifest.get("file_type"))
+            if "list_sections" in structure["capabilities"]:
+                section_suggestions = [
+                    {
+                        "text": "이 문서의 전체 섹션 보여줘",
+                        "label": "문서 구성",
+                        "operation": "list_document_sections",
+                        "path": "metadata",
+                        "path_label": "빠른 문서 조회",
+                        "featured": True,
+                    },
+                    *[
+                        {
+                            "text": f"{title} 알려줘",
+                            "label": "문서 섹션",
+                            "operation": "document_section_question",
+                            "path": "vector",
+                            "path_label": "AI 문서 검색",
+                            "featured": True,
+                        }
+                        for title in suggested_section_titles(structure, limit=2)
+                    ],
+                ]
+
     with document_scope(req.sources):
         dataframes = scoped_mapping(_df_namespace, _df_sources)
         suggestions = build_question_suggestions(
@@ -431,6 +464,7 @@ def chat_suggestions(
         date_catalog = build_date_autocomplete_catalog(dataframes) if req.catalog else {"actions": []}
     return {
         "suggestions": suggestions,
+        "section_suggestions": section_suggestions,
         "person_names": person_catalog["names"],
         "person_actions": person_catalog["actions"],
         "date_actions": date_catalog["actions"],

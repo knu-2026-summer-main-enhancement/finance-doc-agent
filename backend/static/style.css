@@ -51,6 +51,14 @@
   padding: 15px; border: 1px solid var(--line); border-radius: 12px;
   background: #f8faf9; white-space: pre-wrap; line-height: 1.65; overflow-wrap: anywhere;
 }
+.section-overview-intro { margin: 0 0 10px; color: var(--muted); line-height: 1.55; }
+.section-overview-list { display: grid; gap: 6px; }
+.section-overview-item {
+  width: 100%; padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px;
+  color: var(--ink); background: #fff; text-align: left; font: inherit; line-height: 1.4;
+  cursor: pointer; overflow-wrap: anywhere;
+}
+.section-overview-item:hover { border-color: var(--accent); background: #f4f8f5; }
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }

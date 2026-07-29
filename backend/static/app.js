@@ -802,6 +802,9 @@ async function openDocumentSections(source) {
 async function openDocumentSection(source, sectionId) {
   elements.detailTitle.textContent = "섹션 내용";
   elements.detailBody.innerHTML = '<div class="document-loading">섹션 내용을 불러오는 중입니다.</div>';
+  // The section can be opened from either the document browser or a chat
+  // overview.  The latter has no already-open detail dialog.
+  if (!elements.detailDialog.open) elements.detailDialog.showModal();
   try {
     const response = await fetch(
       `/documents/${encodeURIComponent(source)}/sections/${encodeURIComponent(sectionId)}`,
@@ -1174,11 +1177,56 @@ function setSuggestionIndex(index) {
   options[state.suggestionIndex].scrollIntoView({ block: "nearest" });
 }
 
+async function showDocumentSectionsInChat(source, question) {
+  if (!source || state.busy) return;
+  elements.questionInput.value = "";
+  hideQuestionSuggestions();
+  resizeTextarea();
+  elements.chatArea.querySelector(".welcome-card")?.remove();
+  appendMessage("user", question);
+  const message = appendMessage("assistant", "섹션을 불러오는 중입니다.", "metadata", [source]);
+  const body = message.querySelector(".message-body");
+
+  try {
+    const response = await fetch(
+      `/documents/${encodeURIComponent(source)}/sections`,
+      { headers: apiHeaders() }
+    );
+    if (!response.ok) throw new Error(await errorMessage(response));
+    const data = await response.json();
+    const sections = Array.isArray(data.sections) ? data.sections : [];
+    body.replaceChildren();
+
+    const intro = document.createElement("p");
+    intro.className = "section-overview-intro";
+    intro.textContent = `이 문서는 ${sections.length}개 항목으로 구성되어 있어요. 원하는 항목을 누르면 질문을 바로 만들 수 있어요.`;
+    const list = document.createElement("div");
+    list.className = "section-overview-list";
+    sections.forEach((section) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "section-overview-item";
+      button.textContent = section.title;
+      button.addEventListener("click", () => prepareSectionQuestion(section.title));
+      list.append(button);
+    });
+    body.append(intro, list);
+  } catch (error) {
+    body.textContent = `섹션을 불러오지 못했습니다: ${error.message}`;
+  }
+  elements.chatArea.scrollTop = elements.chatArea.scrollHeight;
+}
+
+function prepareSectionQuestion(title) {
+  elements.questionInput.value = `${title} 알려줘`;
+  resizeTextarea();
+  elements.questionInput.focus();
+}
+
 function chooseQuestionSuggestion(text, operation = "") {
   recordSuggestionUsage(operation);
   if (operation === "list_document_sections" && state.selected.size === 1) {
-    hideQuestionSuggestions();
-    openDocumentSections([...state.selected][0]);
+    showDocumentSectionsInChat([...state.selected][0], text);
     return;
   }
   elements.questionInput.value = text;
@@ -1297,21 +1345,12 @@ async function primeQuestionCatalog() {
     if (!response.ok) throw new Error(await errorMessage(response));
     const data = await response.json();
     if (scopeKey === suggestionScopeKey()) {
-      state.suggestionCatalog = data.suggestions || [];
-      if (state.selected.size === 1) {
-        const selectedDocument = state.documents.find(
-          (item) => item.source === [...state.selected][0]
-        );
-        if ((selectedDocument?.metadata?.capabilities || []).includes("list_sections")) {
-          state.suggestionCatalog.unshift({
-            text: "이 문서의 전체 섹션 보여줘",
-            label: "문서 목차",
-            operation: "list_document_sections",
-            path: "vector",
-            path_label: "AI 문서 검색",
-          });
-        }
-      }
+      // A sectioned document exposes its first shortcuts from server-side
+      // metadata.  The browser does not guess section names from PDF text.
+      state.suggestionCatalog = [
+        ...(Array.isArray(data.section_suggestions) ? data.section_suggestions : []),
+        ...(data.suggestions || []),
+      ];
       state.personAutocomplete = {
         names: Array.isArray(data.person_names) ? data.person_names : [],
         actions: Array.isArray(data.person_actions) ? data.person_actions : [],
@@ -1501,8 +1540,10 @@ function scoreSuggestionCandidate(candidate, query, index) {
   let score = usage ? Math.min(Number(usage.count || 0), 8) : 0;
   if (ageHours <= 24) score += 6;
   else if (ageHours <= 24 * 7) score += 3;
-  if (!normalizedQuery) score += candidate.path === "fast" ? 20 : 10;
-  else if (searchable.startsWith(normalizedQuery)) score += 100;
+  if (!normalizedQuery) {
+    score += candidate.path === "fast" ? 20 : 10;
+    if (candidate.featured) score += 1000;
+  } else if (searchable.startsWith(normalizedQuery)) score += 100;
   else if (searchable.includes(normalizedQuery)) score += 70;
   else {
     const matches = terms.filter((term) => searchable.includes(term)).length;

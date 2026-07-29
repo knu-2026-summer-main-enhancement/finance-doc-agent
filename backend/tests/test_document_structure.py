@@ -3,7 +3,11 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from utils.document_structure import document_section, document_structure
+from utils.document_structure import (
+    document_section,
+    document_structure,
+    suggested_section_titles,
+)
 
 
 def _section_record(
@@ -79,6 +83,40 @@ class DocumentStructureTests(unittest.TestCase):
         self.assertNotIn("list_sections", metadata["capabilities"])
         self.assertIn("structured_query", metadata["capabilities"])
 
+    def test_hwp_sections_and_tables_are_reported_as_mixed_document(self):
+        records = [
+            {
+                "text": "□ 지원대상\n학부 재학생",
+                "metadata": {
+                    "file_type": "hwp",
+                    "content_type": "hwp_section_child",
+                    "section_id": "s0",
+                    "section_title": "□ 지원대상",
+                    "section_index": 0,
+                    "child_index": 0,
+                },
+            },
+            {
+                "text": "구분: 학부 / 금액: 100만원",
+                "metadata": {
+                    "file_type": "hwp",
+                    "content_type": "hwp_table_row",
+                    "table_id": "t0",
+                },
+            },
+        ]
+        with patch(
+            "utils.document_structure.get_chroma_source_records",
+            return_value=records,
+        ):
+            metadata = document_structure("운영계획.hwp", file_type="hwp")
+
+        self.assertEqual(metadata["document_type"], "mixed_document")
+        self.assertTrue(metadata["features"]["has_sections"])
+        self.assertTrue(metadata["features"]["has_tables"])
+        self.assertTrue(metadata["features"]["has_text_content"])
+        self.assertEqual(metadata["statistics"]["section_count"], 1)
+
     def test_section_detail_joins_children_in_child_order(self):
         records = [
             _section_record(
@@ -107,6 +145,22 @@ class DocumentStructureTests(unittest.TestCase):
         self.assertIsNotNone(detail)
         self.assertEqual(detail["pages"], [1, 2])
         self.assertEqual(detail["content"], "첫 번째\n\n두 번째")
+
+    def test_section_shortcuts_use_stored_titles_with_generic_preference(self):
+        structure = {
+            "capabilities": ["semantic_question", "list_sections"],
+            "sections": [
+                {"title": "추진 배경"},
+                {"title": "향후 추진 일정"},
+                {"title": "선발 기준"},
+                {"title": "선발 대상"},
+            ],
+        }
+
+        self.assertEqual(
+            suggested_section_titles(structure),
+            ["선발 대상", "선발 기준"],
+        )
 
 
 if __name__ == "__main__":

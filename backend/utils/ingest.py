@@ -71,7 +71,10 @@ from utils.chroma_store import count_chroma_documents, chroma_source_has_metadat
 from utils.semantic_schema import SCHEMA_VERSION  # noqa: E402
 from utils.parsers.xlsx_parser import ingest_xlsx  # noqa: E402
 from utils.parsers.pdf_parser import ingest_pdf_hybrid, PDF_SECTION_SCHEMA_VERSION  # noqa: E402
-from utils.parsers.hwp_parser import convert_hwp_to_html_and_ingest  # noqa: E402
+from utils.parsers.hwp_parser import (  # noqa: E402
+    HWP_SECTION_SCHEMA_VERSION,
+    convert_hwp_to_html_and_ingest,
+)
 from utils.parsers.image_table_ocr_parser import IMAGE_EXTS, ingest_image_table  # noqa: E402
 
 
@@ -115,14 +118,23 @@ def process_file(file_path: str):
         manifest = get_manifest_status(source) or {}
         expected_chunks = int(manifest.get("chroma_doc_count") or 0)
         actual_chunks = count_chroma_documents(source)
-        parser_is_current = (
-            ext != "pdf"
-            or chroma_source_has_metadata(
+        if ext == "pdf":
+            parser_is_current = chroma_source_has_metadata(
                 source,
                 "parser_version",
                 PDF_SECTION_SCHEMA_VERSION,
             )
-        )
+        elif ext in ("hwp", "hwpx"):
+            parser_is_current = (
+                expected_chunks > 0
+                and chroma_source_has_metadata(
+                    source,
+                    "parser_version",
+                    HWP_SECTION_SCHEMA_VERSION,
+                )
+            )
+        else:
+            parser_is_current = True
         if (
             parser_is_current
             and (expected_chunks == 0 or actual_chunks >= expected_chunks)

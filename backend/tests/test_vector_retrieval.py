@@ -21,7 +21,10 @@ from rag.vector import (
     _explicit_preference_answer,
     _explicit_priority_answer,
     _explicit_scalar_field_answer,
+    _explicit_section_title_documents,
+    _explicit_table_attribute_answer,
     _explicit_table_comparison_answer,
+    _remove_contradictory_empty_paragraphs,
     _repair_explicit_difference_answer,
     _ensure_exception_evidence,
     _is_numeric_eligibility_question,
@@ -34,6 +37,7 @@ from rag.vector import (
     _required_evidence_missing,
     _rerank_candidates,
     _retrieve_verified_documents,
+    _section_intent_queries,
     _table_alignment_notes,
 )
 
@@ -68,6 +72,69 @@ class _ScoredStore(_LowScoreHeadingStore):
 
 
 class VectorRetrievalTests(unittest.TestCase):
+    def test_explicit_section_title_does_not_require_section_number(self):
+        schedule = Document(
+            page_content="6 추진 일정\n장학생 추천 2026. 5. 7.",
+            metadata={
+                "source": "plan.hwp",
+                "section_id": "s6",
+                "section_title": "6 추진 일정",
+                "content_type": "hwp_section_child",
+            },
+        )
+        unrelated = Document(
+            page_content="1 장학 개요",
+            metadata={
+                "source": "plan.hwp",
+                "section_id": "s1",
+                "section_title": "1 장학 개요",
+                "content_type": "hwp_section_child",
+            },
+        )
+        store = _ScoredStore([], siblings=[unrelated, schedule])
+
+        selected = _explicit_section_title_documents(
+            store,
+            "추진 일정 알려줘",
+            {"source": "plan.hwp"},
+        )
+
+        self.assertEqual(selected, [schedule])
+
+    def test_correct_answer_drops_contradictory_not_found_paragraph(self):
+        answer = _remove_contradictory_empty_paragraphs(
+            "지급 방법은 학생 계좌로 입금됩니다.\n\n"
+            "학생계좌로 입금\n\n"
+            "해당 내용은 문서에서 확인할 수 없습니다."
+        )
+
+        self.assertEqual(
+            answer,
+            "지급 방법은 학생 계좌로 입금됩니다.\n\n학생계좌로 입금",
+        )
+
+    def test_standalone_not_found_answer_is_preserved(self):
+        answer = "해당 내용은 문서에서 확인할 수 없습니다."
+
+        self.assertEqual(
+            _remove_contradictory_empty_paragraphs(answer),
+            answer,
+        )
+
+    def test_colloquial_section_questions_get_generic_retrieval_aliases(self):
+        self.assertIn(
+            "추진배경 목적 필요성 지원 이유",
+            _section_intent_queries("이 제도는 왜 필요한 거야?"),
+        )
+        self.assertIn(
+            "선발대상 지원 대상 자격",
+            _section_intent_queries("누가 지원 대상이야?"),
+        )
+        self.assertIn(
+            "향후 추진일정 접수 기간",
+            _section_intent_queries("접수 기간이 언제야?"),
+        )
+
     def test_colloquial_origin_question_uses_document_explanation_search(self):
         for question in (
             "이 장학금은 왜 만들어졌어?",
@@ -119,6 +186,33 @@ class VectorRetrievalTests(unittest.TestCase):
             docs = asyncio.run(_retrieve_verified_documents(["추진배경 뭐야?"]))
 
         self.assertEqual(docs, [document])
+
+    def test_section_heading_lexical_match_survives_table_heavy_candidates(self):
+        source = "plan.pdf"
+        table = Document(
+            page_content="보험료 표 금액 136195 179418",
+            metadata={"source": source, "page": 2},
+        )
+        background = Document(
+            page_content="학생 지원이 필요한 이유를 설명합니다.",
+            metadata={
+                "source": source,
+                "page": 1,
+                "section_title": "Ⅰ 추진배경",
+                "section_id": "p1:s0",
+                "content_type": "pdf_section_child",
+            },
+        )
+        store = _ScoredStore([(table, 0.30), (background, -0.20)], siblings=[table, background])
+        with (
+            document_scope([source]),
+            patch("rag.vector.get_vectorstore", return_value=store),
+        ):
+            docs = asyncio.run(_retrieve_verified_documents([
+                "추진배경 목적 필요성 지원 이유",
+            ]))
+
+        self.assertIn(background, docs)
 
     def test_legacy_heading_does_not_expand_unrelated_page_chunks(self):
         source = "scholarship-plan.pdf"
@@ -515,6 +609,18 @@ class VectorRetrievalTests(unittest.TestCase):
             _explicit_scalar_field_answer("한 명당 지원금은?", docs),
         )
 
+    def test_explicit_scalar_field_reads_household_insurance_row(self):
+        docs = [Document(page_content=(
+            "보험료(A×0.03495) 53,772 88,059 112,379 136,195 158,464 179,418"
+        ))]
+
+        answer = _explicit_scalar_field_answer(
+            "4인 가구 건강보험료 기준은 얼마 이하여야 해?",
+            docs,
+        )
+
+        self.assertIn("136,195원", answer)
+
     def test_explicit_scalar_fields_keep_multi_field_request_together(self):
         docs = [Document(page_content=(
             "(소요예산) 금 108,000,000원\n"
@@ -720,6 +826,40 @@ class VectorRetrievalTests(unittest.TestCase):
         self.assertIn("총평점 평균 3.4", answer)
         self.assertIn("미달합니다", answer)
         self.assertIn("추천할 수 없습니다", answer)
+
+    def test_bare_selection_word_does_not_trigger_criteria_guard(self):
+        docs = [Document(page_content="추진 일정과 담당 업무")]
+
+        self.assertEqual(
+            _required_evidence_missing("장학생 선발 확정 주관부서 어디야?", docs),
+            "",
+        )
+
+    def test_explicit_table_attribute_uses_matching_schedule_row(self):
+        docs = [
+            Document(
+                page_content=(
+                    "[문서: plan.hwp] / 구_분: 대학 → 학생과 "
+                    "/ 내_용: 장학생 추천 / 기_간: 2025. 10. 31."
+                ),
+                metadata={"content_type": "hwp_table_row"},
+            ),
+            Document(
+                page_content=(
+                    "[문서: plan.hwp] / 구_분: 학생과 "
+                    "/ 내_용: 장학생 선발 확정 / 기_간: 2025. 11월 중순"
+                ),
+                metadata={"content_type": "hwp_table_row"},
+            ),
+        ]
+
+        self.assertEqual(
+            _explicit_table_attribute_answer(
+                "장학생 선발 확정 주관부서 어디야?",
+                docs,
+            ),
+            "주관부서는 학생과입니다.",
+        )
 
     def test_schedule_question_with_how_does_not_become_procedure_question(self):
         docs = [

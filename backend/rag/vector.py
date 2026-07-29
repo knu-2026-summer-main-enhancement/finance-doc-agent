@@ -42,6 +42,28 @@ _vector_evidence_ctx: ContextVar[list[dict[str, Any]]] = ContextVar(
 )
 _query_expansion_cache: dict[tuple[str, bool], tuple[float, list[str]]] = {}
 _QUERY_EXPANSION_CACHE_TTL = 300.0
+_SECTION_INTENT_QUERY_RULES = (
+    (
+        re.compile(r"왜|필요|배경|취지|목적", re.IGNORECASE),
+        "추진배경 목적 필요성 지원 이유",
+    ),
+    (
+        re.compile(r"대상|누구|포함", re.IGNORECASE),
+        "선발대상 지원 대상 자격",
+    ),
+    (
+        re.compile(r"기준|조건|평점|학점|성적", re.IGNORECASE),
+        "선발기준 자격 요건 성적 기준",
+    ),
+    (
+        re.compile(r"절차|신청|서류|제출|접수", re.IGNORECASE),
+        "선발절차 신청방법 구비서류",
+    ),
+    (
+        re.compile(r"일정|언제|기간|마감", re.IGNORECASE),
+        "향후 추진일정 접수 기간",
+    ),
+)
 
 _DOC_EXPLAIN_RE = re.compile(
     r"문서의?\s*(목적|내용|설명)|설명해|어떤\s*(문서|내용)|요약해"
@@ -67,7 +89,10 @@ _EVIDENCE_RULES = (
         "문서의 목적이나 취지를 직접 확인할 수 있는 근거가 없습니다.",
     ),
     (
-        re.compile(r"기준|조건|자격|요건|규정|선발", re.IGNORECASE),
+        re.compile(
+            r"기준|조건|자격|요건|규정|선발\s*(?:기준|조건|자격|요건|규정|대상)",
+            re.IGNORECASE,
+        ),
         re.compile(r"기준|조건|자격|요건|규정|선발|대상은|대상자", re.IGNORECASE),
         "질문한 기준이나 조건은 문서에서 확인할 수 없습니다.",
     ),
@@ -148,6 +173,20 @@ def _relative_score_candidates(
         (doc, float(score))
         for doc, score in scored
         if float(score) >= floor
+    ]
+
+
+def _section_intent_queries(question: str) -> list[str]:
+    """Add generic section concepts for explanatory PDF questions.
+
+    These are retrieval aliases, not document-specific answers or titles.  They
+    let a natural phrasing such as "왜 필요한 제도야" reach a stored
+    "추진배경" section even when table rows have a higher embedding score.
+    """
+    return [
+        query
+        for pattern, query in _SECTION_INTENT_QUERY_RULES
+        if pattern.search(question)
     ]
 
 
@@ -715,6 +754,21 @@ def _explicit_scalar_field_answer(
         for line in str(doc.page_content).splitlines()
         if line.strip()
     ]
+    household_match = re.search(r"(\d+)\s*인\s*가구", question)
+    if household_match and re.search(r"건강\s*보험료|보험료", question):
+        household_size = int(household_match.group(1))
+        for line in lines:
+            if not re.match(r"^(?:건강)?보험료", line):
+                continue
+            value_line = re.sub(r"\([^)]*\)", "", line)
+            values = re.findall(r"(?<!\d)(\d{1,3}(?:,\d{3})+|\d+)(?!\d)", value_line)
+            if len(values) < household_size:
+                continue
+            value = values[household_size - 1]
+            return (
+                f"문서의 {household_size}인 가구 건강보험료 기준은 "
+                f"월평균 납부액 {value}원 이하입니다."
+            )
     if (
         re.search(r"예산", question)
         and re.search(r"선발인원|인원", question)
@@ -964,6 +1018,36 @@ def _ensure_exception_evidence(
     return answer
 
 
+def _remove_contradictory_empty_paragraphs(answer: str) -> str:
+    """Drop a trailing no-evidence paragraph when the answer already has evidence.
+
+    Small local models occasionally produce a correct grounded statement and
+    then append a stock "not found" sentence. Keeping both is self-
+    contradictory, while removing the stock sentence is safe only when
+    another substantive paragraph remains.
+    """
+    paragraphs = [
+        paragraph.strip()
+        for paragraph in re.split(r"\n\s*\n", str(answer or "").strip())
+        if paragraph.strip()
+    ]
+    if len(paragraphs) < 2:
+        return answer
+
+    empty_flags = [
+        any(signal in paragraph for signal in _VECTOR_EMPTY_SIGNALS)
+        for paragraph in paragraphs
+    ]
+    substantive = [
+        paragraph
+        for paragraph, is_empty in zip(paragraphs, empty_flags)
+        if not is_empty
+    ]
+    if not substantive or not any(empty_flags):
+        return answer
+    return "\n\n".join(substantive)
+
+
 def _section_items(docs: list[Any]) -> list[str]:
     """Extract complete bullet items from one retrieved parent section."""
     section_ids = {
@@ -1046,6 +1130,8 @@ def _rerank_candidates(
         1.0 / max(1, primary_term_frequency[term])
         for term in primary_terms
     )
+    section_intent_aliases = {alias for _pattern, alias in _SECTION_INTENT_QUERY_RULES}
+    section_intent_active = any(query in section_intent_aliases for query in queries)
 
     ranked: list[tuple[float, Any, float, float]] = []
     for key, item in candidates.items():
@@ -1096,6 +1182,10 @@ def _rerank_candidates(
             + support * 0.05
             + diversity * 0.05
         )
+        # Structured table rows are useful for exact values, but they should
+        # not crowd out a titled PDF section for an explanatory section intent.
+        if section_intent_active and title:
+            score += 0.20
         ranked.append((
             score,
             doc,
@@ -1171,6 +1261,60 @@ def _section_filter(doc: Any) -> dict[str, Any] | None:
     }
 
 
+def _compact_section_title(value: object) -> str:
+    text = re.sub(r"^\s*\d+(?:[.)])?\s*", "", str(value or ""))
+    return re.sub(r"[^가-힣A-Za-z0-9]+", "", text).lower()
+
+
+def _explicit_section_title_documents(
+    vectorstore: Any,
+    question: str,
+    source_filter: dict[str, object] | None,
+) -> list[Any]:
+    """Find stored sections whose title is explicitly written in the question."""
+    if not source_filter or not hasattr(vectorstore, "get"):
+        return []
+    try:
+        result = vectorstore.get(
+            where=source_filter,
+            include=["documents", "metadatas"],
+        )
+    except Exception:
+        return []
+
+    compact_question = _compact_section_title(question)
+    matches: dict[tuple[str, str], tuple[int, Any]] = {}
+    for text, metadata in zip(
+        result.get("documents") or [],
+        result.get("metadatas") or [],
+    ):
+        metadata = metadata or {}
+        title = str(metadata.get("section_title", "")).strip()
+        compact_title = _compact_section_title(title)
+        if len(compact_title) < 3 or compact_title not in compact_question:
+            continue
+        source = str(metadata.get("source", ""))
+        section_id = str(metadata.get("section_id", ""))
+        if not source or not section_id:
+            continue
+        doc = Document(page_content=str(text), metadata=metadata)
+        key = (source, section_id)
+        previous = matches.get(key)
+        is_heading = "section" in str(metadata.get("content_type", ""))
+        rank = len(compact_title) * 2 + int(is_heading)
+        if previous is None or rank > previous[0]:
+            matches[key] = (rank, doc)
+
+    if not matches:
+        return []
+    longest = max(rank // 2 for rank, _doc in matches.values())
+    return [
+        doc
+        for rank, doc in matches.values()
+        if rank // 2 == longest
+    ]
+
+
 def _expand_parent_sections(vectorstore: Any, docs: list[Any]) -> list[Any]:
     """Expand a selected child to every stored child of its parent section."""
     expanded: list[Any] = []
@@ -1242,6 +1386,86 @@ def _required_evidence_missing(question: str, docs: list[Any]) -> str:
     return ""
 
 
+_TABLE_FIELD_RE = re.compile(
+    r"(?:^|\s/\s)([^:/\n]+):\s*(.*?)(?=\s/\s[^:/\n]+:\s|$)"
+)
+_RESPONSIBLE_PARTY_QUESTION_RE = re.compile(
+    r"주관\s*(?:부서|기관)|담당\s*(?:부서|기관)|처리\s*부서",
+    re.IGNORECASE,
+)
+_RESPONSIBLE_PARTY_COLUMNS = {
+    "주관부서", "주관기관", "담당부서", "담당기관", "처리부서", "부서", "기관",
+}
+_RESPONSIBLE_PARTY_FALLBACK_COLUMNS = {"구분"}
+_TABLE_ATTRIBUTE_STOPWORDS = {
+    "어디", "어디야", "어디임", "무엇", "뭐야", "알려줘", "장학생",
+    "주관부서", "주관기관", "담당부서", "담당기관", "처리부서",
+}
+
+
+def _normalize_table_field_name(value: object) -> str:
+    return re.sub(r"[\s_]+", "", str(value or "")).strip()
+
+
+def _table_fields(doc: Any) -> dict[str, str]:
+    if "table_row" not in str(doc.metadata.get("content_type", "")):
+        return {}
+    fields: dict[str, str] = {}
+    for key, value in _TABLE_FIELD_RE.findall(str(doc.page_content)):
+        normalized_key = _normalize_table_field_name(key)
+        cleaned_value = str(value).strip(" -")
+        if normalized_key and cleaned_value:
+            fields[normalized_key] = cleaned_value
+    return fields
+
+
+def _explicit_table_attribute_answer(question: str, docs: list[Any]) -> str:
+    """Return the responsible party from the best matching structured table row."""
+    requested = _RESPONSIBLE_PARTY_QUESTION_RE.search(question)
+    if not requested:
+        return ""
+
+    query_terms = {
+        term
+        for term in re.findall(r"[가-힣A-Za-z0-9]+", question)
+        if len(term) >= 2
+        and _normalize_table_field_name(term) not in _TABLE_ATTRIBUTE_STOPWORDS
+    }
+    candidates: list[tuple[int, int, str]] = []
+    for index, doc in enumerate(docs):
+        fields = _table_fields(doc)
+        if not fields:
+            continue
+        party = next(
+            (value for key, value in fields.items() if key in _RESPONSIBLE_PARTY_COLUMNS),
+            "",
+        )
+        if not party:
+            party = next(
+                (
+                    value
+                    for key, value in fields.items()
+                    if key in _RESPONSIBLE_PARTY_FALLBACK_COLUMNS
+                ),
+                "",
+            )
+        if not party:
+            continue
+
+        searchable = " ".join(value for value in fields.values() if value != party)
+        score = sum(term in searchable for term in query_terms)
+        if score:
+            candidates.append((score, -index, party))
+
+    if not candidates:
+        return ""
+    score, _negative_index, party = max(candidates)
+    if score < 2 and len(query_terms) >= 2:
+        return ""
+    label = re.sub(r"\s+", "", requested.group(0))
+    return f"{label}는 {party}입니다."
+
+
 async def _expanded_queries(question: str, is_doc_explain: bool) -> list[str]:
     cache_key = (question, is_doc_explain)
     cached = _query_expansion_cache.get(cache_key)
@@ -1250,6 +1474,9 @@ async def _expanded_queries(question: str, is_doc_explain: bool) -> list[str]:
         return list(cached[1])
 
     queries = [question]
+    for section_query in _section_intent_queries(question):
+        if section_query not in queries:
+            queries.append(section_query)
     if (
         re.search(r"공대|공과대학", question)
         and re.search(r"졸업|수료", question)
@@ -1468,7 +1695,17 @@ async def _retrieve_verified_documents(queries: list[str]) -> list[Any]:
                         if query_terms
                         else 0.0
                     )
-                    if overlap < lexical_floor:
+                    section_title = str((metadata or {}).get("section_title", ""))
+                    section_overlap = (
+                        len(query_terms.intersection(_query_terms(section_title))) / len(query_terms)
+                        if query_terms and section_title
+                        else 0.0
+                    )
+                    # A concise section heading can express the user's intent
+                    # with one term (for example, "추진배경").  Preserve that
+                    # candidate even when its longer body dilutes lexical
+                    # overlap below the table-oriented fallback threshold.
+                    if overlap < lexical_floor and section_overlap < 0.25:
                         continue
                     key = _doc_key(doc)
                     previous = qualified.get(key)
@@ -1504,7 +1741,16 @@ async def _retrieve_verified_documents(queries: list[str]) -> list[Any]:
     if not qualified:
         return []
 
-    reranked = _rerank_candidates(queries, qualified, mmr_order)
+    explicit_sections = _explicit_section_title_documents(
+        vectorstore,
+        queries[0],
+        source_filter,
+    )
+    reranked = (
+        explicit_sections
+        if explicit_sections
+        else _rerank_candidates(queries, qualified, mmr_order)
+    )
     reranked = await _ensure_multi_document_coverage(
         vectorstore,
         queries,
@@ -1530,7 +1776,6 @@ async def prepare_vector_context(question: str) -> VectorPreparation:
     if is_document_reasoning:
         docs = _conditional_evidence_documents(question, docs)
 
-    missing_evidence = _required_evidence_missing(question, docs)
     evidence = _build_vector_evidence(docs)
     _vector_evidence_ctx.set(evidence)
     source_files = list(dict.fromkeys(
@@ -1538,6 +1783,16 @@ async def prepare_vector_context(question: str) -> VectorPreparation:
         for doc in docs
         if doc.metadata.get("source")
     ))
+    explicit_table_attribute = _explicit_table_attribute_answer(question, docs)
+    if explicit_table_attribute:
+        return VectorPreparation(
+            source_files=source_files,
+            immediate_answer=explicit_table_attribute,
+            evidence=evidence,
+            documents=docs,
+        )
+
+    missing_evidence = _required_evidence_missing(question, docs)
     if missing_evidence:
         return VectorPreparation(
             source_files=source_files,
@@ -1732,6 +1987,7 @@ async def _answer_vector(
     if scalar_answer:
         answer = scalar_answer
     answer = _repair_explicit_difference_answer(question, answer)
+    answer = _remove_contradictory_empty_paragraphs(answer)
     has_vector_override = (
         analysis.has_vector_override
         if analysis is not None

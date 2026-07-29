@@ -10,6 +10,17 @@ from utils.chroma_store import get_chroma_source_records
 
 _TABLE_FILE_TYPES = {"csv", "tsv", "xls", "xlsx"}
 _TEXT_FILE_TYPES = {"pdf", "doc", "docx", "hwp", "hwpx", "txt"}
+_SECTION_CONTENT_TYPES = {"pdf_section_child", "hwp_section_child"}
+_TEXT_CONTENT_TYPES = {
+    "pdf_page_text",
+    "pdf_section_child",
+    "hwp_text_child",
+    "hwp_section_child",
+}
+_SECTION_SUGGESTION_TERMS = (
+    "선발 대상", "지원 대상", "대상", "자격", "요건",
+    "선발 기준", "지원 기준", "기준", "지원 규모", "일정", "절차",
+)
 
 
 def _integer(value: Any, default: int = 0) -> int:
@@ -66,12 +77,12 @@ def document_structure(
             pages.add(page)
         section_id = str(metadata.get("section_id", "")).strip()
         section_title = str(metadata.get("section_title", "")).strip()
-        if section_id and section_title and content_type == "pdf_section_child":
+        if section_id and section_title and content_type in _SECTION_CONTENT_TYPES:
             section_groups[section_id].append(record)
         table_id = str(metadata.get("table_id", "")).strip()
         if table_id:
             table_ids.add(table_id)
-        if content_type in {"pdf_page_text", "pdf_section_child"}:
+        if content_type in _TEXT_CONTENT_TYPES:
             has_text_content = True
 
     sections: list[dict] = []
@@ -135,6 +146,34 @@ def document_structure(
     }
 
 
+def suggested_section_titles(structure: dict, *, limit: int = 2) -> list[str]:
+    """Return representative, stored section titles for document Q&A shortcuts.
+
+    This is intentionally metadata-only: it never infers a title from document
+    text or from a document name.  Preference terms only make common document
+    questions easier to reach; every returned title is an original section
+    title saved during ingestion.
+    """
+    if limit <= 0 or "list_sections" not in structure.get("capabilities", []):
+        return []
+
+    candidates: list[tuple[int, int, str]] = []
+    seen: set[str] = set()
+    for index, section in enumerate(structure.get("sections", [])):
+        title = str(section.get("title", "")).strip()
+        normalized = re.sub(r"\s+", "", title).casefold()
+        if not title or normalized in seen:
+            continue
+        seen.add(normalized)
+        preference = next(
+            (rank for rank, term in enumerate(_SECTION_SUGGESTION_TERMS) if term in title),
+            len(_SECTION_SUGGESTION_TERMS),
+        )
+        candidates.append((preference, index, title))
+    candidates.sort()
+    return [title for _, _, title in candidates[:limit]]
+
+
 def document_section(source: str, section_id: str) -> dict | None:
     """Return one complete section by joining its stored children in order."""
     structure = document_structure(source)
@@ -154,7 +193,7 @@ def document_section(source: str, section_id: str) -> dict | None:
         for record in get_chroma_source_records(source)
         if str((record.get("metadata") or {}).get("section_id", "")) == section_id
         and str((record.get("metadata") or {}).get("content_type", ""))
-        == "pdf_section_child"
+        in _SECTION_CONTENT_TYPES
     ]
     children.sort(key=lambda item: _integer(
         (item.get("metadata") or {}).get("child_index")
