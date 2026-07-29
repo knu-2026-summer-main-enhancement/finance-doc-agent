@@ -1,0 +1,87 @@
+{
+  "dataset": "2025학년도 크레텍최영수장학금 장학생 선발계획.hwp",
+  "mode": "natural",
+  "description": "크레텍최영수장학금 HWP 본문·표·일정·조건 판단 골드셋",
+  "test_cases": [
+    {
+      "id": "VH001", "question": "장학금은 한 명당 얼마야?", "category": "본문_장학금액", "difficulty": "easy",
+      "expected_route": "vector", "expected_sections": ["3. 장학금액"], "required_all": ["150만원"], "required_any": [["학업지원비", "1인당", "한 명당"]], "forbidden": []
+    },
+    {
+      "id": "VH002", "question": "누가 이 장학금 선발 대상이야?", "category": "본문_선발대상", "difficulty": "easy",
+      "expected_route": "vector", "expected_sections": ["4. 선발 대상"], "required_all": ["2025학년도", "2학기", "재학생"], "required_any": [], "forbidden": []
+    },
+    {
+      "id": "VH003", "question": "선발 기준 알려줘", "category": "본문_선발기준", "difficulty": "easy",
+      "expected_route": "vector", "expected_sections": ["5. 선발 기준"], "required_all": ["12학점", "3.0", "4.3", "학과장"], "required_any": [], "forbidden": []
+    },
+    {
+      "id": "VH004", "question": "선발될 수 없는 사람은 누구야?", "category": "본문_선발제한", "difficulty": "easy",
+      "expected_route": "vector", "expected_sections": ["6. 선발 제한"], "required_all": ["휴학생", "수료생", "수업연한 초과자", "징계처분"], "required_any": [], "forbidden": []
+    },
+    {
+      "id": "VH005", "question": "우대 선발 활동에는 어떤 게 있어?", "category": "본문_우대사항", "difficulty": "medium",
+      "expected_route": "vector", "expected_sections": ["5. 선발 기준"], "required_all": ["창업", "봉사활동", "국제화"], "required_any": [["교내 각종 프로그램", "교내 프로그램"]], "forbidden": []
+    },
+    {
+      "id": "VH006", "question": "제출서류가 뭐야?", "category": "본문_제출서류", "difficulty": "easy",
+      "expected_route": "vector", "expected_sections": ["9. 제출서류"], "required_all": ["학과장 추천서", "1부"], "required_any": [], "forbidden": []
+    },
+    {
+      "id": "VH007", "question": "경상대학에는 몇 명을 배정해?", "category": "표_배정인원", "difficulty": "easy",
+      "expected_route": "vector", "expected_sections": ["2. 장학생 배정 원칙"], "required_all": ["경상대학", "14명"], "required_any": [], "forbidden": []
+    },
+    {
+      "id": "VH008", "question": "IT대학 추천 인원과 비고를 알려줘", "category": "표_대학배정", "difficulty": "medium",
+      "expected_route": "vector", "expected_sections": ["2. 장학생 배정 원칙"], "required_all": ["IT대학", "1명", "전자공학부"], "required_any": [], "forbidden": []
+    },
+    {
+      "id": "VH009", "question": "대학과 경상대학의 장학생 배정 비율은?", "category": "본문_배정원칙", "difficulty": "easy",
+      "expected_route": "vector", "expected_sections": ["2. 장학생 배정 원칙"], "required_all": ["60%", "40%"], "required_any": [], "forbidden": []
+    },
+    {
+      "id": "VH010", "question": "2024년 장학기금 잔액은 얼마야?", "category": "표_기금현황", "difficulty": "medium",
+      "expected_route": "vector", "expected_sections": ["1. 장학기금 현황"], "required_all": ["20,300"], "required_any": [["만원", "203,000,000"]], "forbidden": ["25,250"]
+    },
+    {
+      "id": "VH011", "question": "2024년 비고에는 뭐라고 적혀 있어?", "category": "표_비고", "difficulty": "medium",
+      "expected_route": "vector", "expected_sections": ["1. 장학기금 현황"], "required_all": ["의대", "미추천"], "required_any": [], "forbidden": []
+    },
+    {
+      "id": "VH012", "question": "공과대학 배정 인원과 장학금액은?", "category": "표_대학배정", "difficulty": "medium",
+      "expected_route": "vector", "expected_sections": ["2. 장학생 배정 원칙"], "required_all": ["공과대학", "1명", "1,500,000"], "required_any": [], "forbidden": []
+    },
+    {
+      "id": "VH013", "question": "추진 일정 알려줘", "category": "표_추진일정", "difficulty": "easy",
+      "expected_route": "vector", "expected_sections": ["7. 추진 일정"], "required_all": ["2025", "10", "11", "장학생 추천", "선발 확정", "지급"], "required_any": [], "forbidden": []
+    },
+    {
+      "id": "VH014", "question": "장학생 선발 확정은 언제야?", "category": "표_추진일정", "difficulty": "medium",
+      "expected_route": "vector", "expected_sections": ["7. 추진 일정"], "required_all": ["2025", "11월", "중순"], "required_any": [], "forbidden": ["하순"]
+    },
+    {
+      "id": "VH015", "question": "장학생 선발 확정 주관부서 어디야?", "category": "표_주관부서", "difficulty": "medium",
+      "expected_route": "vector", "expected_sections": ["7. 추진 일정"], "required_all": ["학생과"], "required_any": [], "forbidden": []
+    },
+    {
+      "id": "VH016", "question": "발전기금 장학금 재배정과 지급은 언제 진행돼?", "category": "표_추진일정", "difficulty": "medium",
+      "expected_route": "vector", "expected_sections": ["7. 추진 일정"], "required_all": ["2025", "11월", "하순"], "required_any": [], "forbidden": ["중순"]
+    },
+    {
+      "id": "VH017", "question": "장학금은 어떻게 지급해?", "category": "본문_지급방법", "difficulty": "easy",
+      "expected_route": "vector", "expected_sections": ["8. 지급 방법"], "required_all": ["학생계좌", "입금"], "required_any": [], "forbidden": []
+    },
+    {
+      "id": "VH018", "question": "직전학기 12학점을 듣고 평점이 2.9면 성적 기준을 충족해?", "category": "조건판단_성적", "difficulty": "medium",
+      "expected_route": "vector", "expected_sections": ["5. 선발 기준"], "required_all": ["2.9", "3.0"], "required_any": [["미달", "추천할 수 없습니다", "안 됩니다"]], "forbidden": []
+    },
+    {
+      "id": "VH019", "question": "직전학기 평점 3.5인데 9학점만 이수했으면 기준을 만족해?", "category": "조건판단_이수학점", "difficulty": "medium",
+      "expected_route": "vector", "expected_sections": ["5. 선발 기준"], "required_all": ["9학점", "12학점"], "required_any": [["미달", "추천할 수 없습니다", "안 됩니다"]], "forbidden": []
+    },
+    {
+      "id": "VH020", "question": "평점 3.2에 15학점을 이수한 휴학생은 장학생이 될 수 있어?", "category": "조건판단_제한", "difficulty": "medium",
+      "expected_route": "vector", "expected_sections": ["6. 선발 제한"], "required_all": ["휴학생"], "required_any": [["될 수 없", "제한", "선발 대상이 아닙니다"]], "forbidden": ["선발될 수 있습니다"]
+    }
+  ]
+}

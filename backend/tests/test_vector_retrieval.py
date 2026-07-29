@@ -23,6 +23,7 @@ from rag.vector import (
     _explicit_scalar_field_answer,
     _explicit_section_title_documents,
     _explicit_table_attribute_answer,
+    _explicit_table_time_answer,
     _explicit_table_comparison_answer,
     _remove_contradictory_empty_paragraphs,
     _repair_explicit_difference_answer,
@@ -38,6 +39,7 @@ from rag.vector import (
     _rerank_candidates,
     _retrieve_verified_documents,
     _section_intent_queries,
+    _section_title_matches_question,
     _table_alignment_notes,
 )
 
@@ -72,6 +74,38 @@ class _ScoredStore(_LowScoreHeadingStore):
 
 
 class VectorRetrievalTests(unittest.TestCase):
+    def test_action_word_matches_generic_section_title(self):
+        self.assertTrue(
+            _section_title_matches_question(
+                "8. 지급 방법 : 학생계좌로 입금",
+                "장학금은 어떻게 지급해?",
+            )
+        )
+
+    def test_table_time_answer_preserves_original_period(self):
+        docs = [
+            Document(
+                page_content=(
+                    "[문서: plan.hwp] / 구_분: 학과 → 대학 "
+                    "/ 내_용: 장학생 추천 / 기_간: 2025. 10. 22. "
+                    "/ source: 장학생 선발계획.hwp"
+                ),
+                metadata={"content_type": "hwp_table_row"},
+            ),
+            Document(
+                page_content=(
+                    "[문서: plan.hwp] / 구_분: 학생과 "
+                    "/ 내_용: 장학생 선발 확정 / 기_간: 2025. 11월 중순 예정 "
+                    "/ source: 장학생 선발계획.hwp"
+                ),
+                metadata={"content_type": "hwp_table_row"},
+            )
+        ]
+        self.assertEqual(
+            _explicit_table_time_answer("장학생 선발 확정은 언제야?", docs),
+            "일정은 2025. 11월 중순 예정입니다.",
+        )
+
     def test_explicit_section_title_does_not_require_section_number(self):
         schedule = Document(
             page_content="6 추진 일정\n장학생 추천 2026. 5. 7.",

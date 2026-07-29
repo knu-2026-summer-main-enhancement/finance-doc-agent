@@ -238,7 +238,10 @@ _DOCUMENT_REASONING_RE = re.compile(
 
 def _is_numeric_eligibility_question(question: str) -> bool:
     return bool(
-        _NUMERIC_ELIGIBILITY_RE.search(question)
+        (
+            _NUMERIC_ELIGIBILITY_RE.search(question)
+            or re.search(r"충족|만족|미달|기준|자격|가능|될\s*수", question)
+        )
         and re.search(r"(?<!\d)\d+(?:\.\d+)?(?!\d)", question)
         and re.search(
             r"평점|학점|점수|구간|소득|금액|원|달러|퍼센트|%",
@@ -271,7 +274,27 @@ def _numeric_evidence_documents(
             str(doc.page_content),
         )
     ]
-    return threshold_docs or matched or docs
+    state_terms = {
+        term for term in _query_terms(question)
+        if len(term) >= 3 and not re.search(r"\d", term)
+    }
+    exclusion_docs = [
+        doc for doc in docs
+        if (
+            re.search(r"제한|제외|불가|금지", str(doc.metadata.get("section_title", "")))
+            or re.search(r"(?:선발|지원|자격).{0,12}(?:제한|제외|불가|금지)", str(doc.page_content))
+        )
+        and any(term in str(doc.page_content) for term in state_terms)
+    ]
+    primary = threshold_docs or matched or docs
+    combined: list[Any] = []
+    seen: set[tuple[str, str, str]] = set()
+    for doc in [*primary, *exclusion_docs]:
+        key = _doc_key(doc)
+        if key not in seen:
+            seen.add(key)
+            combined.append(doc)
+    return combined
 
 
 def _conditional_evidence_documents(
@@ -495,8 +518,8 @@ def _explicit_numeric_criteria_answer(
     specifications = (
         (
             "직전학기 평점평균",
-            r"직전학기(?!\s*이수학점)(?:\s*평점(?:평균)?)?[^\d]{0,12}(\d+(?:\.\d+)?)",
-            r"직전학기\s*평점평균\s*(\d+(?:\.\d+)?)\s*(이상|이하|초과|미만)",
+            r"(?:직전학기(?![^,.?]{0,20}\d+\s*학점)[^,.?]{0,20}?|평점(?:\s*평균)?(?:이)?[^\d]{0,8})(\d+(?:\.\d+)?)",
+            r"직전학기\s*평점\s*평균\s*(\d+(?:\.\d+)?)(?:/[\d.]+)?\s*(이상|이하|초과|미만)",
         ),
         (
             "총평점 평균",
@@ -537,11 +560,34 @@ def _explicit_numeric_criteria_answer(
             actual_text += "구간"
             threshold_text += "구간"
         comparisons.append(
-            f"{label} {actual_text}은 문서 기준 {threshold_text} {operator}에 "
+            f"{label} {actual_text}{'학점' if '이수학점' in label else ''}은 "
+            f"문서 기준 {threshold_text}{'학점' if '이수학점' in label else ''} {operator}에 "
             f"{'충족합니다' if passed else '미달합니다'}."
         )
     if not comparisons:
         return ""
+    exclusion_hits: list[str] = []
+    question_terms = {
+        term for term in _query_terms(question)
+        if len(term) >= 3 and not re.search(r"\d", term)
+        and term not in {"장학생", "장학금", "선발", "기준", "자격"}
+    }
+    for doc in documents:
+        text = str(doc.page_content)
+        if not re.search(
+            r"제한|제외|불가|금지",
+            str(doc.metadata.get("section_title", "")) + " " + text,
+        ):
+            continue
+        for term in question_terms:
+            if term in text and term not in exclusion_hits:
+                exclusion_hits.append(term)
+    if exclusion_hits:
+        return (
+            "수치 기준과 별개로 문서의 선발 제한 조건에 "
+            + ", ".join(exclusion_hits)
+            + "이(가) 포함되어 있어 선발될 수 없습니다."
+        )
     conclusion = (
         "따라서 질문에 제시된 기본 자격의 수치 기준을 충족합니다."
         if passed_all
@@ -1266,6 +1312,27 @@ def _compact_section_title(value: object) -> str:
     return re.sub(r"[^가-힣A-Za-z0-9]+", "", text).lower()
 
 
+_GENERIC_SECTION_WORDS = {
+    "개요", "현황", "원칙", "대상", "기준", "제한", "일정", "방법", "절차", "서류",
+}
+
+
+def _section_title_matches_question(title: str, question: str) -> bool:
+    compact_title = _compact_section_title(title)
+    compact_question = _compact_section_title(question)
+    if compact_title and compact_title in compact_question:
+        return True
+    semantic_title = re.split(r"[:：]", re.sub(r"^\s*\d+[.)]?\s*", "", title), maxsplit=1)[0]
+    title_terms = {
+        term
+        for term in re.findall(r"[가-힣A-Za-z0-9]+", semantic_title)
+        if len(term) >= 2 and term not in _GENERIC_SECTION_WORDS
+    }
+    if not title_terms:
+        return False
+    return all(term.lower() in compact_question for term in title_terms)
+
+
 def _explicit_section_title_documents(
     vectorstore: Any,
     question: str,
@@ -1283,7 +1350,7 @@ def _explicit_section_title_documents(
         return []
 
     compact_question = _compact_section_title(question)
-    matches: dict[tuple[str, str], tuple[int, Any]] = {}
+    matches: dict[tuple[str, str], tuple[int, bool, Any]] = {}
     for text, metadata in zip(
         result.get("documents") or [],
         result.get("metadatas") or [],
@@ -1291,7 +1358,8 @@ def _explicit_section_title_documents(
         metadata = metadata or {}
         title = str(metadata.get("section_title", "")).strip()
         compact_title = _compact_section_title(title)
-        if len(compact_title) < 3 or compact_title not in compact_question:
+        exact_match = bool(compact_title and compact_title in compact_question)
+        if len(compact_title) < 3 or not _section_title_matches_question(title, question):
             continue
         source = str(metadata.get("source", ""))
         section_id = str(metadata.get("section_id", ""))
@@ -1303,14 +1371,21 @@ def _explicit_section_title_documents(
         is_heading = "section" in str(metadata.get("content_type", ""))
         rank = len(compact_title) * 2 + int(is_heading)
         if previous is None or rank > previous[0]:
-            matches[key] = (rank, doc)
+            matches[key] = (rank, exact_match, doc)
 
     if not matches:
         return []
-    longest = max(rank // 2 for rank, _doc in matches.values())
+    exact_matches = {
+        key: item for key, item in matches.items() if item[1]
+    }
+    if exact_matches:
+        matches = exact_matches
+    elif len(matches) > 1:
+        return []
+    longest = max(rank // 2 for rank, _exact, _doc in matches.values())
     return [
         doc
-        for rank, doc in matches.values()
+        for rank, _exact, doc in matches.values()
         if rank // 2 == longest
     ]
 
@@ -1386,6 +1461,47 @@ def _required_evidence_missing(question: str, docs: list[Any]) -> str:
     return ""
 
 
+def _supplement_constraint_documents(question: str, docs: list[Any]) -> list[Any]:
+    """Add selected-document exclusion clauses that mention a questioned state."""
+    terms = {
+        term for term in _query_terms(question)
+        if len(term) >= 3 and not re.search(r"\d", term)
+    }
+    if not terms:
+        return docs
+    vectorstore = get_vectorstore()
+    source_filter = _selected_source_filter()
+    if not source_filter or not hasattr(vectorstore, "get"):
+        return docs
+    try:
+        result = vectorstore.get(
+            where=source_filter,
+            include=["documents", "metadatas"],
+        )
+    except Exception:
+        return docs
+    additions: list[Any] = []
+    for text, metadata in zip(
+        result.get("documents") or [],
+        result.get("metadatas") or [],
+    ):
+        metadata = metadata or {}
+        structural_text = (
+            str(metadata.get("section_title", "")) + " " + str(text)
+        )
+        if not re.search(r"제한|제외|불가|금지", structural_text):
+            continue
+        if any(term in str(text) for term in terms):
+            additions.append(Document(page_content=str(text), metadata=metadata))
+    combined = list(docs)
+    seen = {_doc_key(doc) for doc in combined}
+    for doc in additions:
+        if _doc_key(doc) not in seen:
+            seen.add(_doc_key(doc))
+            combined.append(doc)
+    return combined
+
+
 _TABLE_FIELD_RE = re.compile(
     r"(?:^|\s/\s)([^:/\n]+):\s*(.*?)(?=\s/\s[^:/\n]+:\s|$)"
 )
@@ -1417,6 +1533,15 @@ def _table_fields(doc: Any) -> dict[str, str]:
         if normalized_key and cleaned_value:
             fields[normalized_key] = cleaned_value
     return fields
+
+
+def _searchable_table_values(fields: dict[str, str], excluded_value: str) -> str:
+    metadata_fields = {"source", "entitytype", "표시명", "문서"}
+    return " ".join(
+        value
+        for key, value in fields.items()
+        if value != excluded_value and key.lower() not in metadata_fields
+    )
 
 
 def _explicit_table_attribute_answer(question: str, docs: list[Any]) -> str:
@@ -1452,7 +1577,7 @@ def _explicit_table_attribute_answer(question: str, docs: list[Any]) -> str:
         if not party:
             continue
 
-        searchable = " ".join(value for value in fields.values() if value != party)
+        searchable = _searchable_table_values(fields, party)
         score = sum(term in searchable for term in query_terms)
         if score:
             candidates.append((score, -index, party))
@@ -1464,6 +1589,37 @@ def _explicit_table_attribute_answer(question: str, docs: list[Any]) -> str:
         return ""
     label = re.sub(r"\s+", "", requested.group(0))
     return f"{label}는 {party}입니다."
+
+
+def _explicit_table_time_answer(question: str, docs: list[Any]) -> str:
+    """Return an original date/period cell from the best matching table row."""
+    if not re.search(r"언제|시기|기간|일정", question):
+        return ""
+    query_terms = _query_terms(question).difference(
+        {"언제", "시기", "기간", "일정", "알려줘", "진행돼"}
+    )
+    candidates: list[tuple[int, int, str]] = []
+    for index, doc in enumerate(docs):
+        fields = _table_fields(doc)
+        period = next(
+            (
+                value for key, value in fields.items()
+                if key in {"기간", "일정", "일시", "날짜", "시기"}
+            ),
+            "",
+        )
+        if not period:
+            continue
+        searchable = _searchable_table_values(fields, period)
+        score = sum(term in searchable for term in query_terms)
+        if score:
+            candidates.append((score, -index, period))
+    if not candidates:
+        return ""
+    score, _negative_index, period = max(candidates)
+    if score < 2 and len(query_terms) >= 2:
+        return ""
+    return f"일정은 {period}입니다."
 
 
 async def _expanded_queries(question: str, is_doc_explain: bool) -> list[str]:
@@ -1771,6 +1927,7 @@ async def prepare_vector_context(question: str) -> VectorPreparation:
             immediate_answer="질문과 충분히 관련된 내용을 문서에서 찾을 수 없습니다."
         )
 
+    docs = _supplement_constraint_documents(question, docs)
     if is_numeric_eligibility:
         docs = _numeric_evidence_documents(question, docs)
     if is_document_reasoning:
@@ -1783,7 +1940,10 @@ async def prepare_vector_context(question: str) -> VectorPreparation:
         for doc in docs
         if doc.metadata.get("source")
     ))
-    explicit_table_attribute = _explicit_table_attribute_answer(question, docs)
+    explicit_table_attribute = (
+        _explicit_table_time_answer(question, docs)
+        or _explicit_table_attribute_answer(question, docs)
+    )
     if explicit_table_attribute:
         return VectorPreparation(
             source_files=source_files,
