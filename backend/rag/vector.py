@@ -852,7 +852,7 @@ def _explicit_preference_answer(
             ):
                 continue
             return (
-                f'질문한 생활비 장학금과 관련해 문서에는 "{normalized}"라고 되어 있습니다. '
+                f'질문한 우선선발 조건과 관련해 문서에는 "{normalized}"라고 되어 있습니다. '
                 "이는 해당 대상을 우선한다는 뜻이며, 반대 경우를 자동 탈락 또는 "
                 "무조건 제외한다고 명시한 것은 아닙니다."
             )
@@ -920,9 +920,19 @@ def _repair_explicit_difference_answer(question: str, answer: str) -> str:
         int(value.replace(",", ""))
         for value in re.findall(r"([\d,]+)점", answer[claim.end():])
     ]
-    if len(following_scores) < 2:
+    if len(following_scores) == 2:
+        operands = following_scores
+    elif (
+        len(following_scores) == 3
+        and following_scores[2] == abs(following_scores[0] - following_scores[1])
+    ):
+        # The final value repeats an already explained subtraction result.
+        operands = following_scores[:2]
+    else:
+        # More numeric values make operand identity ambiguous. Preserving the
+        # cited answer is safer than rewriting a correct value from guesswork.
         return answer
-    difference = abs(following_scores[0] - following_scores[1])
+    difference = abs(operands[0] - operands[1])
     return (
         answer[:claim.start(1)]
         + f"{difference:,}"
@@ -1110,12 +1120,13 @@ def _rerank_candidates(
         )
     ][:VECTOR_SEARCH_K]
     selected_keys = {_doc_key(doc) for doc in selected}
+    reserved_support_keys: set[tuple[str, str, str]] = set()
     # An expansion query exists to recover a distinct piece of evidence. Keep
     # its strongest lexical hit even when the primary-query score margin would
     # otherwise discard that supporting chunk.
     for terms in query_term_sets[1:]:
-        if not terms or len(selected) >= VECTOR_SEARCH_K:
-            break
+        if not terms:
+            continue
         best_support: tuple[float, Any] | None = None
         for _score, doc, _title_match, _lexical in ranked:
             if _doc_key(doc) in selected_keys:
@@ -1126,8 +1137,24 @@ def _rerank_candidates(
             ):
                 best_support = (overlap, doc)
         if best_support:
-            selected.append(best_support[1])
-            selected_keys.add(_doc_key(best_support[1]))
+            support = best_support[1]
+            support_key = _doc_key(support)
+            if len(selected) >= VECTOR_SEARCH_K:
+                replace_index = next(
+                    (
+                        index
+                        for index in range(len(selected) - 1, -1, -1)
+                        if _doc_key(selected[index]) not in reserved_support_keys
+                    ),
+                    None,
+                )
+                if replace_index is None:
+                    continue
+                removed = selected.pop(replace_index)
+                selected_keys.discard(_doc_key(removed))
+            selected.append(support)
+            selected_keys.add(support_key)
+            reserved_support_keys.add(support_key)
     return selected
 
 

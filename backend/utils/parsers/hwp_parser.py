@@ -8,7 +8,7 @@ import sys
 
 import pandas as pd
 
-from utils.table_parser import _parse_table, _clean_dataframe, sanitize_table_name
+from utils.table_parser import _clean_dataframe, sanitize_table_name
 from utils.text_utils import _table_to_text_chunks, _make_doc_overview_chunk
 from utils.parquet_store import save_dataframe, drop_dataframe_files
 from utils.chroma_store import save_to_chroma

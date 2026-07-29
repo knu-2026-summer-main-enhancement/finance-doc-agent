@@ -15,7 +15,7 @@ from pandas_engine.query_grounding import (
     parse_grounded_comparisons,
 )
 from pandas_engine.query_plan import FilterCondition, QueryPlan
-from utils.semantic_schema import SYSTEM_COLUMNS, infer_column_meaning, infer_data_type
+from utils.semantic_schema import SYSTEM_COLUMNS, infer_data_type, is_person_name_column
 from utils.table_parser import IDENTITY_INTERNAL_COLS
 
 
@@ -110,26 +110,6 @@ def _is_internal_column(column: str) -> bool:
     return column in _INTERNAL_COLUMNS or column.startswith("_")
 
 
-def _is_person_name_column(df: pd.DataFrame, column: Hashable) -> bool:
-    schema = df.attrs.get("semantic_schema")
-    if isinstance(schema, dict):
-        columns = schema.get("columns")
-        mapping = columns.get(str(column)) if isinstance(columns, dict) else None
-        if isinstance(mapping, dict):
-            if (
-                mapping.get("concept") == "entity"
-                and mapping.get("role") == "entity_name"
-                and mapping.get("qualifier") == "person"
-            ):
-                return True
-    meaning = infer_column_meaning(str(column), df[column])
-    return (
-        meaning.concept == "entity"
-        and meaning.role == "entity_name"
-        and meaning.qualifier == "person"
-    )
-
-
 def _align_person_count_distinct(
     plan: QueryPlan,
     question: str | None,
@@ -144,7 +124,7 @@ def _align_person_count_distinct(
         or not _PERSON_COUNT_QUESTION.search(question)
     ):
         return plan
-    candidates = [column for column in df.columns if _is_person_name_column(df, column)]
+    candidates = [column for column in df.columns if is_person_name_column(df, column)]
     if not candidates:
         return plan
     chosen = max(candidates, key=lambda column: int(df[column].dropna().nunique()))
@@ -173,7 +153,7 @@ def _validate_lookup_projection_contract(
         return []
     has_person_projection = any(
         column in actual_columns
-        and _is_person_name_column(df, actual_columns[column])
+        and is_person_name_column(df, actual_columns[column])
         for column in plan.select
     )
     reverse_lookup_filters: set[str] = set()
@@ -182,7 +162,7 @@ def _validate_lookup_projection_contract(
             if condition.column not in actual_columns or condition.value is None:
                 continue
             actual_column = actual_columns[condition.column]
-            if _is_person_name_column(df, actual_column):
+            if is_person_name_column(df, actual_column):
                 continue
             grounded_value = _normalized_string_evidence(condition.value)
             if not grounded_value:
@@ -215,7 +195,7 @@ def _validate_lookup_projection_contract(
             )
         )
     has_person_filter = any(
-        _is_person_name_column(df, actual_columns[condition.column])
+        is_person_name_column(df, actual_columns[condition.column])
         for condition in plan.filters
         if condition.column in actual_columns
     )
@@ -398,7 +378,7 @@ def _is_grounded_person_display_value(
     source_text: str,
 ) -> bool:
     """Allow an unambiguous query-name base to resolve a display suffix."""
-    if not source_text or not _is_person_name_column(df, column):
+    if not source_text or not is_person_name_column(df, column):
         return False
     base = _PERSON_DISPLAY_SUFFIX.sub("", str(value)).strip()
     return (

@@ -15,7 +15,7 @@ from pandas_engine.aggregation import (
 from pandas_engine.money import money_values
 from pandas_engine.query_executor import QueryExecutionResult
 from utils.semantic_schema import infer_column_meaning, is_source_column
-from utils.table_parser import IDENTITY_INTERNAL_COLS
+from utils.table_parser import IDENTITY_INTERNAL_COLS, normalize_identifier
 
 _INTERNAL_COLS = set(IDENTITY_INTERNAL_COLS)
 _DISPLAY_ORDER = (
@@ -559,14 +559,6 @@ _FORMAT_IDENTIFIER_HINTS = (
 )
 
 
-def _fmt_identifier_norm(value: Any) -> str:
-    text = str(value or "").strip().upper()
-    if text.lower() in {"", "none", "nan", "null"}:
-        return ""
-    text = text.replace("–", "-").replace("—", "-").replace("−", "-")
-    return re.sub(r"[^0-9A-Z가-힣]", "", text)
-
-
 def _find_identifier_col(df: pd.DataFrame) -> str:
     if df is None or df.empty:
         return ""
@@ -616,7 +608,7 @@ def _entity_groups(df: pd.DataFrame) -> list[dict[str, Any]]:
             identifier = ""
         name = _row_identity_name(row)
         cohort = _cohort_value(row)
-        key = (_fmt_identifier_norm(identifier), _clean_identity_value(name), cohort)
+        key = (normalize_identifier(identifier), _clean_identity_value(name), cohort)
         if key not in buckets:
             buckets[key] = []
             names[key] = name
@@ -647,8 +639,8 @@ def _group_label(group: dict[str, Any]) -> str:
 
 
 def _question_mentions_group_identifier(question: str, group: dict[str, Any]) -> bool:
-    identifier = _fmt_identifier_norm(group.get("identifier"))
-    return bool(identifier and identifier in _fmt_identifier_norm(question))
+    identifier = normalize_identifier(group.get("identifier"))
+    return bool(identifier and identifier in normalize_identifier(question))
 
 
 def _group_is_organization(group: dict[str, Any]) -> bool:

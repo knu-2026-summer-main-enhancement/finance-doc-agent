@@ -7,7 +7,7 @@ import re
 import unicodedata
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Hashable
 
 import pandas as pd
 
@@ -356,6 +356,27 @@ def infer_column_meaning(
 ) -> ColumnMeaning:
     """저장 전 정제 단계에서도 같은 의미 추론 규칙을 재사용한다."""
     return _deterministic_meaning(column, series, is_derived)
+
+
+def is_person_name_column(df: pd.DataFrame, column: Hashable) -> bool:
+    """Return whether schema metadata or inference identifies a person name."""
+
+    schema = df.attrs.get("semantic_schema")
+    if isinstance(schema, dict):
+        columns = schema.get("columns")
+        mapping = columns.get(str(column)) if isinstance(columns, dict) else None
+        if isinstance(mapping, dict) and (
+            mapping.get("concept") == "entity"
+            and mapping.get("role") == "entity_name"
+            and mapping.get("qualifier") == "person"
+        ):
+            return True
+    meaning = infer_column_meaning(str(column), df[column])
+    return (
+        meaning.concept == "entity"
+        and meaning.role == "entity_name"
+        and meaning.qualifier == "person"
+    )
 
 
 def schema_fingerprint(df: pd.DataFrame, source_columns: list[str]) -> str:

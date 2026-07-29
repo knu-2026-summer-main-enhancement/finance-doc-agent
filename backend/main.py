@@ -7,7 +7,6 @@ import logging #로그 출력
 import os #파일 폴더 제어
 import re #문자열 정규식
 import shutil  #파일 폴더 제어
-import sys
 from threading import Event
 from contextlib import asynccontextmanager #비동기 처리
 from dataclasses import dataclass
@@ -31,7 +30,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from langchain_ollama import OllamaEmbeddings
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 #현재 실행 중인 폴더 경로를 파이썬 시스템 경로에 추가하여, 같은 폴더 내의 다른 .py 파일들을 
 #자유롭게 import할 수 있음 
 
@@ -83,7 +81,6 @@ from rag.question_engine import (
     compare_shadow_decision,
     decide_question,
 )
-from utils.table_parser import normalize_person_name
 from rag.deterministic_query_plan import (
     ambiguous_person_lookup_candidates,
     build_auto_schema_grounded_plan,
@@ -396,83 +393,6 @@ def health():
         result["chromadb"] = "unreachable"
         result["status"] = "degraded"
     return result
-
-
-def _result_1_contact_records() -> dict[str, dict[str, object]]:
-    """Return contacts from a member table, regardless of its display file name."""
-    records: dict[str, dict[str, object]] = {}
-    for alias, dataframe in _df_namespace.items():
-        columns = {re.sub(r"\s+", "", str(column)).casefold(): column for column in dataframe.columns}
-        name_column = next((columns[key] for key in ("회원명", "성명", "이름") if key in columns), None)
-        email_column = next((column for key, column in columns.items() if "이메일" in key or "email" in key), None)
-        phone_column = next((column for key, column in columns.items() if "전화" in key or "휴대폰" in key or "연락처" in key or "phone" in key), None)
-        department_column = next((column for key, column in columns.items() if "전공" in key or "학과" in key or "department" in key), None)
-        if name_column is None or (email_column is None and phone_column is None):
-            continue
-
-        year_column = columns.get("년")
-        month_column = columns.get("월")
-        day_column = columns.get("일")
-        date_columns = [
-            column for key, column in columns.items()
-            if "날짜" in key or "일자" in key or "date" in key
-        ]
-
-        def latest_rank(row, row_order: int) -> tuple[int, int, int, int]:
-            def number(column) -> int:
-                if column is None:
-                    return 0
-                match = re.search(r"\d+", str(row.get(column, "")))
-                return int(match.group()) if match else 0
-
-            year, month, day = number(year_column), number(month_column), number(day_column)
-            if year:
-                return year, month, day, row_order
-            for column in date_columns:
-                digits = re.sub(r"\D", "", str(row.get(column, "")))
-                if len(digits) >= 8:
-                    return int(digits[:4]), int(digits[4:6]), int(digits[6:8]), row_order
-            return 0, 0, 0, row_order
-
-        for row_order, (_, row) in enumerate(dataframe.iterrows()):
-            display_name = str(row.get(name_column, "")).strip()
-            name = normalize_person_name(display_name)
-            if not name or name.casefold() in {"nan", "none", "<na>"}:
-                continue
-            record = records.setdefault(name, {"name": display_name, "phones": set(), "emails": set(), "departments": set()})
-            rank = latest_rank(row, row_order)
-            for column, key in ((phone_column, "phones"), (email_column, "emails"), (department_column, "departments")):
-                if column is None:
-                    continue
-                value = str(row.get(column, "")).strip()
-                if not value or value.casefold() in {"nan", "none", "<na>"}:
-                    continue
-                if key == "phones":
-                    digits = re.sub(r"\D", "", value)
-                    value = f"{digits[:3]}-{digits[3:7]}-{digits[7:]}" if len(digits) == 11 and digits.startswith("01") else value
-                rank_key = f"_{key}_rank"
-                if rank >= record.get(rank_key, (-1, -1, -1, -1)):
-                    record[key] = {value}
-                    record[rank_key] = rank
-
-    return records
-
-
-def result_1_contact_names(_: None = Depends(_verify_api_key)):
-    """Names from member tables that can reveal a contact card when clicked in the UI."""
-    return {"names": [record["name"] for record in _result_1_contact_records().values()]}
-
-
-def result_1_contact(name: str, _: None = Depends(_verify_api_key)):
-    record = _result_1_contact_records().get(normalize_person_name(name))
-    if record is None:
-        raise HTTPException(status_code=404, detail="Result_1에서 해당 회원을 찾을 수 없습니다.")
-    return {
-        "name": record["name"],
-        "phones": sorted(record["phones"]),
-        "emails": sorted(record["emails"]),
-        "departments": sorted(record["departments"]),
-    }
 
 
 @app.get("/chat/details/{reference}")

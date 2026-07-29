@@ -61,17 +61,6 @@ _DEPARTMENT_WORDS = (
 _DEPARTMENT_SUFFIX_RE = re.compile(r"[가-힣A-Za-z0-9]+(?:학과|학부|전공|계열|공학과)$")
 
 
-def _as_text(value) -> str:
-    if value is None:
-        return ""
-    try:
-        import pandas as pd
-        if pd.isna(value):
-            return ""
-    except Exception:
-        pass
-    return str(value)
-
 def _cell_val(cell: Any) -> str:
     return str(cell).strip() if cell is not None else ""
 
@@ -118,6 +107,16 @@ def normalize_mask_chars(value: Any) -> str:
 def normalize_person_name(value: Any) -> str:
     """사람 이름 검색용 정규화. 기관명 판별 뒤 사람 값에만 적용한다."""
     return normalize_mask_chars(value)
+
+
+def normalize_identifier(value: Any) -> str:
+    """문서·행 식별번호에서 구분문자와 표기 차이를 제거한다."""
+
+    text = str(value or "").strip().upper()
+    if text.lower() in {"", "none", "nan", "null"}:
+        return ""
+    text = text.replace("–", "-").replace("—", "-").replace("−", "-")
+    return re.sub(r"[^0-9A-Z가-힣]", "", text)
 
 
 def _contains_hangul(value: str) -> bool:
@@ -257,15 +256,6 @@ def _find_name_col(df: pd.DataFrame) -> str | None:
 
 def _find_first_col(df: pd.DataFrame, keywords: tuple[str, ...]) -> str | None:
     return next((c for c in df.columns if any(k in str(c) for k in keywords)), None)
-
-
-def find_amount_columns(df: pd.DataFrame) -> list[str]:
-    return [c for c in df.columns if any(k in str(c) for k in AMOUNT_COL_KEYWORDS)]
-
-
-def find_first_amount_column(df: pd.DataFrame) -> str | None:
-    cols = find_amount_columns(df)
-    return cols[0] if cols else None
 
 
 def _safe_part(value: Any) -> str:

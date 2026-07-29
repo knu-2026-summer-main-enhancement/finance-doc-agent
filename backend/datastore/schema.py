@@ -6,7 +6,7 @@ import time
 from core.privacy import question_log_metadata
 from datastore.state import (
     _df_namespace, _df_sources, _df_labels,
-    _df_schema_cache, _SCHEMA_CACHE_TTL,
+    _SCHEMA_CACHE_TTL,
 )
 from datastore.scope import scoped_mapping
 import datastore.state as _state

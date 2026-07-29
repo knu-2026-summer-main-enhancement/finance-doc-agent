@@ -26,7 +26,12 @@ from pandas_engine.query_plan import (
     SortCondition,
 )
 from rag.cancellation import raise_if_cancelled
-from utils.semantic_schema import SYSTEM_COLUMNS, infer_column_meaning, is_source_column
+from utils.semantic_schema import (
+    SYSTEM_COLUMNS,
+    infer_column_meaning,
+    is_person_name_column,
+    is_source_column,
+)
 from utils.table_parser import IDENTITY_INTERNAL_COLS, normalize_person_name
 
 
@@ -84,26 +89,6 @@ def _actual_column(df: pd.DataFrame, planned_column: str) -> Hashable:
     raise QueryPlanExecutionError(f"검증된 컬럼을 찾을 수 없습니다: {planned_column}")
 
 
-def _is_person_name_column(df: pd.DataFrame, column: Hashable) -> bool:
-    schema = df.attrs.get("semantic_schema")
-    if isinstance(schema, dict):
-        columns = schema.get("columns")
-        mapping = columns.get(str(column)) if isinstance(columns, dict) else None
-        if isinstance(mapping, dict):
-            if (
-                mapping.get("concept") == "entity"
-                and mapping.get("role") == "entity_name"
-                and mapping.get("qualifier") == "person"
-            ):
-                return True
-    meaning = infer_column_meaning(str(column), df[column])
-    return (
-        meaning.concept == "entity"
-        and meaning.role == "entity_name"
-        and meaning.qualifier == "person"
-    )
-
-
 def _typed_series(df: pd.DataFrame, column: Hashable) -> pd.Series:
     data_type = column_data_type(df, column)
     if data_type == "money":
@@ -116,7 +101,7 @@ def _typed_series(df: pd.DataFrame, column: Hashable) -> pd.Series:
         return df[column].astype("boolean")
 
     text = df[column].astype("string").str.strip()
-    if _is_person_name_column(df, column):
+    if is_person_name_column(df, column):
         return text.map(normalize_person_name).astype("string")
     return text
 
@@ -135,7 +120,7 @@ def _typed_value(
         return pd.to_datetime(value, errors="raise")
     if data_type == "boolean":
         return bool(value)
-    if _is_person_name_column(df, column):
+    if is_person_name_column(df, column):
         return normalize_person_name(value)
     return str(value).strip()
 
@@ -183,7 +168,7 @@ def _filter_mask(df: pd.DataFrame, condition: FilterCondition) -> pd.Series:
         if (
             not condition.case_sensitive
             and column_data_type(df, column) == "string"
-            and not _is_person_name_column(df, column)
+            and not is_person_name_column(df, column)
         ):
             return series.str.casefold().eq(str(value).casefold()).fillna(False)
         return series.eq(value).fillna(False)
@@ -191,7 +176,7 @@ def _filter_mask(df: pd.DataFrame, condition: FilterCondition) -> pd.Series:
         if (
             not condition.case_sensitive
             and column_data_type(df, column) == "string"
-            and not _is_person_name_column(df, column)
+            and not is_person_name_column(df, column)
         ):
             return series.str.casefold().ne(str(value).casefold()).fillna(False)
         return series.ne(value).fillna(False)
@@ -281,7 +266,7 @@ def _person_total_groups(
         return pd.DataFrame()
 
     person_columns = [
-        column for column in working.columns if _is_person_name_column(working, column)
+        column for column in working.columns if is_person_name_column(working, column)
     ]
     name_column = person_columns[0] if person_columns else None
     display_names = (
@@ -406,7 +391,7 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
 
     matched_rows = int(len(filtered))
     person_columns = [
-        column for column in filtered.columns if _is_person_name_column(filtered, column)
+        column for column in filtered.columns if is_person_name_column(filtered, column)
     ]
     unique_people = (
         max(int(filtered[column].dropna().nunique()) for column in person_columns)

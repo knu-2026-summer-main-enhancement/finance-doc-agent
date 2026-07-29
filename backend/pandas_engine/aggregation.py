@@ -246,10 +246,6 @@ def detect_aggregation_intent(question: str) -> AggregationIntent | None:
     return intents[0] if intents else None
 
 
-def is_aggregation_question(question: str) -> bool:
-    return detect_aggregation_intent(question) is not None
-
-
 def aggregation_notice(message: str, *, kind: str = "error") -> dict[str, object]:
     return {"type": "aggregation_notice", "kind": kind, "message": message}
 

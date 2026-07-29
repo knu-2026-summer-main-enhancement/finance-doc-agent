@@ -8,7 +8,7 @@ from typing import Any, Mapping
 import pandas as pd
 from pydantic import ValidationError
 
-from core.llm import get_llm_code
+from core.llm import get_llm_code, response_text
 from datastore.schema import _get_df_schema_filtered
 from rag.cancellation import await_cancellable
 from pandas_engine.plan_validator import (
@@ -178,15 +178,6 @@ def _align_plan_with_operation_hint(
     return _validate_operation_hint_contract(plan, operation_hint)
 
 
-def _response_text(response: Any) -> str:
-    if isinstance(response, str):
-        return response.strip()
-    content = getattr(response, "content", None)
-    if content is not None:
-        return str(content).strip()
-    return str(response).strip()
-
-
 def _extract_json_object(text: str) -> dict[str, Any]:
     """Return the first complete JSON object without using permissive eval."""
 
@@ -204,7 +195,7 @@ def _extract_json_object(text: str) -> dict[str, Any]:
 
 
 def parse_query_plan_response(response: Any) -> QueryPlan:
-    text = _response_text(response)
+    text = response_text(response)
     if not text:
         raise ValueError("LLM이 빈 응답을 반환했습니다.")
     payload = _extract_json_object(text)
@@ -312,7 +303,7 @@ async def generate_query_plan(
     first_error_message = ""
 
     raw = await await_cancellable(model.ainvoke(original_prompt))
-    responses.append(_response_text(raw))
+    responses.append(response_text(raw))
     try:
         plan = _align_plan_with_operation_hint(
             _align_plan_with_question(
@@ -348,7 +339,7 @@ async def generate_query_plan(
         ),
     )
     repaired = await await_cancellable(model.ainvoke(repair_prompt))
-    responses.append(_response_text(repaired))
+    responses.append(response_text(repaired))
     try:
         plan = _align_plan_with_operation_hint(
             _align_plan_with_question(

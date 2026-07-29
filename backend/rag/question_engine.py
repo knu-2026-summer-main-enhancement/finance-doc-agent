@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from core.llm import get_llm_code
+from core.llm import get_llm_code, response_text
 from core.privacy import question_log_metadata
 from rag.cancellation import await_cancellable
 from rag.prompts import (
@@ -73,15 +73,6 @@ def compact_question_schema(schema: str, max_chars: int = 5000) -> str:
     return (compact or "(조회 가능한 표 없음)")[:max_chars]
 
 
-def _response_text(response: Any) -> str:
-    if isinstance(response, str):
-        return response.strip()
-    content = getattr(response, "content", None)
-    if content is not None:
-        return str(content).strip()
-    return str(response).strip()
-
-
 def _extract_json_object(text: str) -> dict[str, Any]:
     decoder = json.JSONDecoder()
     for index, character in enumerate(text):
@@ -101,7 +92,7 @@ def parse_question_decision(
     *,
     fallback_retrieval_query: str | None = None,
 ) -> QuestionDecision:
-    text = _response_text(response)
+    text = response_text(response)
     if not text:
         raise ValueError("LLM이 빈 응답을 반환했습니다.")
     payload = _extract_json_object(text)
@@ -267,7 +258,7 @@ async def decide_question(
     responses: list[str] = []
 
     raw = await await_cancellable(model.ainvoke(prompt))
-    responses.append(_response_text(raw))
+    responses.append(response_text(raw))
     try:
         return _align_broad_field_projection_operation(
             _align_document_inventory_operation(
@@ -295,7 +286,7 @@ async def decide_question(
         response=responses[0][:2500],
     )
     repaired = await await_cancellable(model.ainvoke(repair_prompt))
-    responses.append(_response_text(repaired))
+    responses.append(response_text(repaired))
     try:
         return _align_broad_field_projection_operation(
             _align_document_inventory_operation(

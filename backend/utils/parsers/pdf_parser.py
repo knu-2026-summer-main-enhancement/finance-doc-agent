@@ -81,17 +81,6 @@ def _unparsed_table_to_text(table: list[list[str | None]]) -> str:
     return "\n".join(f"PDF 문서의 섹션 제목(검색 키워드): {line}" for line in lines)
 
 
-def _unparsed_table_lines(table: list[list[str | None]]) -> list[str]:
-    """Return the readable labels from a non-tabular PDF table."""
-    lines: list[str] = []
-    for row in table:
-        cells = [re.sub(r"\s+", " ", str(cell)).strip() for cell in row if cell]
-        line = " ".join(cells)
-        if line and line not in lines:
-            lines.append(line)
-    return lines
-
-
 def _detect_section_headings(page_text: str) -> list[str]:
     """Detect top-level numbered headings from the page's readable text.
 

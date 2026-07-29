@@ -3,7 +3,7 @@ from __future__ import annotations
 # Ollama LLM, 임베딩, Chroma retriever를 지연 생성해 재사용한다.
 # 연결 설정은 core.config에만 두고 호출부는 아래 getter를 통해 접근한다.
 
-from typing import Optional
+from typing import Any, Optional
 
 import chromadb
 from langchain_ollama import OllamaLLM, OllamaEmbeddings
@@ -12,13 +12,22 @@ from langchain_chroma import Chroma
 from core.config import (
     OLLAMA_BASE_URL, OLLAMA_MODEL, EMBED_MODEL,
     CHROMA_HOST, CHROMA_PORT, COLLECTION_NAME,
-    VECTOR_SEARCH_K, VECTOR_SEARCH_FETCH_K,
 )
 
 _llm_rag:  Optional[OllamaLLM] = None
 _llm_code: Optional[OllamaLLM] = None
 _vectorstore = None
-_retriever = None
+
+
+def response_text(response: Any) -> str:
+    """Normalize string and message-object responses from an LLM."""
+
+    if isinstance(response, str):
+        return response.strip()
+    content = getattr(response, "content", None)
+    if content is not None:
+        return str(content).strip()
+    return str(response).strip()
 
 
 def get_llm_rag() -> OllamaLLM:
@@ -56,20 +65,6 @@ def get_vectorstore() -> Chroma:
             embedding_function=embeddings,
         )
     return _vectorstore
-
-
-def get_retriever():
-    global _retriever
-    if _retriever is None:
-        _retriever = get_vectorstore().as_retriever(
-            search_type="mmr",
-            search_kwargs={
-                "k": VECTOR_SEARCH_K,
-                "fetch_k": VECTOR_SEARCH_FETCH_K,
-                "lambda_mult": 0.6,
-            },
-        )
-    return _retriever
 
 
 def _fmt_docs(docs) -> str:

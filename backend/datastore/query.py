@@ -17,7 +17,13 @@ from pandas_engine.aggregation import (
 )
 from pandas_engine.money import money_series
 from pandas_engine.date_filter import DateFilter, apply_date_filter
-from utils.table_parser import normalize_person_name, make_mask_pattern, is_masked_name, AMOUNT_COL_KEYWORDS
+from utils.table_parser import (
+    AMOUNT_COL_KEYWORDS,
+    is_masked_name,
+    make_mask_pattern,
+    normalize_identifier,
+    normalize_person_name,
+)
 from utils.semantic_schema import semantic_columns
 
 logger = logging.getLogger("uvicorn.error")
@@ -248,21 +254,6 @@ def _find_dfs_by_source_label(question: str) -> list[str]:
     return [a for a, _ in scored]
 
 
-def _find_value_locations(question: str) -> str:
-    """_find_filter_conditions 결과를 LLM 프롬프트용 힌트 문자열로 변환."""
-    conditions = _find_filter_conditions(question)
-    if not conditions:
-        return ""
-    hints = [
-        f"'{val}' → {alias}['{col}'] (파일: {_df_sources.get(alias, alias)})"
-        for alias, cond_list in conditions.items()
-        for col, val in cond_list
-    ]
-    return "데이터 위치 힌트 (질문 맥락에 맞는 DataFrame을 선택하세요):\n" + "\n".join(
-        f"  {h}" for h in hints
-    )
-
-
 def _extract_total_from_source(alias: str) -> str | None:
     """소스 파일명에서 총액 정보 추출 (예: '-760만원.pdf' → '760만원')."""
     src = _df_sources.get(alias, "")
@@ -398,11 +389,6 @@ def _lookup_norm(value: object) -> str:
     text = re.sub(r"\s+", "", str(text or ""))
     text = re.sub(r"[?？!！.,，。]", "", text)
     return text
-
-
-def _source_year(source: str) -> int:
-    years = re.findall(r"20\d{2}", str(source or ""))
-    return max((int(y) for y in years), default=0)
 
 
 def _select_best_source_rows(result: pd.DataFrame, question: str) -> pd.DataFrame:
@@ -780,14 +766,6 @@ _QUESTION_IDENTIFIER_RE = re.compile(
 )
 
 
-def _identifier_norm(value: object) -> str:
-    text = str(value or "").strip().upper()
-    if text.lower() in {"", "none", "nan", "null"}:
-        return ""
-    text = text.replace("–", "-").replace("—", "-").replace("−", "-")
-    return re.sub(r"[^0-9A-Z가-힣]", "", text)
-
-
 def _identifier_columns(df: pd.DataFrame) -> list[str]:
     cols: list[str] = []
     for col in df.columns:
@@ -800,18 +778,18 @@ def _identifier_columns(df: pd.DataFrame) -> list[str]:
 
 
 def _question_identifier_targets(question: str) -> list[str]:
-    qkey = _identifier_norm(question)
+    qkey = normalize_identifier(question)
     if not qkey:
         return []
     matches = [
         key
-        for key in (_identifier_norm(match.group(0)) for match in _QUESTION_IDENTIFIER_RE.finditer(question))
+        for key in (normalize_identifier(match.group(0)) for match in _QUESTION_IDENTIFIER_RE.finditer(question))
         if key
     ]
     for df in _scoped_dataframes().values():
         for col in _identifier_columns(df):
             for raw in df[col].dropna().astype(str).unique().tolist():
-                key = _identifier_norm(raw)
+                key = normalize_identifier(raw)
                 if len(key) >= 4 and key in qkey and key not in matches:
                     matches.append(key)
     return list(dict.fromkeys(matches))
@@ -829,7 +807,7 @@ def _filter_rows_by_question_identifier(rows: pd.DataFrame, question: str) -> pd
         return rows
     masks: list[pd.Series] = []
     for col in _identifier_columns(rows):
-        series = rows[col].map(_identifier_norm)
+        series = rows[col].map(normalize_identifier)
         masks.append(series.isin(targets))
     if not masks:
         return rows.iloc[0:0]
@@ -849,7 +827,7 @@ def _find_identifier_exact(question: str) -> tuple[pd.DataFrame | None, list[str
         masks: list[pd.Series] = []
         matched_col = ""
         for col in _identifier_columns(df):
-            mask = df[col].map(_identifier_norm) == target
+            mask = df[col].map(normalize_identifier) == target
             if mask.any():
                 masks.append(mask)
                 if not matched_col:

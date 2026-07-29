@@ -76,24 +76,6 @@ def get_manifest_status(source: str) -> dict | None:
     }
 
 
-def get_existing_file_hash(source: str) -> str | None:
-    with engine.begin() as conn:
-        row = conn.execute(
-            text("SELECT file_hash FROM ingestion_manifest WHERE source = :s"),
-            {"s": source},
-        ).fetchone()
-    return row[0] if row else None
-
-
-def get_existing_schema_version(source: str) -> str | None:
-    with engine.begin() as conn:
-        row = conn.execute(
-            text("SELECT schema_version FROM ingestion_manifest WHERE source = :s"),
-            {"s": source},
-        ).fetchone()
-    return row[0] if row else None
-
-
 def is_current_successful_ingestion(
     source: str,
     file_hash: str,

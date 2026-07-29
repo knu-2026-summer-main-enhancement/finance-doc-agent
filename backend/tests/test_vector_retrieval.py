@@ -605,6 +605,19 @@ class VectorRetrievalTests(unittest.TestCase):
         self.assertIn("차이는 8점", answer)
         self.assertNotIn("20점", answer)
 
+    def test_score_difference_is_not_rewritten_when_operands_are_ambiguous(self):
+        answer = (
+            "두 점수의 차이는 8점입니다. "
+            "기초는 50점 만점에서 50점, 3구간은 42점입니다."
+        )
+
+        repaired = _repair_explicit_difference_answer(
+            "기초와 3구간의 점수 차이는?",
+            answer,
+        )
+
+        self.assertEqual(answer, repaired)
+
     def test_unconditional_question_prefers_mandatory_condition_clause(self):
         mandatory = Document(page_content="자격 요건: 성적 및 소득 기준 모두 충족")
         ranking = Document(page_content="성적 반영점수가 높은 자 순으로 선발")
