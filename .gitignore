@@ -9,19 +9,21 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# ?곸옱 ?곗씠??(濡쒖뺄 ?앹꽦臾?
+# 적재 데이터(로컬 생성물)
 backend/data/*
 backend/dataframes/
 !backend/data/.gitkeep
 
-# ?됯? 寃곌낵 (濡쒖뺄 ?앹꽦臾?
+# 평가 결과(로컬 생성물)
 backend/tests/results/
+backend/goldset_results.json
 
-# ?됯? 吏덉쓽??諛?媛쒕컻 濡쒓렇 (濡쒖뺄 ?꾩슜)
-backend/tests/*.json
-backend/tests/make_goldset.py
+# 재사용 가능한 의미 스키마 캐시(로컬 생성물)
+_schema_profiles/
+backend/_schema_profiles/
+
+# 평가 질문과 평가 도구는 backend/tests/goldsets 및 backend/tests 아래에서 추적한다.
 backend/tests/version.md
-backend/tests/*.json
 data/*
 !backend/data/.gitkeep
 docs/

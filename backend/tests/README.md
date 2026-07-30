@@ -23,7 +23,7 @@
 .\venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
 ```
 
-현재 기준 전체 회귀 테스트는 310개입니다.
+현재 기준 전체 회귀 테스트는 423개입니다.
 
 ## 주요 테스트 범위
 
@@ -42,7 +42,10 @@
 
 ## Goldset
 
-활성 원본은 `Result_1.xlsx`, 평가 질문은 `tests/goldset.json`입니다.
+활성 원본은 `Result_1.xlsx`, 평가 질문은
+`tests/goldsets/goldset.json`입니다. Excel과 Vector 평가에 사용하는 원본
+질문 파일은 모두 `tests/goldsets/`에서 Git으로 추적하고, 실행 결과는
+`tests/results/`에 저장해 추적하지 않습니다.
 
 평가 전에 현재 작업공간 서버인지 확인하고 8081 같은 격리 포트를 사용합니다.
 
@@ -61,6 +64,19 @@
   --tag debug `
   -v
 ```
+
+Vector goldset:
+
+```powershell
+.\venv\Scripts\python.exe tests\eval_vector_goldset.py `
+  --goldset tests\goldsets\vector_goldset_choisanghun.json `
+  --url http://127.0.0.1:8081
+```
+
+다른 문서 평가는 `--goldset`에 다음 파일을 지정합니다.
+
+- `tests/goldsets/vector_goldset_academic_support.json`
+- `tests/goldsets/vector_goldset_hwp_cretec.json`
 
 ## 실패 분류
 
@@ -89,4 +105,3 @@
 - 동일 이름과 마스킹 이름
 - 200건 이상의 목록
 - 재적재 중 동시 질문
-

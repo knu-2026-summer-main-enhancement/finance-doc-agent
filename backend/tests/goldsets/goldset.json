@@ -1,0 +1,3191 @@
+{
+  "dataset": "Result_1.xlsx",
+  "answer_policy": {
+    "list": "필터 조건에 맞는 고유 회원 목록",
+    "people_count": "회원명 기준 고유 인원 수",
+    "amount": "동일 회원의 모든 해당 행을 합산",
+    "top_person": "기간 내 회원명별 결제 금액 합계가 가장 큰 값"
+  },
+  "test_cases": [
+    {
+      "id": "R001",
+      "question": "전체목록 보여줘",
+      "category": "pandas_전체목록",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "임종식",
+        "김종수",
+        "곽임규"
+      ],
+      "expected": {
+        "record_count": 1274,
+        "unique_people": 731
+      }
+    },
+    {
+      "id": "R002",
+      "question": "2025년 6월에 낸 사람 목록 보여줘",
+      "category": "pandas_날짜명단",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "이종호"
+      ],
+      "expected": {
+        "record_count": 1,
+        "unique_people": 1,
+        "names": [
+          "이종호"
+        ]
+      }
+    },
+    {
+      "id": "R003",
+      "question": "전기과 전체목록 보여줘",
+      "category": "pandas_필드명단",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "전기과",
+        "임종식",
+        "김관영"
+      ],
+      "expected": {
+        "record_count": 216,
+        "unique_people": 130
+      }
+    },
+    {
+      "id": "R004",
+      "question": "2025년부터 2026년까지 가장 돈을 많이 낸 사람",
+      "category": "pandas_기간집계",
+      "difficulty": "hard",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "방문자",
+        "2,200,000"
+      ],
+      "expected": {
+        "name": "방문자",
+        "amount": 2200000
+      }
+    },
+    {
+      "id": "R005",
+      "question": "임종식 얼마냈어?",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "임종식",
+        "100,000"
+      ],
+      "expected": {
+        "name": "임종식",
+        "amount": 100000,
+        "record_count": 5
+      }
+    },
+    {
+      "id": "R006",
+      "question": "회비 구분이 년회비인 사람 몇 명이야?",
+      "category": "pandas_조건인원",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "673"
+      ],
+      "expected": {
+        "record_count": 1184,
+        "unique_people": 673
+      }
+    },
+    {
+      "id": "R007",
+      "question": "회비 구분이 평생회비인 돈 총합",
+      "category": "pandas_조건합계",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "34,520,000"
+      ],
+      "expected": {
+        "amount": 34520000,
+        "record_count": 65,
+        "unique_people": 63
+      }
+    },
+    {
+      "id": "R008",
+      "question": "김진걸 학과 뭐야",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "김진걸",
+        "토목과"
+      ],
+      "expected": {
+        "name": "김진걸",
+        "major": "토목과"
+      }
+    },
+    {
+      "id": "R009",
+      "question": "자동차과 몇명이야?",
+      "category": "pandas_조건인원",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "57"
+      ],
+      "expected": {
+        "record_count": 102,
+        "unique_people": 57
+      }
+    },
+    {
+      "id": "R010",
+      "question": "20,000원 낸 사람 목록",
+      "category": "pandas_금액명단",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "임종식",
+        "김종수",
+        "박창서"
+      ],
+      "expected": {
+        "record_count": 1005,
+        "unique_people": 584,
+        "amount": 20000
+      }
+    },
+    {
+      "id": "R011",
+      "question": "2만원 낸 사람 목록",
+      "category": "pandas_금액명단",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "임종식",
+        "김종수",
+        "박창서"
+      ],
+      "expected": {
+        "record_count": 1005,
+        "unique_people": 584,
+        "amount": 20000
+      }
+    },
+    {
+      "id": "R012",
+      "question": "20000낸 사람 목록",
+      "category": "pandas_금액명단",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "임종식",
+        "김종수",
+        "박창서"
+      ],
+      "expected": {
+        "record_count": 1005,
+        "unique_people": 584,
+        "amount": 20000
+      }
+    },
+    {
+      "id": "R013",
+      "question": "화공과인 사람 돈 총합",
+      "category": "pandas_필드합계",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "9,396,000"
+      ],
+      "expected": {
+        "amount": 9396000,
+        "record_count": 149,
+        "unique_people": 90
+      }
+    },
+    {
+      "id": "R014",
+      "question": "2026년동안 돈 총합 얼마야?",
+      "category": "pandas_날짜합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "1,100,000"
+      ],
+      "expected": {
+        "amount": 1100000,
+        "record_count": 55,
+        "unique_people": 55
+      }
+    },
+    {
+      "id": "R015",
+      "question": "2026년 3월에 낸 돈 총합 얼마야?",
+      "category": "pandas_날짜합계",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "0"
+      ],
+      "expected": {
+        "amount": 0,
+        "record_count": 0,
+        "unique_people": 0
+      }
+    },
+    {
+      "id": "R016",
+      "question": "윤형구 전화번호 뭐야?",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "01093611242"
+      ],
+      "expected": {
+        "name": "윤형구",
+        "phone": "01093611242"
+      }
+    },
+    {
+      "id": "R017",
+      "question": "이점재 전공하고, 이메일 알려줘",
+      "category": "pandas_복수필드조회",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "기계과",
+        "laser79790@hanmail.net"
+      ],
+      "expected": {
+        "name": "이점재",
+        "major": "기계과",
+        "email": "laser79790@hanmail.net"
+      }
+    },
+    {
+      "id": "R018",
+      "question": "남용호 회비 구분 뭐야?",
+      "category": "pandas_다중값조회",
+      "difficulty": "hard",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "년회비",
+        "평생회비"
+      ],
+      "expected": {
+        "name": "남용호",
+        "fee_types": [
+          "년회비",
+          "평생회비"
+        ]
+      }
+    },
+    {
+      "id": "R019",
+      "question": "사람 총 몇명이야?",
+      "category": "pandas_전체인원",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "731"
+      ],
+      "expected": {
+        "record_count": 1274,
+        "unique_people": 731
+      }
+    },
+    {
+      "id": "R020",
+      "question": "2026년에 2만원 낸 사람 몇명이야?",
+      "category": "pandas_복합조건인원",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "55"
+      ],
+      "expected": {
+        "record_count": 55,
+        "unique_people": 55,
+        "amount": 20000
+      }
+    },
+    {
+      "id": "R021",
+      "question": "이메일 안적은 사람 목록",
+      "category": "pandas_결측값명단",
+      "difficulty": "hard",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "표세웅",
+        "박창서",
+        "남용호"
+      ],
+      "expected": {
+        "record_count": 376,
+        "unique_people": 232
+      }
+    },
+    {
+      "id": "R022",
+      "question": "박재홍 얼마야?",
+      "category": "pandas_부분이름합계",
+      "difficulty": "hard",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "박재홍(용진)",
+        "40,000"
+      ],
+      "expected": {
+        "matched_name": "박재홍(용진)",
+        "amount": 40000,
+        "record_count": 2
+      }
+    },
+    {
+      "id": "R023",
+      "question": "박창서 돈 냈어?",
+      "category": "pandas_존재조회",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "박창서",
+        "80,000"
+      ],
+      "expected": {
+        "exists": true,
+        "amount": 80000,
+        "record_count": 4
+      }
+    },
+    {
+      "id": "R024",
+      "question": "2021년 곽임규 결제 등록 날짜 언제야?",
+      "category": "pandas_날짜필드조회",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "2021-08-01"
+      ],
+      "expected": {
+        "name": "곽임규",
+        "registered_at": "2021-08-01"
+      }
+    },
+    {
+      "id": "R025",
+      "question": "김종수 전화번호 뭐야?",
+      "category": "pandas_결측혼합조회",
+      "difficulty": "hard",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "01037282617"
+      ],
+      "expected": {
+        "name": "김종수",
+        "phone": "01037282617",
+        "note": "2026년 행은 공백이고 2025년 행에 유효 번호 존재"
+      }
+    },
+    {
+      "id": "R026",
+      "question": "khcsmba@naver.com 이메일을 가진 사람 누구야?",
+      "category": "pandas_필드조회",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "김철"
+      ],
+      "expected": {
+        "email": "khcsmba@naver.com",
+        "names": [
+          "김철"
+        ]
+      }
+    },
+    {
+      "id": "R027",
+      "question": "01038141715 전화번호를 가진 사람 누구야",
+      "category": "pandas_필드조회",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "김동진",
+        "안홍(식)"
+      ],
+      "expected": {
+        "phone": "01038141715",
+        "names": [
+          "김동진",
+          "안홍(식)"
+        ]
+      }
+    },
+    {
+      "id": "R028",
+      "question": "박승도 얼마냈어?",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "박승도",
+        "60,000"
+      ],
+      "expected": {
+        "name": "박승도",
+        "amount": 60000,
+        "record_count": 3
+      }
+    },
+    {
+      "id": "R029",
+      "question": "토목과 평균 얼마냈어?",
+      "category": "pandas_필드합계",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "53,095"
+      ],
+      "expected": {
+        "major": "토목과",
+        "average_amount": 53095
+      }
+    },
+    {
+      "id": "R030",
+      "question": "개발자 몇번 돈 냈어?",
+      "category": "pandas_존재조회",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "개발자",
+        "2"
+      ],
+      "expected": {
+        "name": "개발자",
+        "record_count": 2
+      }
+    },
+    {
+      "id": "R031",
+      "question": "기계과에서 제일 돈 많이 낸 사람 누구야?",
+      "category": "pandas_기간집계",
+      "difficulty": "hard",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "이의식",
+        "1,000,000"
+      ],
+      "expected": {
+        "major": "기계과",
+        "name": "이의식",
+        "amount": 1000000
+      }
+    },
+    {
+      "id": "R032",
+      "question": "돈 최빈값 얼마야?",
+      "category": "pandas_조건합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "20,000"
+      ],
+      "expected": {
+        "mode_amount": 20000
+      }
+    },
+    {
+      "id": "R033",
+      "question": "가장 돈 적게 낸 사람 누구야?",
+      "category": "pandas_기간집계",
+      "difficulty": "hard",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "10,000"
+      ],
+      "expected": {
+        "min_amount": 10000
+      }
+    },
+    {
+      "id": "R034",
+      "question": "황찬수 얼마냈어?",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "황찬수",
+        "20,000"
+      ],
+      "expected": {
+        "name": "황찬수",
+        "amount": 20000,
+        "record_count": 1
+      }
+    },
+    {
+      "id": "R035",
+      "question": "이메일이 공백인 사람 리스트 알려줘",
+      "category": "pandas_결측값명단",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "표세웅",
+        "박창서"
+      ],
+      "expected": {
+        "record_count": 376,
+        "unique_people": 232
+      }
+    },
+    {
+      "id": "R036",
+      "question": "김민재 무슨과야?",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "김민재",
+        "전기과"
+      ],
+      "expected": {
+        "name": "김민재",
+        "major": "전기과"
+      }
+    },
+    {
+      "id": "R037",
+      "question": "han777@chol.com 이메일을 가진 사람 얼마냈어?",
+      "category": "pandas_개인합계",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "한영호",
+        "20,000"
+      ],
+      "expected": {
+        "email": "han777@chol.com",
+        "amount": 20000
+      }
+    },
+    {
+      "id": "R038",
+      "question": "임우식 얼마야?",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "임우식",
+        "100,000"
+      ],
+      "expected": {
+        "name": "임우식",
+        "amount": 100000
+      }
+    },
+    {
+      "id": "R039",
+      "question": "임우식 얼마",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "임우식",
+        "100,000"
+      ],
+      "expected": {
+        "name": "임우식",
+        "amount": 100000
+      }
+    },
+    {
+      "id": "R040",
+      "question": "임우식 금액",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "임우식",
+        "100,000"
+      ],
+      "expected": {
+        "name": "임우식",
+        "amount": 100000
+      }
+    },
+    {
+      "id": "R041",
+      "question": "임우식 학과",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "임우식",
+        "건축과"
+      ],
+      "expected": {
+        "name": "임우식",
+        "major": "건축과"
+      }
+    },
+    {
+      "id": "R042",
+      "question": "임우식 얼마 냈어?",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "임우식",
+        "100,000"
+      ],
+      "expected": {
+        "name": "임우식",
+        "amount": 100000
+      }
+    },
+    {
+      "id": "R043",
+      "question": "임우식 돈 총합",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "임우식",
+        "100,000"
+      ],
+      "expected": {
+        "name": "임우식",
+        "amount": 100000
+      }
+    },
+    {
+      "id": "R044",
+      "question": "임우식 돈",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "임우식",
+        "100,000"
+      ],
+      "expected": {
+        "name": "임우식",
+        "amount": 100000
+      }
+    },
+    {
+      "id": "R045",
+      "question": "임우식 전화번호",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "01032900476"
+      ],
+      "expected": {
+        "name": "임우식",
+        "phone": "01032900476"
+      }
+    },
+    {
+      "id": "R046",
+      "question": "임우식 전화번호 알려줘",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "01032900476"
+      ],
+      "expected": {
+        "name": "임우식",
+        "phone": "01032900476"
+      }
+    },
+    {
+      "id": "R047",
+      "question": "임우식 돈 얼마야",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "임우식",
+        "100,000"
+      ],
+      "expected": {
+        "name": "임우식",
+        "amount": 100000
+      }
+    },
+    {
+      "id": "R048",
+      "question": "임우식 금액 조회해줘",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "임우식",
+        "100,000"
+      ],
+      "expected": {
+        "name": "임우식",
+        "amount": 100000
+      }
+    },
+    {
+      "id": "R049",
+      "question": "임우식 언제 돈 냈어?",
+      "category": "pandas_날짜필드조회",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "2019-12-01"
+      ],
+      "expected": {
+        "name": "임우식",
+        "registered_at": "2019-12-01"
+      }
+    },
+    {
+      "id": "R050",
+      "question": "정경채 얼마",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "0건",
+        "없습니다"
+      ],
+      "expected": {
+        "name": "정경채",
+        "record_count": 0,
+        "amount": 0
+      }
+    },
+    {
+      "id": "R051",
+      "question": "추교진 얼마",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "0건",
+        "없습니다"
+      ],
+      "expected": {
+        "name": "추교진",
+        "record_count": 0,
+        "amount": 0
+      }
+    },
+    {
+      "id": "R052",
+      "question": "성준호 얼마",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "0건",
+        "없습니다"
+      ],
+      "expected": {
+        "name": "성준호",
+        "record_count": 0,
+        "amount": 0
+      }
+    },
+    {
+      "id": "R053",
+      "question": "천건우 얼마",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "0건",
+        "없습니다"
+      ],
+      "expected": {
+        "name": "천건우",
+        "record_count": 0,
+        "amount": 0
+      }
+    },
+    {
+      "id": "R054",
+      "question": "정경채 전화번호 뭐야?",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "0건",
+        "없습니다"
+      ],
+      "expected": {
+        "name": "정경채",
+        "record_count": 0
+      }
+    },
+    {
+      "id": "R055",
+      "question": "전화번호 안적은 사람 몇명이야?",
+      "category": "pandas_결측값명단",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "136"
+      ],
+      "expected": {
+        "record_count": 19,
+        "unique_people": 18
+      }
+    },
+    {
+      "id": "R056",
+      "question": "전화번호 안적은 사람 목록",
+      "category": "pandas_결측값명단",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "황찬수"
+      ],
+      "expected": {
+        "record_count": 19,
+        "unique_people": 18
+      }
+    },
+    {
+      "id": "R057",
+      "question": "이메일 없는 사람 몇명이야?",
+      "category": "pandas_결측값명단",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "232"
+      ],
+      "expected": {
+        "record_count": 376,
+        "unique_people": 232
+      }
+    },
+    {
+      "id": "R058",
+      "question": "전공 안적은 사람 있어?",
+      "category": "pandas_결측값명단",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "개발자"
+      ],
+      "expected": {
+        "record_count": 4,
+        "unique_people": 3
+      }
+    },
+    {
+      "id": "R059",
+      "question": "성준호 이메일 뭐야?",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "0건",
+        "없습니다"
+      ],
+      "expected": {
+        "name": "성준호",
+        "record_count": 0
+      }
+    },
+    {
+      "id": "R060",
+      "question": "추교진 학과 뭐야?",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "0건",
+        "없습니다"
+      ],
+      "expected": {
+        "name": "추교진",
+        "record_count": 0
+      }
+    },
+    {
+      "id": "R061",
+      "question": "천건우 회비 구분 뭐야?",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "0건",
+        "없습니다"
+      ],
+      "expected": {
+        "name": "천건우",
+        "record_count": 0
+      }
+    },
+    {
+      "id": "R062",
+      "question": "황찬수 전화번호 뭐야?",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "없음"
+      ],
+      "expected": {
+        "name": "황찬수",
+        "phone": null
+      }
+    },
+    {
+      "id": "R063",
+      "question": "황찬수 학과 뭐야?",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "기계과"
+      ],
+      "expected": {
+        "name": "황찬수",
+        "major": "기계과"
+      }
+    },
+    {
+      "id": "R064",
+      "question": "개발자 전공 뭐야?",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "없음"
+      ],
+      "expected": {
+        "name": "개발자",
+        "major": null
+      }
+    },
+    {
+      "id": "R065",
+      "question": "개발자 이메일 뭐야?",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "call@resoft.kr"
+      ],
+      "expected": {
+        "name": "개발자",
+        "email": "call@resoft.kr"
+      }
+    },
+    {
+      "id": "R066",
+      "question": "개발자 전화번호 뭐야?",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "01085277704"
+      ],
+      "expected": {
+        "name": "개발자",
+        "phone": "01085277704"
+      }
+    },
+    {
+      "id": "R067",
+      "question": "전기과에 이메일 없는 사람 몇명이야?",
+      "category": "pandas_복합조건인원",
+      "difficulty": "hard",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "40"
+      ],
+      "expected": {
+        "major": "전기과",
+        "unique_people": 40
+      }
+    },
+    {
+      "id": "R068",
+      "question": "건축과에 전화번호 없는 사람 목록",
+      "category": "pandas_결측값명단",
+      "difficulty": "hard",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "황찬수"
+      ],
+      "expected": {
+        "major": "건축과"
+      }
+    },
+    {
+      "id": "R069",
+      "question": "토목과에 이메일 없는 사람 몇명이야?",
+      "category": "pandas_복합조건인원",
+      "difficulty": "hard",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "44"
+      ],
+      "expected": {
+        "major": "토목과",
+        "unique_people": 28
+      }
+    },
+    {
+      "id": "R070",
+      "question": "기계과에 전화번호 없는 사람 몇명이야?",
+      "category": "pandas_복합조건인원",
+      "difficulty": "hard",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "28"
+      ],
+      "expected": {
+        "major": "기계과",
+        "unique_people": 6
+      }
+    },
+    {
+      "id": "R071",
+      "question": "박재홍 총 얼마냈어?",
+      "category": "pandas_부분이름합계",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "40,000"
+      ],
+      "expected": {
+        "matched_name": "박재홍(용진)",
+        "amount": 40000
+      }
+    },
+    {
+      "id": "R072",
+      "question": "박재홍(용진) 얼마냈어?",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "40,000"
+      ],
+      "expected": {
+        "name": "박재홍(용진)",
+        "amount": 40000
+      }
+    },
+    {
+      "id": "R073",
+      "question": "안홍 얼마냈어?",
+      "category": "pandas_부분이름합계",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "0건",
+        "없습니다"
+      ],
+      "expected": {
+        "record_count": 0,
+        "amount": 0
+      }
+    },
+    {
+      "id": "R074",
+      "question": "안홍(식) 전화번호 뭐야?",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "0건",
+        "없습니다"
+      ],
+      "expected": {
+        "record_count": 0
+      }
+    },
+    {
+      "id": "R075",
+      "question": "박재홍 학과 뭐야?",
+      "category": "pandas_부분이름합계",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "화공과"
+      ],
+      "expected": {
+        "matched_name": "박재홍(용진)",
+        "major": "화공과"
+      }
+    },
+    {
+      "id": "R076",
+      "question": "김철 이메일 뭐야?",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "여러 명",
+        "전체 이름"
+      ],
+      "expected": {
+        "clarification": true
+      }
+    },
+    {
+      "id": "R077",
+      "question": "김철 얼마냈어?",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "여러 명",
+        "전체 이름"
+      ],
+      "expected": {
+        "clarification": true
+      }
+    },
+    {
+      "id": "R078",
+      "question": "남용호 총 얼마냈어?",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "710,000"
+      ],
+      "expected": {
+        "name": "남용호",
+        "amount": 710000
+      }
+    },
+    {
+      "id": "R079",
+      "question": "남용호 이메일 뭐야?",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "없음"
+      ],
+      "expected": {
+        "name": "남용호",
+        "email": null
+      }
+    },
+    {
+      "id": "R080",
+      "question": "남용호 전화번호 뭐야?",
+      "category": "pandas_필드조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "01028017028"
+      ],
+      "expected": {
+        "name": "남용호",
+        "phone": "01028017028"
+      }
+    },
+    {
+      "id": "R081",
+      "question": "임종식 돈얼마",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "100,000"
+      ],
+      "expected": {
+        "name": "임종식",
+        "amount": 100000
+      }
+    },
+    {
+      "id": "R082",
+      "question": "임종식 냈음?",
+      "category": "pandas_존재조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "임종식",
+        "100,000"
+      ],
+      "expected": {
+        "exists": true,
+        "amount": 100000
+      }
+    },
+    {
+      "id": "R083",
+      "question": "김종수 돈 냈나요?",
+      "category": "pandas_존재조회",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "김종수"
+      ],
+      "expected": {
+        "exists": true
+      }
+    },
+    {
+      "id": "R084",
+      "question": "차형호 낸 돈 총액",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "차형호"
+      ],
+      "expected": {
+        "name": "차형호"
+      }
+    },
+    {
+      "id": "R085",
+      "question": "표세웅 회비 얼마야",
+      "category": "pandas_개인합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "표세웅"
+      ],
+      "expected": {
+        "name": "표세웅"
+      }
+    },
+    {
+      "id": "R086",
+      "question": "전기과 인원 수",
+      "category": "pandas_조건인원",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "130"
+      ],
+      "expected": {
+        "major": "전기과",
+        "unique_people": 130
+      }
+    },
+    {
+      "id": "R087",
+      "question": "건축과 총 몇명",
+      "category": "pandas_조건인원",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "126"
+      ],
+      "expected": {
+        "major": "건축과",
+        "unique_people": 65
+      }
+    },
+    {
+      "id": "R088",
+      "question": "기계과 사람 수",
+      "category": "pandas_조건인원",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "113"
+      ],
+      "expected": {
+        "major": "기계과",
+        "unique_people": 168
+      }
+    },
+    {
+      "id": "R089",
+      "question": "토목과 인원 몇명",
+      "category": "pandas_조건인원",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "114"
+      ],
+      "expected": {
+        "major": "토목과",
+        "unique_people": 114
+      }
+    },
+    {
+      "id": "R090",
+      "question": "화공과 회원 수",
+      "category": "pandas_조건인원",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "90"
+      ],
+      "expected": {
+        "major": "화공과",
+        "unique_people": 90
+      }
+    },
+    {
+      "id": "R091",
+      "question": "2025년에 돈 낸 사람 몇명이야?",
+      "category": "pandas_복합조건인원",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "218"
+      ],
+      "expected": {
+        "year": 2025,
+        "unique_people": 189
+      }
+    },
+    {
+      "id": "R092",
+      "question": "2024년에 돈 낸 사람 몇명이야?",
+      "category": "pandas_복합조건인원",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "250"
+      ],
+      "expected": {
+        "year": 2024,
+        "unique_people": 202
+      }
+    },
+    {
+      "id": "R093",
+      "question": "2025년에 낸 돈 총합 얼마야?",
+      "category": "pandas_날짜합계",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "9,430,000"
+      ],
+      "expected": {
+        "year": 2025,
+        "amount": 9430000
+      }
+    },
+    {
+      "id": "R094",
+      "question": "2024년에 낸 돈 총합 얼마야?",
+      "category": "pandas_날짜합계",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "11,860,000"
+      ],
+      "expected": {
+        "year": 2024,
+        "amount": 11860000
+      }
+    },
+    {
+      "id": "R095",
+      "question": "2025년 1월에 낸 돈 총합 얼마야?",
+      "category": "pandas_날짜합계",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "3,860,000"
+      ],
+      "expected": {
+        "year": 2025,
+        "month": 1,
+        "amount": 3860000
+      }
+    },
+    {
+      "id": "R096",
+      "question": "2024년 1월에 낸 돈 총합 얼마야?",
+      "category": "pandas_날짜합계",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "980,000"
+      ],
+      "expected": {
+        "year": 2024,
+        "month": 1,
+        "amount": 980000
+      }
+    },
+    {
+      "id": "R097",
+      "question": "곽임규 언제 돈 냈어?",
+      "category": "pandas_날짜필드조회",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "2021-08-01"
+      ],
+      "expected": {
+        "name": "곽임규",
+        "registered_at": "2021-08-01"
+      }
+    },
+    {
+      "id": "R098",
+      "question": "박창서 언제 결제했어?",
+      "category": "pandas_날짜필드조회",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "2019-12-01"
+      ],
+      "expected": {
+        "name": "박창서",
+        "registered_at": "2019-12-01"
+      }
+    },
+    {
+      "id": "R099",
+      "question": "임종식 최근 결제 등록 날짜 언제야?",
+      "category": "pandas_날짜필드조회",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "2019-12-01"
+      ],
+      "expected": {
+        "name": "임종식"
+      }
+    },
+    {
+      "id": "R100",
+      "question": "전체 회비 총합 얼마야?",
+      "category": "pandas_조건합계",
+      "difficulty": "easy",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "67,950,000"
+      ],
+      "expected": {
+        "amount": 67950000
+      }
+    },
+    {
+      "id": "R101",
+      "question": "김현수 얼마야?",
+      "category": "pandas_동명이인개인합계",
+      "difficulty": "hard",
+      "expected_route": "pandas",
+      "ground_truth_keywords": [
+        "김현수 1",
+        "김현수 2",
+        "40,000"
+      ],
+      "expected": {
+        "unique_people": 2,
+        "person_totals": [
+          {
+            "amount": 40000,
+            "payments": 2
+          },
+          {
+            "amount": 40000,
+            "payments": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "R102",
+      "question": "전체 기록에서 회원명과 전공만 보여줘",
+      "category": "pandas_llm_query_plan_투영_이름전공",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP01",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "임종식",
+        "기계과"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R103",
+      "question": "전공과 회원명이 나오도록 전체 기록을 정리해줘",
+      "category": "pandas_llm_query_plan_투영_이름전공",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP01",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "임종식",
+        "기계과"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R104",
+      "question": "모든 회원의 이름 옆에 전공을 표시해줘",
+      "category": "pandas_llm_query_plan_투영_이름전공",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP01",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "임종식",
+        "기계과"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R105",
+      "question": "회원별 전공을 회원명과 함께 표로 보여줘",
+      "category": "pandas_llm_query_plan_투영_이름전공",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP01",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "임종식",
+        "기계과"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R106",
+      "question": "전체 기록에서 회원명과 회비 구분만 보여줘",
+      "category": "pandas_llm_query_plan_투영_이름회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP02",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "년회비",
+        "평생회비"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R107",
+      "question": "회비 구분과 회원명이 나오도록 정리해줘",
+      "category": "pandas_llm_query_plan_투영_이름회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP02",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "년회비",
+        "평생회비"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R108",
+      "question": "모든 회원의 이름 옆에 회비 종류를 표시해줘",
+      "category": "pandas_llm_query_plan_투영_이름회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP02",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "년회비",
+        "평생회비"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R109",
+      "question": "회원별 회비 구분을 회원명과 함께 표로 보여줘",
+      "category": "pandas_llm_query_plan_투영_이름회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP02",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "년회비",
+        "평생회비"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R110",
+      "question": "전체 기록에서 회원명과 결제 등록 날짜를 보여줘",
+      "category": "pandas_llm_query_plan_투영_이름등록날짜",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP03",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "임종식",
+        "2019-12-01"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R111",
+      "question": "결제 등록 날짜와 회원명이 나오도록 정리해줘",
+      "category": "pandas_llm_query_plan_투영_이름등록날짜",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP03",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "임종식",
+        "2019-12-01"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R112",
+      "question": "모든 회원의 이름 옆에 결제 등록일을 표시해줘",
+      "category": "pandas_llm_query_plan_투영_이름등록날짜",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP03",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "임종식",
+        "2019-12-01"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R113",
+      "question": "회원별 결제 등록 시점을 이름과 함께 표로 보여줘",
+      "category": "pandas_llm_query_plan_투영_이름등록날짜",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP03",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "임종식",
+        "2019-12-01"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R114",
+      "question": "전체 기록에서 회원명과 전화번호를 보여줘",
+      "category": "pandas_llm_query_plan_투영_이름전화번호",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP04",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "윤형구",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R115",
+      "question": "전화번호와 회원명이 나오도록 연락처를 정리해줘",
+      "category": "pandas_llm_query_plan_투영_이름전화번호",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP04",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "윤형구",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R116",
+      "question": "모든 회원의 이름 옆에 전화번호를 표시해줘",
+      "category": "pandas_llm_query_plan_투영_이름전화번호",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP04",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "윤형구",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R117",
+      "question": "회원별 전화번호를 회원명과 함께 표로 보여줘",
+      "category": "pandas_llm_query_plan_투영_이름전화번호",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP04",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "윤형구",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R118",
+      "question": "전체 기록에서 회원명과 이메일을 보여줘",
+      "category": "pandas_llm_query_plan_투영_이름이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP05",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "이점재",
+        "laser79790@hanmail.net"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R119",
+      "question": "이메일과 회원명이 나오도록 연락처를 정리해줘",
+      "category": "pandas_llm_query_plan_투영_이름이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP05",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "이점재",
+        "laser79790@hanmail.net"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R120",
+      "question": "모든 회원의 이름 옆에 이메일을 표시해줘",
+      "category": "pandas_llm_query_plan_투영_이름이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP05",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "이점재",
+        "laser79790@hanmail.net"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R121",
+      "question": "회원별 이메일을 회원명과 함께 표로 보여줘",
+      "category": "pandas_llm_query_plan_투영_이름이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP05",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "이점재",
+        "laser79790@hanmail.net"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R122",
+      "question": "전체 기록에서 회원명, 전화번호, 이메일을 보여줘",
+      "category": "pandas_llm_query_plan_투영_연락처",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP06",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "윤형구",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R123",
+      "question": "전화번호와 이메일을 회원명 기준으로 정리해줘",
+      "category": "pandas_llm_query_plan_투영_연락처",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP06",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "윤형구",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R124",
+      "question": "모든 회원의 이름 옆에 전화와 이메일을 표시해줘",
+      "category": "pandas_llm_query_plan_투영_연락처",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP06",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "윤형구",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R125",
+      "question": "회원별 전화번호와 이메일을 한 표로 보여줘",
+      "category": "pandas_llm_query_plan_투영_연락처",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP06",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "윤형구",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R126",
+      "question": "전체 기록에서 회원명, 전공, 전화번호를 보여줘",
+      "category": "pandas_llm_query_plan_투영_전공전화",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP07",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "토목과",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R127",
+      "question": "전공과 전화번호를 회원명 기준으로 정리해줘",
+      "category": "pandas_llm_query_plan_투영_전공전화",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP07",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "토목과",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R128",
+      "question": "모든 회원의 이름 옆에 전공과 전화번호를 표시해줘",
+      "category": "pandas_llm_query_plan_투영_전공전화",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP07",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "토목과",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R129",
+      "question": "회원별 전공과 전화번호를 한 표로 보여줘",
+      "category": "pandas_llm_query_plan_투영_전공전화",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP07",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "토목과",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R130",
+      "question": "전체 기록에서 회원명, 전공, 이메일을 보여줘",
+      "category": "pandas_llm_query_plan_투영_전공이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP08",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "기계과",
+        "laser79790@hanmail.net"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R131",
+      "question": "전공과 이메일을 회원명 기준으로 정리해줘",
+      "category": "pandas_llm_query_plan_투영_전공이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP08",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "기계과",
+        "laser79790@hanmail.net"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R132",
+      "question": "모든 회원의 이름 옆에 전공과 이메일을 표시해줘",
+      "category": "pandas_llm_query_plan_투영_전공이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP08",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "기계과",
+        "laser79790@hanmail.net"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R133",
+      "question": "회원별 전공과 이메일을 한 표로 보여줘",
+      "category": "pandas_llm_query_plan_투영_전공이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP08",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "기계과",
+        "laser79790@hanmail.net"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R134",
+      "question": "전체 기록에서 회원명, 회비 구분, 결제 등록 날짜를 보여줘",
+      "category": "pandas_llm_query_plan_투영_회비날짜",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP09",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "년회비",
+        "2019-12-01"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R135",
+      "question": "회비 구분과 결제 등록일을 회원명 기준으로 정리해줘",
+      "category": "pandas_llm_query_plan_투영_회비날짜",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP09",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "년회비",
+        "2019-12-01"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R136",
+      "question": "모든 회원의 이름 옆에 회비 종류와 등록 날짜를 표시해줘",
+      "category": "pandas_llm_query_plan_투영_회비날짜",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP09",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "년회비",
+        "2019-12-01"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R137",
+      "question": "회원별 회비 구분과 결제 등록 시점을 한 표로 보여줘",
+      "category": "pandas_llm_query_plan_투영_회비날짜",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP09",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "년회비",
+        "2019-12-01"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R138",
+      "question": "전체 기록에서 회원명과 년, 월 정보를 보여줘",
+      "category": "pandas_llm_query_plan_투영_연월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP10",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "임종식",
+        "2025"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R139",
+      "question": "년과 월을 회원명 기준으로 정리해줘",
+      "category": "pandas_llm_query_plan_투영_연월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP10",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "임종식",
+        "2025"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R140",
+      "question": "모든 회원의 이름 옆에 기록된 연도와 월을 표시해줘",
+      "category": "pandas_llm_query_plan_투영_연월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP10",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "임종식",
+        "2025"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R141",
+      "question": "회원별 연도와 월을 한 표로 보여줘",
+      "category": "pandas_llm_query_plan_투영_연월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP10",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "임종식",
+        "2025"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R142",
+      "question": "전체 기록에서 회원명, 전공, 년, 월을 보여줘",
+      "category": "pandas_llm_query_plan_투영_전공연월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP11",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "전기과",
+        "2025"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R143",
+      "question": "전공과 연도, 월을 회원명 기준으로 정리해줘",
+      "category": "pandas_llm_query_plan_투영_전공연월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP11",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "전기과",
+        "2025"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R144",
+      "question": "모든 회원의 이름 옆에 전공과 기록 연월을 표시해줘",
+      "category": "pandas_llm_query_plan_투영_전공연월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP11",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "전기과",
+        "2025"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R145",
+      "question": "회원별 전공과 연도, 월을 한 표로 보여줘",
+      "category": "pandas_llm_query_plan_투영_전공연월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP11",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "전기과",
+        "2025"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R146",
+      "question": "전체 기록에서 회원명, 회비 구분, 년, 월을 보여줘",
+      "category": "pandas_llm_query_plan_투영_회비연월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP12",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "평생회비",
+        "2025"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R147",
+      "question": "회비 구분과 연도, 월을 회원명 기준으로 정리해줘",
+      "category": "pandas_llm_query_plan_투영_회비연월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP12",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "평생회비",
+        "2025"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R148",
+      "question": "모든 회원의 이름 옆에 회비 종류와 기록 연월을 표시해줘",
+      "category": "pandas_llm_query_plan_투영_회비연월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP12",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "평생회비",
+        "2025"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R149",
+      "question": "회원별 회비 구분과 연도, 월을 한 표로 보여줘",
+      "category": "pandas_llm_query_plan_투영_회비연월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP12",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "평생회비",
+        "2025"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R150",
+      "question": "전체 기록에서 회원명, 전공, 회비 구분을 보여줘",
+      "category": "pandas_llm_query_plan_투영_전공회비",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP13",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "기계과",
+        "년회비"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R151",
+      "question": "전공과 회비 구분을 회원명 기준으로 정리해줘",
+      "category": "pandas_llm_query_plan_투영_전공회비",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP13",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "기계과",
+        "년회비"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R152",
+      "question": "모든 회원의 이름 옆에 전공과 회비 종류를 표시해줘",
+      "category": "pandas_llm_query_plan_투영_전공회비",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP13",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "기계과",
+        "년회비"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R153",
+      "question": "회원별 전공과 회비 구분을 한 표로 보여줘",
+      "category": "pandas_llm_query_plan_투영_전공회비",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP13",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "기계과",
+        "년회비"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R154",
+      "question": "전체 기록에서 회원명, 결제 등록 날짜, 이메일을 보여줘",
+      "category": "pandas_llm_query_plan_투영_날짜이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP14",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "2019-12-01",
+        "laser79790@hanmail.net"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R155",
+      "question": "전체 기록에서 회원명과 이메일, 결제 등록 날짜 순으로 보여줘",
+      "category": "pandas_llm_query_plan_투영_날짜이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP14",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "2019-12-01",
+        "laser79790@hanmail.net"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R156",
+      "question": "모든 회원의 이름 옆에 등록 날짜와 이메일을 표시해줘",
+      "category": "pandas_llm_query_plan_투영_날짜이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP14",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "2019-12-01",
+        "laser79790@hanmail.net"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R157",
+      "question": "모든 회원의 이름 옆에 이메일과 등록 날짜를 같이 표시해줘",
+      "category": "pandas_llm_query_plan_투영_날짜이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP14",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "2019-12-01",
+        "laser79790@hanmail.net"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R158",
+      "question": "전체 기록에서 회원명, 전공, 전화번호, 이메일을 보여줘",
+      "category": "pandas_llm_query_plan_투영_종합연락처",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP15",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "기계과",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R159",
+      "question": "전공과 전화번호, 이메일을 회원명 기준으로 정리해줘",
+      "category": "pandas_llm_query_plan_투영_종합연락처",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP15",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "기계과",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R160",
+      "question": "모든 회원의 이름 옆에 전공과 연락처를 표시해줘",
+      "category": "pandas_llm_query_plan_투영_종합연락처",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP15",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "기계과",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R161",
+      "question": "회원별 전공, 전화번호, 이메일을 한 표로 보여줘",
+      "category": "pandas_llm_query_plan_투영_종합연락처",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP15",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "기계과",
+        "01093611242"
+      ],
+      "expected": {
+        "record_count": 1274
+      }
+    },
+    {
+      "id": "R162",
+      "question": "전공별 납부액을 묶어서 보여줘",
+      "category": "pandas_llm_query_plan_그룹합계_전공",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP16",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "기계과",
+        "14,234,000"
+      ],
+      "expected": {
+        "amount": 14234000
+      }
+    },
+    {
+      "id": "R163",
+      "question": "납부액을 전공 기준으로 나눠서 보여줘",
+      "category": "pandas_llm_query_plan_그룹합계_전공",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP16",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "기계과",
+        "14,234,000"
+      ],
+      "expected": {
+        "amount": 14234000
+      }
+    },
+    {
+      "id": "R164",
+      "question": "각 전공의 납부액을 모아서 정리해줘",
+      "category": "pandas_llm_query_plan_그룹합계_전공",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP16",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "기계과",
+        "14,234,000"
+      ],
+      "expected": {
+        "amount": 14234000
+      }
+    },
+    {
+      "id": "R165",
+      "question": "전공마다 납부액이 어떻게 되는지 보여줘",
+      "category": "pandas_llm_query_plan_그룹합계_전공",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP16",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "기계과",
+        "14,234,000"
+      ],
+      "expected": {
+        "amount": 14234000
+      }
+    },
+    {
+      "id": "R166",
+      "question": "회비 구분별 납부액을 묶어서 보여줘",
+      "category": "pandas_llm_query_plan_그룹합계_회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP17",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "평생회비",
+        "34,520,000"
+      ],
+      "expected": {
+        "amount": 34520000
+      }
+    },
+    {
+      "id": "R167",
+      "question": "납부액을 회비 종류 기준으로 나눠서 보여줘",
+      "category": "pandas_llm_query_plan_그룹합계_회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP17",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "평생회비",
+        "34,520,000"
+      ],
+      "expected": {
+        "amount": 34520000
+      }
+    },
+    {
+      "id": "R168",
+      "question": "각 회비 구분의 납부액을 모아서 정리해줘",
+      "category": "pandas_llm_query_plan_그룹합계_회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP17",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "평생회비",
+        "34,520,000"
+      ],
+      "expected": {
+        "amount": 34520000
+      }
+    },
+    {
+      "id": "R169",
+      "question": "회비 유형마다 납부액이 어떻게 되는지 보여줘",
+      "category": "pandas_llm_query_plan_그룹합계_회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP17",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "평생회비",
+        "34,520,000"
+      ],
+      "expected": {
+        "amount": 34520000
+      }
+    },
+    {
+      "id": "R170",
+      "question": "연도별 납부액을 묶어서 보여줘",
+      "category": "pandas_llm_query_plan_그룹합계_연도",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP18",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "2024",
+        "11,860,000"
+      ],
+      "expected": {
+        "amount": 11860000
+      }
+    },
+    {
+      "id": "R171",
+      "question": "납부액을 연도 기준으로 나눠서 보여줘",
+      "category": "pandas_llm_query_plan_그룹합계_연도",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP18",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "2024",
+        "11,860,000"
+      ],
+      "expected": {
+        "amount": 11860000
+      }
+    },
+    {
+      "id": "R172",
+      "question": "각 연도의 납부액을 모아서 정리해줘",
+      "category": "pandas_llm_query_plan_그룹합계_연도",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP18",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "2024",
+        "11,860,000"
+      ],
+      "expected": {
+        "amount": 11860000
+      }
+    },
+    {
+      "id": "R173",
+      "question": "해마다 납부액이 어떻게 되는지 보여줘",
+      "category": "pandas_llm_query_plan_그룹합계_연도",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP18",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "2024",
+        "11,860,000"
+      ],
+      "expected": {
+        "amount": 11860000
+      }
+    },
+    {
+      "id": "R174",
+      "question": "월별 납부액을 묶어서 보여줘",
+      "category": "pandas_llm_query_plan_그룹합계_월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP19",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "12",
+        "15,020,000"
+      ],
+      "expected": {
+        "amount": 15020000
+      }
+    },
+    {
+      "id": "R175",
+      "question": "납부액을 월 기준으로 나눠서 보여줘",
+      "category": "pandas_llm_query_plan_그룹합계_월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP19",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "12",
+        "15,020,000"
+      ],
+      "expected": {
+        "amount": 15020000
+      }
+    },
+    {
+      "id": "R176",
+      "question": "각 월의 납부액을 모아서 정리해줘",
+      "category": "pandas_llm_query_plan_그룹합계_월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP19",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "12",
+        "15,020,000"
+      ],
+      "expected": {
+        "amount": 15020000
+      }
+    },
+    {
+      "id": "R177",
+      "question": "달마다 납부액이 어떻게 되는지 보여줘",
+      "category": "pandas_llm_query_plan_그룹합계_월",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP19",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "12",
+        "15,020,000"
+      ],
+      "expected": {
+        "amount": 15020000
+      }
+    },
+    {
+      "id": "R178",
+      "question": "전공과 회비 구분별 납부액을 묶어서 보여줘",
+      "category": "pandas_llm_query_plan_그룹합계_전공회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP20",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "기계과",
+        "평생회비",
+        "8,000,000"
+      ],
+      "expected": {
+        "amount": 8000000
+      }
+    },
+    {
+      "id": "R179",
+      "question": "납부액을 전공과 회비 종류 기준으로 나눠서 보여줘",
+      "category": "pandas_llm_query_plan_그룹합계_전공회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP20",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "기계과",
+        "평생회비",
+        "8,000,000"
+      ],
+      "expected": {
+        "amount": 8000000
+      }
+    },
+    {
+      "id": "R180",
+      "question": "각 전공의 회비 구분별 납부액을 정리해줘",
+      "category": "pandas_llm_query_plan_그룹합계_전공회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP20",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "기계과",
+        "평생회비",
+        "8,000,000"
+      ],
+      "expected": {
+        "amount": 8000000
+      }
+    },
+    {
+      "id": "R181",
+      "question": "전공과 회비 유형 조합마다 납부액을 보여줘",
+      "category": "pandas_llm_query_plan_그룹합계_전공회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP20",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "기계과",
+        "평생회비",
+        "8,000,000"
+      ],
+      "expected": {
+        "amount": 8000000
+      }
+    },
+    {
+      "id": "R182",
+      "question": "이메일이 미등록인 회원 목록 보여줘",
+      "category": "pandas_llm_query_plan_결측_이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP21",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "이메일"
+      ],
+      "expected": {
+        "record_count": 376
+      }
+    },
+    {
+      "id": "R183",
+      "question": "회원 중 이메일 미등록 기록만 정리해줘",
+      "category": "pandas_llm_query_plan_결측_이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP21",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "이메일"
+      ],
+      "expected": {
+        "record_count": 376
+      }
+    },
+    {
+      "id": "R184",
+      "question": "이메일 정보가 등록되지 않은 사람을 보여줘",
+      "category": "pandas_llm_query_plan_결측_이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP21",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "이메일"
+      ],
+      "expected": {
+        "record_count": 376
+      }
+    },
+    {
+      "id": "R185",
+      "question": "이메일 미등록 상태인 회원들만 모아줘",
+      "category": "pandas_llm_query_plan_결측_이메일",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP21",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "이메일"
+      ],
+      "expected": {
+        "record_count": 376
+      }
+    },
+    {
+      "id": "R186",
+      "question": "전화번호가 미등록인 회원 목록 보여줘",
+      "category": "pandas_llm_query_plan_결측_전화번호",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP22",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "전화번호"
+      ],
+      "expected": {
+        "record_count": 19
+      }
+    },
+    {
+      "id": "R187",
+      "question": "회원 중 전화번호 미등록 기록만 정리해줘",
+      "category": "pandas_llm_query_plan_결측_전화번호",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP22",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "전화번호"
+      ],
+      "expected": {
+        "record_count": 19
+      }
+    },
+    {
+      "id": "R188",
+      "question": "전화번호 정보가 등록되지 않은 사람을 보여줘",
+      "category": "pandas_llm_query_plan_결측_전화번호",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP22",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "전화번호"
+      ],
+      "expected": {
+        "record_count": 19
+      }
+    },
+    {
+      "id": "R189",
+      "question": "전화번호 미등록 상태인 회원들만 모아줘",
+      "category": "pandas_llm_query_plan_결측_전화번호",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP22",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "전화번호"
+      ],
+      "expected": {
+        "record_count": 19
+      }
+    },
+    {
+      "id": "R190",
+      "question": "결제 등록 날짜가 미등록인 기록을 보여줘",
+      "category": "pandas_llm_query_plan_결측_등록날짜",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP23",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "결제"
+      ],
+      "expected": {
+        "record_count": 676
+      }
+    },
+    {
+      "id": "R191",
+      "question": "전체 내역 중 결제 등록일 미등록 건만 정리해줘",
+      "category": "pandas_llm_query_plan_결측_등록날짜",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP23",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "결제"
+      ],
+      "expected": {
+        "record_count": 676
+      }
+    },
+    {
+      "id": "R192",
+      "question": "결제 등록 날짜가 등록되지 않은 내역을 보여줘",
+      "category": "pandas_llm_query_plan_결측_등록날짜",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP23",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "결제"
+      ],
+      "expected": {
+        "record_count": 676
+      }
+    },
+    {
+      "id": "R193",
+      "question": "결제 등록일 미등록 상태인 기록만 모아줘",
+      "category": "pandas_llm_query_plan_결측_등록날짜",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP23",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "결제"
+      ],
+      "expected": {
+        "record_count": 676
+      }
+    },
+    {
+      "id": "R194",
+      "question": "전공이 미등록인 회원 목록 보여줘",
+      "category": "pandas_llm_query_plan_결측_전공",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP24",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "전공"
+      ],
+      "expected": {
+        "record_count": 4
+      }
+    },
+    {
+      "id": "R195",
+      "question": "회원 중 전공 미등록 기록만 정리해줘",
+      "category": "pandas_llm_query_plan_결측_전공",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP24",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "전공"
+      ],
+      "expected": {
+        "record_count": 4
+      }
+    },
+    {
+      "id": "R196",
+      "question": "전공 정보가 등록되지 않은 사람을 보여줘",
+      "category": "pandas_llm_query_plan_결측_전공",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP24",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "전공"
+      ],
+      "expected": {
+        "record_count": 4
+      }
+    },
+    {
+      "id": "R197",
+      "question": "전공 미등록 상태인 회원들만 모아줘",
+      "category": "pandas_llm_query_plan_결측_전공",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP24",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "전공"
+      ],
+      "expected": {
+        "record_count": 4
+      }
+    },
+    {
+      "id": "R198",
+      "question": "회비 구분이 미등록인 기록을 보여줘",
+      "category": "pandas_llm_query_plan_결측_회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP25",
+      "paraphrase_variant": 1,
+      "ground_truth_keywords": [
+        "회비"
+      ],
+      "expected": {
+        "record_count": 25
+      }
+    },
+    {
+      "id": "R199",
+      "question": "전체 내역 중 회비 구분 미등록 건만 정리해줘",
+      "category": "pandas_llm_query_plan_결측_회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP25",
+      "paraphrase_variant": 2,
+      "ground_truth_keywords": [
+        "회비"
+      ],
+      "expected": {
+        "record_count": 25
+      }
+    },
+    {
+      "id": "R200",
+      "question": "회비 종류가 등록되지 않은 내역을 보여줘",
+      "category": "pandas_llm_query_plan_결측_회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP25",
+      "paraphrase_variant": 3,
+      "ground_truth_keywords": [
+        "회비"
+      ],
+      "expected": {
+        "record_count": 25
+      }
+    },
+    {
+      "id": "R201",
+      "question": "회비 구분 미등록 상태인 기록만 모아줘",
+      "category": "pandas_llm_query_plan_결측_회비구분",
+      "difficulty": "medium",
+      "expected_route": "pandas",
+      "planner_path": "llm_query_plan",
+      "paraphrase_group": "LQP25",
+      "paraphrase_variant": 4,
+      "ground_truth_keywords": [
+        "회비"
+      ],
+      "expected": {
+        "record_count": 25
+      }
+    }
+  ]
+}

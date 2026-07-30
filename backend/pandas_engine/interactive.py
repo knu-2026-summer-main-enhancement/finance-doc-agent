@@ -147,6 +147,22 @@ def get_interactive_record_entity(reference: str, row_index: int) -> dict[str, A
     selected_name = normalize_person_name(selected_row[record_name_column])
     if not selected_name:
         return None
+
+    def details_for_rows(positions: object) -> list[dict[str, Any]]:
+        if not isinstance(positions, (list, tuple)):
+            return []
+        collected: list[dict[str, Any]] = []
+        for position in positions:
+            if not isinstance(position, int) or position < 0 or position >= len(frame):
+                continue
+            entity = _entity_for_row(frame.iloc[position])
+            if entity is None:
+                continue
+            stored = _DETAILS.get(entity["detail_ref"])
+            if stored is not None:
+                collected.append(stored)
+        return collected
+
     def collect_details(target_name: str) -> list[dict[str, Any]]:
         collected: list[dict[str, Any]] = []
         for _, row in frame.iterrows():
@@ -159,7 +175,43 @@ def get_interactive_record_entity(reference: str, row_index: int) -> dict[str, A
                     collected.append(stored)
         return collected
 
-    details = collect_details(selected_name)
+    def collect_identity_details(source_row: pd.Series) -> list[dict[str, Any]]:
+        """Collect only rows belonging to the selected same-name person."""
+        target_contacts = _person_contact_tokens(source_row)
+        target_candidate = str(source_row.get("person_candidate_key", "")).strip()
+        collected: list[dict[str, Any]] = []
+        for _, row in frame.iterrows():
+            if normalize_person_name(row[name_column]) != selected_name:
+                continue
+            row_contacts = _person_contact_tokens(row)
+            same_contact = bool(
+                target_contacts and row_contacts and target_contacts & row_contacts
+            )
+            same_contactless_candidate = bool(
+                not target_contacts
+                and not row_contacts
+                and target_candidate
+                and target_candidate
+                == str(row.get("person_candidate_key", "")).strip()
+            )
+            if not same_contact and not same_contactless_candidate:
+                continue
+            entity = _entity_for_row(row)
+            if entity is None:
+                continue
+            stored = _DETAILS.get(entity["detail_ref"])
+            if stored is not None:
+                collected.append(stored)
+        return collected
+
+    details = details_for_rows(selected_row.get("_person_group_positions"))
+    if not details and selected_row.name in frame.index:
+        source_row = frame.loc[selected_row.name]
+        if isinstance(source_row, pd.DataFrame):
+            source_row = source_row.iloc[0]
+        details = collect_identity_details(source_row)
+    if not details:
+        details = collect_details(selected_name)
     if not details and row_index < len(frame):
         # Summary frames may use a display/group column whose label is not
         # schema-classified as a person column. Preserve legacy row alignment.
@@ -265,6 +317,21 @@ def _person_identity_seed(row: pd.Series, name_column: str) -> tuple[str, str]:
     if contact_parts:
         return "|".join(sorted(contact_parts)), "contact_scoped"
     return display_key or str(row[name_column]).strip(), "display_name_scoped"
+
+
+def _person_contact_tokens(row: pd.Series) -> set[str]:
+    tokens: set[str] = set()
+    for column in row.index:
+        meaning = infer_column_meaning(str(column), pd.Series([row[column]]))
+        if (
+            meaning.qualifier != "contact"
+            and meaning.pii_type not in {"phone_number", "email_address"}
+        ):
+            continue
+        value = re.sub(r"[\W_]+", "", str(row[column]).casefold())
+        if value and value not in {"nan", "none", "null"}:
+            tokens.add(f"{column}::{value}")
+    return tokens
 
 
 def _is_visible_column(column: object, series: pd.Series, *, include_contact: bool) -> bool:
@@ -399,13 +466,18 @@ def _visible_records(
     frame: pd.DataFrame,
     *,
     limit: int | None = None,
+    include_contact: bool = False,
 ) -> list[dict[str, Any]]:
     """Serialize visible source fields without re-inferring every cell."""
     columns = [
         str(column)
         for column in frame.columns
         if is_source_column(frame, column)
-        and _is_visible_column(column, frame[column], include_contact=False)
+        and _is_visible_column(
+            column,
+            frame[column],
+            include_contact=include_contact,
+        )
     ]
     selected = frame.loc[:, columns]
     if limit is not None:
@@ -416,9 +488,26 @@ def _visible_records(
     ]
 
 
+def _answer_before_evidence(answer: str | None) -> str:
+    body = answer or ""
+    for heading in (
+        "\n\n\uc870\ud68c \uadfc\uac70:",
+        "\n\n\uacc4\uc0b0 \uadfc\uac70:",
+    ):
+        body = body.split(heading, 1)[0]
+    return body
+
+
+def _has_name_bullet_list(answer: str | None) -> bool:
+    return any(
+        line.startswith("- ") and bool(line[2:].strip())
+        for line in _answer_before_evidence(answer).splitlines()
+    )
+
+
 def _inline_segments(answer: str, entities: list[dict[str, Any]], calculation: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Create UI annotations from structured execution values, not browser text parsing."""
-    display_answer = answer.split("\n\n계산 근거:", 1)[0]
+    display_answer = _answer_before_evidence(answer)
     actions: list[tuple[str, dict[str, Any]]] = []
     by_name: dict[str, list[dict[str, Any]]] = {}
     for entity in entities:
@@ -489,16 +578,35 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 2
                 # Executor-created summaries contain only display label, amount
                 # and payment count; the contact identifiers used to split
                 # people never enter this frame.
-                records.append({str(k): _json_value(v) for k, v in row.items()})
+                records.append({
+                    str(k): _json_value(v)
+                    for k, v in row.items()
+                    if not str(k).startswith("_")
+                })
         else:
-            records = _visible_records(frame, limit=page_size)
+            requested_contact = any(
+                column in frame.columns
+                and (
+                    (meaning := infer_column_meaning(str(column), frame[column])).qualifier
+                    == "contact"
+                    or meaning.pii_type in {"phone_number", "email_address"}
+                )
+                for column in result.evidence.select
+            )
+            records = _visible_records(
+                frame,
+                limit=page_size,
+                include_contact=requested_contact,
+            )
     # Projection intentionally removes system columns from list values.  Build
     # entities from the matching execution rows so references retain row scope.
     entity_frame = result.matched_frame
     inline_entities: list[dict[str, Any]] = []
     single_person_result = False
     single_person_name = ""
-    is_name_list_answer = bool(result.operation == "list" and answer and "\n- " in answer)
+    is_name_list_answer = bool(
+        result.operation == "list" and _has_name_bullet_list(answer)
+    )
     if is_record_result and isinstance(frame, pd.DataFrame) and result.operation == "list" and answer:
         result_name_column = _person_name_column(frame)
         visible_columns = [
@@ -516,6 +624,7 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 2
         name_column = _person_name_column(entity_frame)
         single_person_result = bool(
             name_column is not None
+            and result.operation != "person_totals"
             and entity_frame[name_column].dropna().map(normalize_person_name).nunique() == 1
         )
         if single_person_result and name_column is not None:
@@ -617,23 +726,49 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 2
         "page": {"offset": 0, "limit": page_size, "total": total, "has_more": total > page_size} if is_record_result else None,
     }
     if answer is not None:
+        segment_entities = inline_entities
+        if result.operation == "person_totals" and isinstance(frame, pd.DataFrame):
+            summary_name_column = _person_name_column(frame)
+            if summary_name_column is None and len(frame.columns):
+                summary_name_column = str(frame.columns[0])
+            if summary_name_column is not None:
+                segment_entities = [
+                    {
+                        "display_name": str(row[summary_name_column]),
+                        "entity_id": f"person-total-{index}",
+                        "detail_ref": "",
+                        "attributes": [],
+                    }
+                    for index, (_, row) in enumerate(frame.iterrows())
+                ]
         segments = (
-            [] if name_list is not None else _inline_segments(answer, inline_entities, calculation)
+            [] if name_list is not None else _inline_segments(answer, segment_entities, calculation)
         )
         if records_detail_ref is not None and isinstance(frame, pd.DataFrame):
             name_column = _person_name_column(frame)
-            row_indexes = {
-                str(value): index
-                for index, value in enumerate(frame[name_column].tolist())
-            } if name_column is not None else {}
+            if (
+                name_column is None
+                and result.operation == "person_totals"
+                and len(frame.columns)
+            ):
+                name_column = str(frame.columns[0])
+            row_indexes: dict[str, list[int]] = {}
+            if name_column is not None:
+                for index, value in enumerate(frame[name_column].tolist()):
+                    row_indexes.setdefault(str(value), []).append(index)
+            row_occurrences: dict[str, int] = {}
             for segment in segments:
-                if segment.get("kind") == "entity" and segment.get("text") in row_indexes:
+                text = str(segment.get("text", ""))
+                indexes = row_indexes.get(text, [])
+                occurrence = row_occurrences.get(text, 0)
+                if segment.get("kind") == "entity" and occurrence < len(indexes):
                     segment.pop("detail_ref", None)
                     segment.update({
                         "kind": "record_entity",
                         "result_ref": records_detail_ref,
-                        "row_index": row_indexes[segment["text"]],
+                        "row_index": indexes[occurrence],
                     })
+                    row_occurrences[text] = occurrence + 1
         if person_detail is not None:
             for segment in segments:
                 if segment.get("kind") == "entity" and segment.get("text") == single_person_name:
@@ -653,7 +788,7 @@ def build_interactive_dataframe(frame: pd.DataFrame, *, page_size: int = 200, an
     inline_entities = []
     seen_entity_ids: set[str] = set()
     name_column = _person_name_column(frame)
-    is_name_list_answer = bool(answer and "\n- " in answer)
+    is_name_list_answer = _has_name_bullet_list(answer)
     for _, row in frame.iterrows():
         if is_name_list_answer:
             continue

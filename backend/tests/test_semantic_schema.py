@@ -320,6 +320,21 @@ class SemanticSchemaTest(unittest.TestCase):
         self.assertEqual(mappings["큰금액"]["role"], "amount")
         self.assertEqual(mappings["큰금액"]["sensitivity"], "none")
 
+    def test_contact_headers_support_unseparated_phone_and_email_values(self):
+        phone = infer_column_meaning(
+            "\uc804\ud654\ubc88\ud638",
+            pd.Series(["01011112222", "01033334444"]),
+        )
+        email = infer_column_meaning(
+            "\uc774\uba54\uc77c",
+            pd.Series(["first@example.com", "second@example.com"]),
+        )
+
+        self.assertEqual(phone.qualifier, "contact")
+        self.assertEqual(phone.pii_type, "phone_number")
+        self.assertEqual(email.qualifier, "contact")
+        self.assertEqual(email.pii_type, "email_address")
+
     def test_sensitive_sample_value_is_hidden_from_llm_schema_description(self):
         raw = pd.DataFrame([
             {"이름": "홍길동", "연락정보": "010-7000-1001", "지급액": "300,000"},

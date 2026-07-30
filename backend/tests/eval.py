@@ -29,7 +29,7 @@ from typing import Any
 
 import requests
 
-GOLDSET_PATH = Path(__file__).parent / "goldset.json"
+GOLDSET_PATH = Path(__file__).parent / "goldsets" / "goldset.json"
 DEFAULT_URL  = "http://localhost:8080"
 RESULT_DIR   = Path(__file__).parent / "results"
 
@@ -554,7 +554,7 @@ def main() -> None:
     route_alias = parse_route_alias(args.route_alias)
 
     if not GOLDSET_PATH.exists():
-        print(f"goldset.json 없음: {GOLDSET_PATH}")
+        print(f"goldset 파일 없음: {GOLDSET_PATH}")
         sys.exit(1)
 
     goldset    = json.loads(GOLDSET_PATH.read_text(encoding="utf-8"))

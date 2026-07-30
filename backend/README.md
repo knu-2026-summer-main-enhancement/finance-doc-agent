@@ -228,7 +228,12 @@ cd backend
   --tag backend_readme_check
 ```
 
-Vector goldset과 실패 분류 기준은 [Testing and Goldset](tests/README.md)을 참고하세요. 정답률은 키워드 포함만으로 판단하지 않고 route, filter, 반환 행, scalar, 인원 수, 근거 섹션을 원본과 비교합니다.
+Excel goldset은 `tests/goldsets/goldset.json`, 문서별 Vector goldset은
+`tests/goldsets/vector_goldset_*.json`에서 관리합니다. 실행 결과는
+`tests/results/`에 저장합니다. 자세한 실행법과 실패 분류 기준은
+[Testing and Goldset](tests/README.md)을 참고하세요. 정답률은 키워드
+포함만으로 판단하지 않고 route, filter, 반환 행, scalar, 인원 수,
+근거 섹션을 원본과 비교합니다.
 
 ## 운영 안전장치
 

@@ -1,0 +1,38 @@
+{
+  "dataset": "부산대학교_2026_장학사정관_학업지원장학생_선발계획.pdf",
+  "mode": "natural",
+  "description": "2026학년도 1학기 장학사정관 추천 학업지원장학생 선발계획의 Vector 검색·조건 판단 평가",
+  "scoring_policy": {
+    "route": "vector",
+    "source_scope_required": true,
+    "required_all": "모든 핵심 사실이 답변에 존재해야 함",
+    "required_any": "각 대안 그룹에서 하나 이상 존재해야 함",
+    "forbidden": "답변에 포함되면 안 되는 과잉 단정 또는 잘못된 사실"
+  },
+  "test_cases": [
+    {"id":"VA001","question":"이 장학사정관 학업지원장학금은 왜 필요한 제도야?","category":"추진배경","difficulty":"easy","expected_route":"vector","required_all":["사각지대"],"required_any":[["가계곤란","재정상황"],["소외","혜택"]],"forbidden":[],"expected_summary":"장학 사각지대·급박한 재정 곤란 학생 지원"},
+    {"id":"VA002","question":"일반대학원생도 이 장학금 지원 대상에 포함돼?","category":"선발대상_대학원","difficulty":"easy","expected_route":"vector","required_all":["일반대학원"],"required_any":[["장학금","지원"]],"forbidden":["학부생만"],"expected_summary":"일반대학원생도 가계곤란 사유를 심사받아 지원 대상에 포함"},
+    {"id":"VA003","question":"이 계획의 관련 규정은 뭐야?","category":"관련근거","difficulty":"easy","expected_route":"vector","required_all":["부산대학교 장학금 규정","장학생 선발지침"],"required_any":[["제18조","18조"],["제19조","19조"]],"forbidden":[],"expected_summary":"장학금 규정 및 학부·대학원 장학생 선발지침"},
+    {"id":"VA004","question":"학부생 선발 대상은 누구야?","category":"선발대상_학부","difficulty":"easy","expected_route":"vector","required_all":["2026학년도 1학기","정규학기","학부생"],"required_any":[["가계곤란","가계 곤란"],["등록금 지원","등록금"]],"forbidden":["모든 학부생"],"expected_summary":"재학 중인 정규학기 학부생 중 가계곤란으로 등록금 지원 필요 인정자"},
+    {"id":"VA005","question":"학자금지원구간이 아직 확정되지 않은 학부생도 신청할 수 있어?","category":"선발대상_학부","difficulty":"easy","expected_route":"vector","required_all":["신청 불가"],"required_any":[["2020학년도","해당 학기"],["학자금지원구간","지원구간"]],"forbidden":["신청 가능"],"expected_summary":"해당 학기 학자금지원구간 미확정자는 신청 불가"},
+    {"id":"VA006","question":"학자금지원구간 9구간 이상인 학부생은 어떤 경우 지원 가능해?","category":"선발대상_학부","difficulty":"medium","expected_route":"vector","required_all":["9구간"],"required_any":[["실직","파산"],["장애인","중증질환","희귀난치성질환"],["가계곤란","가계 곤란"]],"forbidden":["9구간 이상이면 모두"],"expected_summary":"가계곤란 사유를 입증하는 9구간 이상 학부생"},
+    {"id":"VA007","question":"성적이 2.51 미만인 학부생도 특별한 사정이 있으면 받을 수 있어?","category":"선발대상_학부","difficulty":"medium","expected_route":"vector","required_all":["2.51 미만"],"required_any":[["특별한 사정","가계곤란"],["0~8구간","0~8"]],"forbidden":["무조건 불가"],"expected_summary":"0~8구간 성적탈락자는 특별 사정과 가계곤란 사유가 있으면 가능"},
+    {"id":"VA008","question":"국가장학금 지원 횟수를 다 쓴 학부생도 신청 가능한가?","category":"선발대상_학부","difficulty":"medium","expected_route":"vector","required_all":["최대 지원 가능 횟수"],"required_any":[["특별한 사정","가계곤란"],["신청","가능"]],"forbidden":["무조건 불가"],"expected_summary":"국가장학금 지원 횟수 초과자도 특별 사정이 있으면 가능"},
+    {"id":"VA009","question":"일반대학원생의 기본 선발 대상은 어떻게 돼?","category":"선발대상_대학원","difficulty":"easy","expected_route":"vector","required_all":["2026학년도 1학기","정규학기","일반대학원생"],"required_any":[["가계곤란","가계 곤란"],["등록금 지원","등록금"]],"forbidden":["학부생만"],"expected_summary":"재학 중인 정규학기 일반대학원생 중 가계곤란으로 등록금 지원 필요 인정자"},
+    {"id":"VA010","question":"일반대학원생은 기초생활수급자나 차상위계층이면 지원 대상이야?","category":"선발대상_대학원","difficulty":"easy","expected_route":"vector","required_all":["기초생활수급자","차상위계층"],"required_any":[["선발","지원"],["해당","대상"]],"forbidden":[],"expected_summary":"기초생활수급자와 차상위계층은 대학원생 대상 조건"},
+    {"id":"VA011","question":"4인 가구 일반대학원생의 건강보험료 기준은 얼마 이하여야 해?","category":"선발대상_보험료","difficulty":"medium","expected_route":"vector","required_all":["136,195"],"required_any":[["4인가구","4인 가구"],["건강보험료","보험료"]],"forbidden":["158,464"],"expected_summary":"4인 가구 월평균 건강보험료 136,195원 이하"},
+    {"id":"VA012","question":"6인 가구 일반대학원생 건강보험료 기준 알려줘.","category":"선발대상_보험료","difficulty":"medium","expected_route":"vector","required_all":["179,418"],"required_any":[["6인가구","6인 가구"],["건강보험료","보험료"]],"forbidden":["136,195"],"expected_summary":"6인 가구 월평균 건강보험료 179,418원 이하"},
+    {"id":"VA013","question":"학부생 성적 기준은 평점과 이수학점이 각각 어떻게 돼?","category":"성적기준","difficulty":"easy","expected_route":"vector","required_all":["2.0 이상","12학점 이상"],"required_any":[["직전학기","직전 학기"],["평점평균","평점"]],"forbidden":["3.0 이상"],"expected_summary":"학부는 직전학기 평점 2.0 이상, 이수 12학점 이상"},
+    {"id":"VA014","question":"학부생 마지막 정규학기에는 이수학점 기준 예외가 있어?","category":"성적기준","difficulty":"medium","expected_route":"vector","required_all":["1학점 이상"],"required_any":[["마지막 정규학기","마지막"],["직전학기","이수학점"]],"forbidden":["12학점 이상만"],"expected_summary":"심사 학기가 마지막 정규학기면 직전학기 1학점 이상"},
+    {"id":"VA015","question":"일반대학원생 성적 기준은 평점 몇 점 이상이야?","category":"성적기준","difficulty":"easy","expected_route":"vector","required_all":["3.0 이상"],"required_any":[["일반대학원","대학원"],["직전학기","평점"]],"forbidden":["2.0 이상"],"expected_summary":"일반대학원은 직전학기 평점평균 3.0 이상"},
+    {"id":"VA016","question":"학업지원장학금은 어떤 요소를 종합해서 선발해?","category":"선발기준","difficulty":"medium","expected_route":"vector","required_all":["가계곤란","성적","지원 횟수"],"required_any":[["학생 태도","태도"],["종합적으로","종합"]],"forbidden":[],"expected_summary":"가계곤란 정도·성적·지원횟수·학생 태도 종합 검토"},
+    {"id":"VA017","question":"가계곤란 정도가 상이면 장학금은 어느 등급이야?","category":"장학금액","difficulty":"easy","expected_route":"vector","required_all":["A급","등록금 전액"],"required_any":[["상","가계곤란"]],"forbidden":["수업료Ⅱ"],"expected_summary":"가계곤란 상은 A급 등록금 전액"},
+    {"id":"VA018","question":"가계곤란 정도가 중인 학생은 어떤 장학 등급을 받아?","category":"장학금액","difficulty":"easy","expected_route":"vector","required_all":["B급","C2급","수업료Ⅱ"],"required_any":[["중","가계곤란"]],"forbidden":["등록금 전액"],"expected_summary":"가계곤란 중은 B급부터 C2급, 수업료Ⅱ"},
+    {"id":"VA019","question":"선발 절차는 어떤 순서로 진행돼?","category":"선발절차","difficulty":"medium","expected_route":"vector","required_all":["서류","면담","장학금 지급"],"required_any":[["학생","장학사정관","학생과"],["결정","지급여부"]],"forbidden":[],"expected_summary":"학생 서류 제출, 장학사정관 검토·면담·결정, 학생과 지급"},
+    {"id":"VA020","question":"신청할 때 기본으로 내야 하는 서류는 뭐야?","category":"구비서류","difficulty":"medium","expected_route":"vector","required_all":["장학금 신청서","가족관계증명서","가계곤란 사유서","개인정보","서약서"],"required_any":[["기본서류","기본 서류"]],"forbidden":[],"expected_summary":"신청서·상세 가족관계증명서·사유서·개인정보 동의서·서약서"},
+    {"id":"VA021","question":"장학금 신청 서류는 어디로 보내야 해?","category":"신청방법","difficulty":"easy","expected_route":"vector","required_all":["학생과","scholarship@pusan.ac.kr"],"required_any":[["직접","서류 제출"],["e-mail","이메일"]],"forbidden":[],"expected_summary":"학생과에 직접 제출하거나 이메일 우선 제출 후 원본 제출"},
+    {"id":"VA022","question":"보호자 실직을 증명하려면 어떤 서류가 필요해?","category":"증빙서류","difficulty":"medium","expected_route":"vector","required_all":["고용보험수급자격증","구직등록필증"],"required_any":[["실직","보호자"]],"forbidden":["장애인 증명서만"],"expected_summary":"실직은 고용보험수급자격증과 구직등록필증"},
+    {"id":"VA023","question":"신청서와 구비서류 접수 기간은 언제야?","category":"추진일정","difficulty":"easy","expected_route":"vector","required_all":["2026. 4. 13","5. 11"],"required_any":[["월","2026"]],"forbidden":["5. 12"],"expected_summary":"2026년 4월 13일부터 5월 11일까지 접수"},
+    {"id":"VA024","question":"장학생 결정과 통보는 언제 예정돼 있어?","category":"추진일정","difficulty":"easy","expected_route":"vector","required_all":["2026. 5. 29"],"required_any":[["예정","장학생 결정"],["통보","결정"]],"forbidden":["5. 22"],"expected_summary":"2026년 5월 29일 장학생 결정 및 통보 예정"}
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "dataset": "Result_1.xlsx",
+  "purpose": "동명이인 필드 조회, 금액 집계, 인물카드 링크의 행 단위 일관성 검증",
+  "cases": [
+    {"person": "김상호", "row_count": 4, "majors": ["방직과", "전기과", "기계과", "기계과"], "amount_total": 60000, "nonempty_phone_count": 3},
+    {"person": "김준영", "row_count": 4, "majors": ["건축과", "건축과", "토목과", "화공과"], "amount_total": 80000, "nonempty_phone_count": 4},
+    {"person": "이장희", "row_count": 4, "majors": ["자동차과", "자동차과", "자동차과", "기계과"], "amount_total": 110000, "nonempty_phone_count": 4},
+    {"person": "김현수", "row_count": 4, "majors": ["기계과", "기계과", "건축과", "건축과"], "amount_total": 80000, "nonempty_phone_count": 4},
+    {"person": "권영수", "row_count": 2, "majors": ["기계과", "방직과"], "amount_total": 40000, "nonempty_phone_count": 2},
+    {"person": "권태정", "row_count": 2, "majors": ["기계과", "화공과"], "amount_total": 50000, "nonempty_phone_count": 2},
+    {"person": "김성배", "row_count": 2, "majors": ["건축과", "전기과"], "amount_total": 60000, "nonempty_phone_count": 2},
+    {"person": "김종열", "row_count": 2, "majors": ["화공과", "기계과"], "amount_total": 40000, "nonempty_phone_count": 2},
+    {"person": "김홍", "row_count": 2, "majors": ["기계과", "화학과"], "amount_total": 40000, "nonempty_phone_count": 2},
+    {"person": "이대현", "row_count": 2, "majors": ["기계과", "토목과"], "amount_total": 60000, "nonempty_phone_count": 2}
+  ],
+  "question_templates": [
+    {"kind": "phone", "text": "{person} 전화번호 알려줘"},
+    {"kind": "major", "text": "{person} 전공 알려줘"},
+    {"kind": "amount", "text": "{person} 얼마야?"}
+  ]
+}

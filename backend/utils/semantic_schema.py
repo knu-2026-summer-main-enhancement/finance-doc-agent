@@ -31,7 +31,13 @@ _DATE_VALUE_RE = re.compile(
     r"(?:[T\s]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$"
 )
 _YEAR_MONTH_VALUE_RE = re.compile(r"^(?:19|20)\d{2}(?:[-./년]\s*(?:0?[1-9]|1[0-2])(?:월)?)$")
-_PHONE_VALUE_RE = re.compile(r"^(?=.*[- ])(?:\+?82[- ]?)?0?\d{1,2}[- ]?\d{3,4}[- ]?\d{4}$")
+_PHONE_VALUE_RE = re.compile(
+    r"^(?:\+?82[- ]?)?(?:0\d{1,2})[- ]?\d{3,4}[- ]?\d{4}$"
+)
+_EMAIL_VALUE_RE = re.compile(
+    r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -249,8 +255,26 @@ def _deterministic_meaning(column: str, series: pd.Series, is_derived: bool) -> 
     if header == "성명마스킹여부":
         return meaning("entity", "is_name_masked", "boolean")
 
+    email_header = any(
+        token in header
+        for token in ("\uc774\uba54\uc77c", "email", "emailaddress", "mailaddress")
+    )
+    email_ratio = _value_match_ratio(values, _EMAIL_VALUE_RE)
+    if email_header or (values and email_ratio >= 0.8):
+        return meaning(
+            "identifier", "identifier_value", "string",
+            qualifier="contact", sensitivity="personal", pii_type="email_address",
+        )
+
+    phone_header = any(
+        token in header
+        for token in (
+            "\uc804\ud654\ubc88\ud638", "\ud578\ub4dc\ud3f0", "\ud734\ub300\uc804\ud654",
+            "\uc5f0\ub77d\ucc98", "phone", "mobile", "tel",
+        )
+    )
     phone_ratio = _value_match_ratio(values, _PHONE_VALUE_RE)
-    if values and phone_ratio >= 0.8:
+    if phone_header or (values and phone_ratio >= 0.8):
         return meaning(
             "identifier", "identifier_value", "string",
             qualifier="contact", sensitivity="personal", pii_type="phone_number",

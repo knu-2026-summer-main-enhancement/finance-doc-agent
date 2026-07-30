@@ -294,3 +294,109 @@ class InteractiveResultTest(unittest.TestCase):
         }
         self.assertFalse({"년", "월", "일", "회비 구분", "결제 금액"} & detail_columns)
         self.assertTrue({"년", "월", "일", "회비 구분", "결제 금액"} <= history_columns)
+
+    def test_same_name_person_total_cards_keep_separate_people(self):
+        df = pd.DataFrame({
+            "회원명": ["김현수", "김현수", "김현수", "김현수"],
+            "전공": ["기계과", "기계과", "건축과", "건축과"],
+            "이메일": [
+                "first@example.com", "first@example.com",
+                "second@example.com", "second@example.com",
+            ],
+            "전화번호": [
+                "010-1111-2222", "010-1111-2222",
+                "010-3333-4444", "010-3333-4444",
+            ],
+            "년": [2025, 2024, 2020, 2019],
+            "결제 금액": [20_000, 20_000, 20_000, 20_000],
+            "person_candidate_key": [
+                "김*수::기계과", "김*수::기계과",
+                "김*수::건축과", "김*수::건축과",
+            ],
+        })
+        df.attrs["source_columns"] = [
+            "회원명", "전공", "이메일", "전화번호", "년", "결제 금액",
+        ]
+        df.attrs["semantic_schema"] = attach_semantic_schema(
+            df, var_name="df_same_name", source_file="same-name.xlsx", dataframe_dir=".",
+        )
+        plan = QueryPlan(
+            status="ready",
+            dataframe="df_same_name",
+            operation="sum",
+            target="결제 금액",
+            filters=[FilterCondition(column="회원명", operator="eq", value="김현수")],
+            result_mode="person_totals",
+        )
+        execution = execute_query_plan(validate_query_plan(
+            plan,
+            dataframes={"df_same_name": df},
+            source_by_alias={"df_same_name": "same-name.xlsx"},
+        ))
+        answer = _format_query_execution_result(execution, "김현수 얼마야?")
+        result = build_interactive_result(execution, answer=answer)
+        links = [
+            segment for segment in result["inline_segments"]
+            if segment.get("kind") == "record_entity"
+        ]
+
+        self.assertEqual([segment["text"] for segment in links], ["김현수 1", "김현수 2"])
+        first = get_interactive_record_entity(links[0]["result_ref"], links[0]["row_index"])
+        second = get_interactive_record_entity(links[1]["result_ref"], links[1]["row_index"])
+        first_attributes = {item["column"]: item["value"] for item in first["attributes"]}
+        second_attributes = {item["column"]: item["value"] for item in second["attributes"]}
+        self.assertEqual(first_attributes["전공"], "기계과")
+        self.assertEqual(second_attributes["전공"], "건축과")
+        self.assertEqual(len(first["payment_history"]), 2)
+        self.assertEqual(len(second["payment_history"]), 2)
+        self.assertNotIn("_person_group_positions", result["records"][0])
+
+    def test_same_name_field_lookup_cards_keep_identity_and_contact(self):
+        name = "박가람"
+        df = pd.DataFrame({
+            "회원명": [name, name, name, name],
+            "전공": ["기계과", "기계과", "건축과", "건축과"],
+            "전화번호": [
+                "01011112222", "01011112222", "01033334444", "01033334444",
+            ],
+            "결제 금액": [10_000, 20_000, 30_000, 40_000],
+            "person_candidate_key": [
+                "박*람::기계과", "박*람::기계과", "박*람::건축과", "박*람::건축과",
+            ],
+        })
+        df.attrs["source_columns"] = ["회원명", "전공", "전화번호", "결제 금액"]
+        plan = QueryPlan(
+            status="ready",
+            dataframe="df0",
+            operation="list",
+            filters=[FilterCondition(column="회원명", operator="eq", value=name)],
+            select=["회원명", "전화번호"],
+        )
+        execution = execute_query_plan(validate_query_plan(
+            plan,
+            dataframes={"df0": df},
+            source_by_alias={"df0": "test.xlsx"},
+        ))
+        answer = _format_query_execution_result(execution, f"{name} 전화번호 알려줘")
+        result = build_interactive_result(execution, answer=answer)
+
+        self.assertIsNone(result["name_list"])
+        self.assertTrue(all("전화번호" in record for record in result["records"]))
+        links = [
+            segment
+            for segment in result["inline_segments"]
+            if segment.get("kind") == "record_entity"
+        ]
+        self.assertEqual([segment["row_index"] for segment in links], [0, 1, 2, 3])
+        reference = result["records_detail_ref"]
+        first = get_interactive_record_entity(reference, 0)
+        third = get_interactive_record_entity(reference, 2)
+        first_attributes = {item["column"]: item["value"] for item in first["attributes"]}
+        third_attributes = {item["column"]: item["value"] for item in third["attributes"]}
+
+        self.assertEqual(first_attributes["전공"], "기계과")
+        self.assertEqual(third_attributes["전공"], "건축과")
+        self.assertIn("전화번호", first_attributes)
+        self.assertIn("전화번호", third_attributes)
+        self.assertEqual(len(first["payment_history"]), 2)
+        self.assertEqual(len(third["payment_history"]), 2)

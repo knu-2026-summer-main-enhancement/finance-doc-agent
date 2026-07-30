@@ -48,6 +48,7 @@ class QueryExecutionEvidence:
     source_file: str
     filter_logic: str
     filters: tuple[FilterCondition, ...]
+    select: tuple[str, ...]
     sort: tuple[SortCondition, ...]
     distinct_by: tuple[str, ...]
     group_by: tuple[str, ...]
@@ -262,6 +263,9 @@ def _person_total_groups(
     valid = target.notna()
     working = frame.loc[valid].copy()
     amounts = target.loc[valid]
+    valid_frame_positions = [
+        position for position, is_valid in enumerate(valid.tolist()) if is_valid
+    ]
     if working.empty:
         return pd.DataFrame()
 
@@ -355,6 +359,12 @@ def _person_total_groups(
             "인물": f"{base_name} {number}",
             str(target_column): float(group_amounts.sum()),
             "결제 건수": int(group_amounts.size),
+            # The interactive layer uses these positions to open the exact
+            # same-name person group. This internal field is never rendered.
+            "_person_group_positions": tuple(
+                valid_frame_positions[position]
+                for position in member_positions
+            ),
         })
     result = pd.DataFrame(rows)
     result.attrs.update(frame.attrs)
@@ -403,6 +413,7 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
         source_file=source_file,
         filter_logic=plan.filter_logic,
         filters=plan.filters,
+        select=plan.select,
         sort=plan.sort,
         distinct_by=plan.distinct_by,
         group_by=plan.group_by,
