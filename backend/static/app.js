@@ -69,6 +69,7 @@ const state = {
   personSuggestionController: null,
   personSuggestionTimer: null,
   personSuggestionCache: new Map(),
+  suggestionRenderTimer: null,
   dateAutocomplete: { actions: [] },
   suggestionUsage: new Map(),
   documentsLoaded: false,
@@ -1135,17 +1136,38 @@ function syncMobileComposerInset() {
     document.documentElement.style.removeProperty("--composer-inset");
     return;
   }
-  const distanceFromBottom = elements.chatArea.scrollHeight
-    - elements.chatArea.scrollTop
-    - elements.chatArea.clientHeight;
-  const wasNearBottom = distanceFromBottom < 80;
   const inset = Math.ceil(document.querySelector(".composer-wrap").getBoundingClientRect().height);
   document.documentElement.style.setProperty("--composer-inset", `${inset}px`);
-  if (wasNearBottom) {
-    requestAnimationFrame(() => {
-      elements.chatArea.scrollTop = elements.chatArea.scrollHeight;
-    });
-  }
+}
+
+let viewportSyncFrame = 0;
+
+function syncMobileKeyboardInset() {
+  cancelAnimationFrame(viewportSyncFrame);
+  viewportSyncFrame = requestAnimationFrame(() => {
+    const isMobileV3 = window.innerWidth <= 820
+      && document.documentElement.classList.contains("ui-v3");
+    const viewport = window.visualViewport;
+    if (!isMobileV3 || !viewport || document.activeElement !== elements.questionInput) {
+      document.documentElement.style.setProperty("--keyboard-offset", "0px");
+      return;
+    }
+    const occludedHeight = Math.max(
+      0,
+      window.innerHeight - viewport.height - viewport.offsetTop,
+    );
+    // Address-bar movement is much smaller than a keyboard and should not move the composer.
+    const keyboardOffset = occludedHeight >= 120 ? Math.ceil(occludedHeight) : 0;
+    document.documentElement.style.setProperty("--keyboard-offset", `${keyboardOffset}px`);
+  });
+}
+
+function scheduleQuestionSuggestions(delay = 120) {
+  window.clearTimeout(state.suggestionRenderTimer);
+  state.suggestionRenderTimer = window.setTimeout(() => {
+    state.suggestionRenderTimer = null;
+    showLocalQuestionSuggestions();
+  }, delay);
 }
 
 let suggestionHideTimer = null;
@@ -1659,12 +1681,14 @@ elements.chatForm.addEventListener("submit", (event) => {
 elements.questionInput.addEventListener("input", () => {
   resizeTextarea();
   scheduleRemotePersonSearch(elements.questionInput.value);
-  showLocalQuestionSuggestions();
+  scheduleQuestionSuggestions();
 });
 elements.questionInput.addEventListener("focus", async () => {
+  syncMobileKeyboardInset();
   await primeQuestionCatalog();
   showLocalQuestionSuggestions();
 });
+elements.questionInput.addEventListener("blur", syncMobileKeyboardInset);
 elements.questionInput.addEventListener("keydown", (event) => {
   const suggestionsOpen = !elements.questionAutocomplete.hidden;
   if (suggestionsOpen && event.key === "ArrowDown") {
@@ -1802,6 +1826,14 @@ loadDocuments();
 updateNaturalMode();
 const composerResizeObserver = new ResizeObserver(syncMobileComposerInset);
 composerResizeObserver.observe(document.querySelector(".composer-wrap"));
-window.addEventListener("resize", syncMobileComposerInset);
+window.addEventListener("resize", () => {
+  syncMobileComposerInset();
+  syncMobileKeyboardInset();
+});
+window.visualViewport?.addEventListener("resize", syncMobileKeyboardInset);
+window.visualViewport?.addEventListener("scroll", syncMobileKeyboardInset);
 syncMobileComposerInset();
-elements.questionInput.focus();
+syncMobileKeyboardInset();
+if (window.matchMedia("(min-width: 821px) and (pointer: fine)").matches) {
+  elements.questionInput.focus();
+}

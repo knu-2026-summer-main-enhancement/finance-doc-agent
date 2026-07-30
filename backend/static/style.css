@@ -405,7 +405,7 @@ html.ui-v3 .welcome-card h2 { margin-bottom: 18px; font-size: clamp(19px, 5vw, 2
 html.ui-v3 .suggestion-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; margin-top: 0; }
 html.ui-v3 .suggestion { width: auto; min-height: 34px; padding: 7px 10px; border-radius: 999px; font-size: 11px; }
 html.ui-v3 .suggestion-icon { width: 20px; height: 20px; border-radius: 50%; font-size: 11px; }
-html.ui-v3 .composer-wrap { position: fixed; right: 0; bottom: 0; left: 0; z-index: 18; padding: 0 16px calc(16px + env(safe-area-inset-bottom)); background: linear-gradient(0deg, var(--bg) 70%, rgba(247,247,248,0)); }
+html.ui-v3 .composer-wrap { position: fixed; right: 0; bottom: var(--keyboard-offset, 0px); left: 0; z-index: 18; padding: 0 16px calc(16px + env(safe-area-inset-bottom)); background: linear-gradient(0deg, var(--bg) 70%, rgba(247,247,248,0)); transition: bottom .16s cubic-bezier(.2, .75, .25, 1); }
 html.ui-v3 .composer-wrap > .query-mode-row { display: flex; justify-content: flex-end; margin: 0 3px 7px; }
 html.ui-v3 .composer-note, html.ui-v3 .selected-files { display: none; }
 html.ui-v3 .composer { min-height: 58px; padding: 7px 8px; border-radius: 999px; box-shadow: 0 10px 28px rgba(24,24,27,.12); }
@@ -425,33 +425,34 @@ html.ui-v3 .chat-area {
   scroll-padding-bottom: calc(var(--composer-inset, 112px) + 12px);
 }
 html.ui-v3 .question-autocomplete {
-  max-height: 0;
-  margin-bottom: 0;
-  padding-top: 0;
-  padding-bottom: 0;
+  position: absolute;
+  right: 16px;
+  bottom: calc(100% + 7px);
+  left: 16px;
+  height: min(142px, 30dvh);
+  margin: 0;
+  padding: 5px;
   overflow: hidden;
   border-color: transparent;
+  pointer-events: none;
+  visibility: hidden;
   opacity: 0;
   transform: translateY(9px);
   overscroll-behavior: contain;
   transition:
-    max-height .22s cubic-bezier(.2, .75, .25, 1),
-    margin-bottom .22s ease,
-    padding-top .22s ease,
-    padding-bottom .22s ease,
+    visibility 0s linear .18s,
     border-color .16s ease,
     opacity .16s ease,
-    transform .22s cubic-bezier(.2, .75, .25, 1);
+    transform .18s cubic-bezier(.2, .75, .25, 1);
 }
 html.ui-v3 .question-autocomplete.visible {
-  max-height: min(34dvh, 190px);
-  margin-bottom: 7px;
-  padding-top: 7px;
-  padding-bottom: 7px;
   overflow-y: auto;
   border-color: #dedee5;
+  pointer-events: auto;
+  visibility: visible;
   opacity: 1;
   transform: translateY(0);
+  transition-delay: 0s;
 }
 }
 
