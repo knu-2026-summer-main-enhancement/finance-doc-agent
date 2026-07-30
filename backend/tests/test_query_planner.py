@@ -328,6 +328,120 @@ class QueryPlannerAsyncTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(plan.filter_logic, "any")
 
+    async def test_same_column_or_repairs_contains_to_exact_filters(self):
+        llm = FakeLLM(json.dumps(_ready_payload(
+            filters=[
+                {
+                    "column": "전공", "operator": "contains",
+                    "value": "기계과", "source_text": "기계과 또는 전기과",
+                },
+                {
+                    "column": "전공", "operator": "contains",
+                    "value": "전기과", "source_text": "기계과 또는 전기과",
+                },
+            ],
+            filter_logic="all",
+        ), ensure_ascii=False))
+
+        plan = await generate_query_plan(
+            "전공이 기계과 또는 전기과인 사람을 보여줘",
+            schema='데이터프레임: df0\n컬럼: "전공", "회원명"',
+            llm=llm,
+        )
+
+        self.assertEqual(plan.filter_logic, "any")
+        self.assertEqual([item.operator for item in plan.filters], ["eq", "eq"])
+
+    async def test_korean_na_connector_repairs_same_column_or(self):
+        llm = FakeLLM(json.dumps(_ready_payload(
+            filters=[
+                {"column": "전공", "operator": "eq", "value": "기계과"},
+                {"column": "전공", "operator": "eq", "value": "자동차과"},
+            ],
+            filter_logic="all",
+        ), ensure_ascii=False))
+
+        plan = await generate_query_plan(
+            "기계과나 자동차과에 속한 사람을 보여줘",
+            schema='데이터프레임: df0\n컬럼: "전공", "회원명"',
+            llm=llm,
+        )
+
+        self.assertEqual(plan.filter_logic, "any")
+
+    async def test_in_filter_evidence_is_recovered_from_question_values(self):
+        llm = FakeLLM(json.dumps(_ready_payload(
+            filters=[{
+                "column": "전공", "operator": "in",
+                "value": ["기계과", "전기과"],
+                "source_text": "기계과 또는 전기과 소속 회원 보기",
+            }],
+        ), ensure_ascii=False))
+
+        plan = await generate_query_plan(
+            "전공이 기계과 또는 전기과인 사람을 보여줘",
+            schema='데이터프레임: df0\n컬럼: "전공", "회원명"',
+            llm=llm,
+        )
+
+        self.assertEqual(plan.filters[0].source_text, "기계과 또는 전기과")
+
+    async def test_ungrounded_invented_string_filter_is_removed(self):
+        llm = FakeLLM(json.dumps(_ready_payload(
+            filters=[
+                {"column": "회비_구분", "operator": "eq", "value": "년회비"},
+                {
+                    "column": "전공", "operator": "in",
+                    "value": ["기계과", "건축과"],
+                },
+            ],
+            filter_logic="any",
+        ), ensure_ascii=False))
+
+        plan = await generate_query_plan(
+            "전공이 기계과 또는 건축과인 사람들의 기록을 보여줘",
+            schema='데이터프레임: df0\n컬럼: "회비_구분", "전공", "회원명"',
+            llm=llm,
+        )
+
+        self.assertEqual(len(plan.filters), 1)
+        self.assertEqual(plan.filters[0].column, "전공")
+
+    async def test_invented_string_wrappers_and_evidence_are_grounded(self):
+        llm = FakeLLM(json.dumps(_ready_payload(
+            filters=[{
+                "column": "이메일", "operator": "contains",
+                "value": ".daum.net", "source_text": "다음 메일 사용자",
+            }],
+        ), ensure_ascii=False))
+
+        plan = await generate_query_plan(
+            "이메일 주소에 daum.net이 포함된 회원을 보여줘",
+            schema='데이터프레임: df0\n컬럼: "일", "이메일", "회원명"',
+            llm=llm,
+        )
+
+        self.assertEqual(plan.filters[0].column, "이메일")
+        self.assertEqual(plan.filters[0].value, "daum.net")
+        self.assertEqual(plan.filters[0].source_text, "daum.net")
+
+    async def test_explicit_question_column_replaces_derived_name_column(self):
+        llm = FakeLLM(json.dumps(_ready_payload(
+            filters=[{
+                "column": "성명", "operator": "contains",
+                "value": "^김", "source_text": "김으로 시작",
+            }],
+        ), ensure_ascii=False))
+
+        plan = await generate_query_plan(
+            "회원명이 김으로 시작하는 사람의 전공을 알려줘",
+            schema='데이터프레임: df0\n컬럼: "회원명", "성명", "전공"',
+            llm=llm,
+        )
+
+        self.assertEqual(plan.filters[0].column, "회원명")
+        self.assertEqual(plan.filters[0].value, "김")
+
     async def test_prompt_contains_question_and_runtime_schema(self):
         llm = FakeLLM(json.dumps(_ready_payload(), ensure_ascii=False))
 

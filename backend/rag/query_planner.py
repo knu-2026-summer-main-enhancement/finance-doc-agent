@@ -40,6 +40,13 @@ _EXPLICIT_FILTER_SCOPE = re.compile(
     r"중(?:에서|에)?|가운데|부터|까지|사이|>=|<=|>|<)",
     re.IGNORECASE,
 )
+_CONTAINS_LANGUAGE = re.compile(
+    r"(?:\ud3ec\ud568|\ub4e4\uc5b4\uac00|\ub4e4\uc5b4\uac04|\uc2dc\uc791|\ub05d\ub098|\ub05d\ub0a8|\ub05d\ub098\ub294)"
+)
+_OR_BETWEEN_VALUES = re.compile(
+    r"(?:\ub610\ub294|\ud639\uc740|\uc544\ub2c8\uba74|\uc774\uac70\ub098|\uac70\ub098|\uc774\ub098|\ub098)"
+)
+_LLM_LITERAL_WRAPPERS = ".^$*+?\\"
 
 
 class QueryPlannerError(RuntimeError):
@@ -219,9 +226,40 @@ def _align_filter_logic_with_question(plan: QueryPlan, question: str) -> QueryPl
     if plan.status != "ready" or len(plan.filters) < 2:
         return plan
 
-    has_or = bool(_EXPLICIT_OR.search(question))
+    same_column = len({condition.column for condition in plan.filters}) == 1
+    scalar_values = [
+        str(condition.value)
+        for condition in plan.filters
+        if isinstance(condition.value, (str, int, float))
+    ]
+    value_positions = sorted(
+        (
+            question.find(value),
+            question.find(value) + len(value),
+        )
+        for value in scalar_values
+        if value and question.find(value) >= 0
+    )
+    has_value_or = bool(
+        same_column
+        and len(value_positions) >= 2
+        and any(
+            _OR_BETWEEN_VALUES.search(
+                question[left_end:right_start]
+            )
+            for (_, left_end), (right_start, _) in zip(
+                value_positions,
+                value_positions[1:],
+            )
+        )
+    )
+    has_or = bool(_EXPLICIT_OR.search(question)) or has_value_or
     has_and = bool(_EXPLICIT_AND.search(question))
-    desired_logic = "any" if has_or and not has_and else "all"
+    desired_logic = (
+        "any"
+        if has_or and (same_column or not has_and)
+        else "all"
+    )
     if plan.filter_logic == desired_logic:
         return plan
 
@@ -231,6 +269,156 @@ def _align_filter_logic_with_question(plan: QueryPlan, question: str) -> QueryPl
         desired_logic,
     )
     return plan.model_copy(update={"filter_logic": desired_logic})
+
+
+def _literal_in_question(value: object, question: str) -> str | None:
+    if not isinstance(value, str):
+        return None
+    literal = value.strip()
+    if literal and literal in question:
+        return literal
+    stripped = literal.strip(_LLM_LITERAL_WRAPPERS)
+    if stripped and stripped in question:
+        return stripped
+    return None
+
+
+def _explicit_filter_column(
+    condition: Any,
+    question: str,
+    schema: str,
+    literal: str | None,
+) -> str | None:
+    if not literal:
+        return None
+    value_position = question.find(literal)
+    if value_position < 0:
+        return None
+    candidates = [
+        (
+            question.rfind(column, 0, value_position),
+            question.rfind(column, 0, value_position) + len(column),
+            column,
+        )
+        for column in _schema_column_names(schema)
+        if column in question
+    ]
+    candidates = [
+        (start, end, column)
+        for start, end, column in candidates
+        if start >= 0
+        and not any(
+            other_start <= start
+            and end <= other_end
+            and (other_end - other_start) > (end - start)
+            for other_start, other_end, _ in candidates
+            if other_start >= 0
+        )
+    ]
+    if not candidates:
+        return None
+    _, _, closest = max(candidates)
+    return closest if closest != condition.column else None
+
+
+def _ground_string_filters(
+    plan: QueryPlan,
+    question: str,
+    schema: str,
+) -> QueryPlan:
+    """Repair only string-filter details directly recoverable from the question."""
+
+    if plan.status != "ready" or not plan.filters:
+        return plan
+
+    same_column_alternatives = bool(
+        len(plan.filters) >= 2
+        and len({condition.column for condition in plan.filters}) == 1
+        and _align_filter_logic_with_question(plan, question).filter_logic == "any"
+    )
+    changed = False
+    grounded = []
+    for condition in plan.filters:
+        if condition.operator not in {"eq", "ne", "contains", "in"}:
+            grounded.append(condition)
+            continue
+        source_text = str(condition.source_text or "").strip()
+        if condition.operator == "in" and isinstance(condition.value, tuple):
+            literals = [
+                _literal_in_question(value, question)
+                for value in condition.value
+            ]
+            if all(literals):
+                positions = [
+                    (question.find(literal), question.find(literal) + len(literal))
+                    for literal in literals
+                ]
+                start = min(position[0] for position in positions)
+                end = max(position[1] for position in positions)
+                updates: dict[str, Any] = {}
+                normalized_values = tuple(str(literal) for literal in literals)
+                if condition.value != normalized_values:
+                    updates["value"] = normalized_values
+                if not source_text or source_text not in question:
+                    updates["source_text"] = question[start:end]
+                explicit_column = _explicit_filter_column(
+                    condition,
+                    question,
+                    schema,
+                    str(literals[0]),
+                )
+                if explicit_column is not None:
+                    updates["column"] = explicit_column
+                corrected = (
+                    condition.model_copy(update=updates)
+                    if updates
+                    else condition
+                )
+                grounded.append(corrected)
+                changed = changed or corrected != condition
+                continue
+            if not source_text or source_text not in question:
+                changed = True
+                continue
+            grounded.append(condition)
+            continue
+
+        literal = _literal_in_question(condition.value, question)
+        if literal is None:
+            if not source_text or source_text not in question:
+                changed = True
+                continue
+            grounded.append(condition)
+            continue
+
+        updates: dict[str, Any] = {}
+        if condition.value != literal:
+            updates["value"] = literal
+        if not source_text or source_text not in question:
+            updates["source_text"] = literal
+        if (
+            condition.operator == "contains"
+            and same_column_alternatives
+            and not _CONTAINS_LANGUAGE.search(question)
+        ):
+            updates["operator"] = "eq"
+        explicit_column = _explicit_filter_column(
+            condition,
+            question,
+            schema,
+            literal,
+        )
+        if explicit_column is not None:
+            updates["column"] = explicit_column
+
+        corrected = condition.model_copy(update=updates) if updates else condition
+        grounded.append(corrected)
+        changed = changed or corrected != condition
+
+    if not changed:
+        return plan
+    logger.warning("[QUERY_PLAN] 질문 원문으로 문자열 필터 안전 보정")
+    return plan.model_copy(update={"filters": tuple(grounded)})
 
 
 def _remove_ungrounded_rank_filters(plan: QueryPlan, question: str) -> QueryPlan:
@@ -254,7 +442,12 @@ def _remove_ungrounded_rank_filters(plan: QueryPlan, question: str) -> QueryPlan
     return plan.model_copy(update={"filters": (), "filter_logic": "all"})
 
 
-def _align_plan_with_question(plan: QueryPlan, question: str) -> QueryPlan:
+def _align_plan_with_question(
+    plan: QueryPlan,
+    question: str,
+    schema: str,
+) -> QueryPlan:
+    plan = _ground_string_filters(plan, question, schema)
     plan = ground_query_plan_filters(plan, question)
     plan = _align_filter_logic_with_question(plan, question)
     return _remove_ungrounded_rank_filters(plan, question)
@@ -309,6 +502,7 @@ async def generate_query_plan(
             _align_plan_with_question(
                 parse_query_plan_response(raw),
                 clean_question,
+                resolved_schema,
             ),
             operation_hint,
             clean_question,
@@ -345,6 +539,7 @@ async def generate_query_plan(
             _align_plan_with_question(
                 parse_query_plan_response(repaired),
                 clean_question,
+                resolved_schema,
             ),
             operation_hint,
             clean_question,
