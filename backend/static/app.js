@@ -1271,7 +1271,11 @@ function appendHighlightedText(container, text, query) {
 }
 
 function renderQuestionSuggestions(suggestions, query = elements.questionInput.value, hint = "") {
-  suggestions = suggestions.slice(0, 3);
+  const suggestionLimit = window.innerWidth <= 820
+    && document.documentElement.classList.contains("ui-v3")
+    ? 2
+    : 3;
+  suggestions = suggestions.slice(0, suggestionLimit);
   clearTimeout(suggestionHideTimer);
   const wasHidden = elements.questionAutocomplete.hidden;
   elements.questionAutocomplete.replaceChildren();

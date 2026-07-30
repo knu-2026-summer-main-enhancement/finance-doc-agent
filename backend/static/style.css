@@ -435,7 +435,7 @@ html.ui-v3 .question-autocomplete {
   right: 16px;
   bottom: calc(100% + 7px);
   left: 16px;
-  height: min(142px, 30dvh);
+  height: min(104px, 24dvh);
   margin: 0;
   padding: 5px;
   overflow: hidden;
