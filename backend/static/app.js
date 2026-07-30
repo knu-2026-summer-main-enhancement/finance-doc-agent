@@ -5,6 +5,7 @@
 
 const elements = {
   sidebar: document.getElementById("sidebar"),
+  mainPanel: document.querySelector(".main-panel"),
   closeSidebar: document.getElementById("closeSidebar"),
   openSidebar: document.getElementById("openSidebar"),
   refreshDocuments: document.getElementById("refreshDocuments"),
@@ -74,6 +75,7 @@ const state = {
   suggestionUsage: new Map(),
   documentsLoaded: false,
   ingestPolls: new Map(),
+  sidebarSwipe: null,
 };
 
 const initialChat = elements.chatArea.innerHTML;
@@ -83,6 +85,11 @@ function apiHeaders(json = false) {
   const headers = {};
   if (json) headers["Content-Type"] = "application/json";
   return headers;
+}
+
+function isMobileChatUi() {
+  return window.innerWidth <= 820
+    && document.documentElement.classList.contains("ui-v3");
 }
 
 function showToast(message) {
@@ -997,6 +1004,7 @@ async function sendQuestion(question, options = {}) {
   elements.questionInput.value = "";
   hideQuestionSuggestions();
   resizeTextarea();
+  if (isMobileChatUi()) elements.questionInput.blur();
   elements.chatArea.querySelector(".welcome-card")?.remove();
   appendMessage("user", value);
   const loading = appendLoading();
@@ -1043,7 +1051,8 @@ async function sendQuestion(question, options = {}) {
       state.chatRequestId = null;
     }
     setChatBusy(false);
-    elements.questionInput.focus();
+    hideQuestionSuggestions();
+    if (!isMobileChatUi()) elements.questionInput.focus();
   }
 }
 
@@ -1204,6 +1213,7 @@ async function showDocumentSectionsInChat(source, question) {
   elements.questionInput.value = "";
   hideQuestionSuggestions();
   resizeTextarea();
+  if (isMobileChatUi()) elements.questionInput.blur();
   elements.chatArea.querySelector(".welcome-card")?.remove();
   appendMessage("user", question);
   const message = appendMessage("assistant", "섹션을 불러오는 중입니다.", "metadata", [source]);
@@ -1815,6 +1825,41 @@ elements.clearChat.addEventListener("click", () => {
 });
 elements.openSidebar.addEventListener("click", () => elements.sidebar.classList.add("open"));
 elements.closeSidebar.addEventListener("click", () => elements.sidebar.classList.remove("open"));
+
+function beginSidebarSwipe(event) {
+  if (!isMobileChatUi() || event.touches.length !== 1) return;
+  if (event.target.closest("input, textarea, button, a, dialog, .question-autocomplete")) return;
+  const touch = event.touches[0];
+  state.sidebarSwipe = {
+    x: touch.clientX,
+    y: touch.clientY,
+    sidebarOpen: elements.sidebar.classList.contains("open"),
+  };
+}
+
+function finishSidebarSwipe(event) {
+  const swipe = state.sidebarSwipe;
+  state.sidebarSwipe = null;
+  if (!swipe || !isMobileChatUi() || !event.changedTouches.length) return;
+  const touch = event.changedTouches[0];
+  const deltaX = touch.clientX - swipe.x;
+  const deltaY = touch.clientY - swipe.y;
+  if (Math.abs(deltaX) < 72 || Math.abs(deltaX) < Math.abs(deltaY) * 1.35) return;
+  event.preventDefault();
+  if (!swipe.sidebarOpen && deltaX > 0) {
+    elements.sidebar.classList.add("open");
+  } else if (swipe.sidebarOpen && deltaX < 0) {
+    elements.sidebar.classList.remove("open");
+  }
+}
+
+elements.mainPanel.addEventListener("touchstart", beginSidebarSwipe, { passive: true });
+elements.mainPanel.addEventListener("touchend", finishSidebarSwipe, { passive: false });
+elements.mainPanel.addEventListener("touchcancel", () => { state.sidebarSwipe = null; }, { passive: true });
+elements.sidebar.addEventListener("touchstart", beginSidebarSwipe, { passive: true });
+elements.sidebar.addEventListener("touchend", finishSidebarSwipe, { passive: false });
+elements.sidebar.addEventListener("touchcancel", () => { state.sidebarSwipe = null; }, { passive: true });
+
 document.addEventListener("click", (event) => {
   if (window.innerWidth > 820 && !document.documentElement.classList.contains("ui-v3")) return;
   if (!elements.sidebar.classList.contains("open")) return;
