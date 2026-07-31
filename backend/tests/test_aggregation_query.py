@@ -14,7 +14,7 @@ from pandas_engine.aggregation import (
     display_column_label,
 )
 from pandas_engine.formatter import _format_scalar_result
-from rag.router import _route
+from rag.router import route_operations
 from rag.question_analyzer import analyze_question
 from rag.pandas_rag import _answer_extreme_value_comparison
 from utils.table_parser import _clean_dataframe
@@ -243,7 +243,8 @@ class AggregationQueryTest(unittest.TestCase):
         for question in questions:
             with self.subTest(question=question):
                 self.assertIsNotNone(detect_aggregation_intent(question))
-                self.assertEqual(_route(question), "PANDAS")
+                analysis = analyze_question(question)
+                self.assertEqual(route_operations(analysis.operations), "PANDAS")
 
     def test_multiple_aggregation_operations_are_detected_together(self):
         intents = detect_aggregation_intents("출연금액 합계와 평균을 같이 알려줘")

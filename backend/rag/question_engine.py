@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
 from typing import Any
 
 from pydantic import ValidationError
@@ -16,10 +15,6 @@ from rag.prompts import (
     _QUESTION_ENGINE_TEMPLATE,
 )
 from rag.question_decision import QuestionDecision
-from rag.router import (
-    pandas_strategy_for_operations,
-    route_operations,
-)
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -39,20 +34,6 @@ class QuestionEngineError(RuntimeError):
     def __init__(self, message: str, responses: tuple[str, ...] = ()) -> None:
         super().__init__(message)
         self.responses = responses
-
-
-@dataclass(frozen=True)
-class ShadowComparison:
-    question: str
-    legacy_operations: tuple[str, ...]
-    llm_operations: tuple[str, ...]
-    legacy_route: str
-    llm_route: str
-    status: str
-    llm_strategy: str | None
-    engine_matched: bool
-    operation_matched: bool
-    reason: str
 
 
 def compact_question_schema(schema: str, max_chars: int = 5000) -> str:
@@ -307,72 +288,4 @@ async def decide_question(
             tuple(responses),
         ) from second_error
 
-
-async def compare_shadow_decision(
-    question: str,
-    legacy_route: str,
-    legacy_operations: list[str] | tuple[str, ...],
-    schema: str,
-    *,
-    llm: Any | None = None,
-) -> ShadowComparison | None:
-    """Run the LLM decision for observation only and never affect an answer."""
-
-    try:
-        decision = await decide_question(
-            question,
-            schema=schema,
-            llm=llm,
-        )
-    except Exception as exc:
-        question_id, question_chars = question_log_metadata(question)
-        logger.warning(
-            "[QUESTION_ENGINE:SHADOW] 분류 실패, 기존 응답 유지 | "
-            "legacy=%s error_type=%s question_id=%s chars=%d",
-            legacy_route, type(exc).__name__, question_id, question_chars,
-        )
-        return None
-
-    llm_operations = tuple(decision.operations)
-    llm_route = (
-        route_operations(llm_operations)
-        if decision.status == "ready"
-        else "GUIDE"
-    )
-    llm_strategy = pandas_strategy_for_operations(llm_operations)
-    normalized_legacy_operations = tuple(legacy_operations)
-    engine_matched = legacy_route.upper() == llm_route.upper()
-    operation_matched = (
-        set(normalized_legacy_operations) == set(llm_operations)
-    )
-    comparison = ShadowComparison(
-        question=question,
-        legacy_operations=normalized_legacy_operations,
-        llm_operations=llm_operations,
-        legacy_route=legacy_route.upper(),
-        llm_route=llm_route.upper(),
-        status=decision.status,
-        llm_strategy=llm_strategy,
-        engine_matched=engine_matched,
-        operation_matched=operation_matched,
-        reason=decision.reason,
-    )
-    question_id, question_chars = question_log_metadata(question)
-    logger.info(
-        "[QUESTION_ENGINE:SHADOW] legacy_ops=%s llm_ops=%s "
-        "legacy_engine=%s llm_engine=%s strategy=%s "
-        "engine_match=%s operation_match=%s status=%s "
-        "reason_chars=%d question_id=%s chars=%d",
-        list(comparison.legacy_operations),
-        list(comparison.llm_operations),
-        comparison.legacy_route,
-        comparison.llm_route,
-        comparison.llm_strategy or "-",
-        comparison.engine_matched,
-        comparison.operation_matched,
-        comparison.status,
-        len(comparison.reason),
-        question_id,
-        question_chars,
-    )
-    return comparison
+# This module exposes only the active LLM question classifier.

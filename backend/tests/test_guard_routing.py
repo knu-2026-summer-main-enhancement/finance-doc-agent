@@ -2,15 +2,10 @@ from __future__ import annotations
 
 import unittest
 from typing import get_args
-from unittest.mock import patch
-
-from fastapi import BackgroundTasks
 
 from main import (
     ChatRequest,
     ChatResponse,
-    _route_with_guard,
-    _schedule_shadow_question_engine,
     _should_return_guide,
 )
 from rag.guard import check_question, check_question_decision
@@ -18,11 +13,8 @@ from rag.question_analyzer import analyze_question
 from rag.question_decision import QuestionDecision, QuestionOperation
 from rag.router import (
     _ENGINE_BY_OPERATION,
-    _route,
     engines_for_operations,
     pandas_strategy_for_operations,
-    required_engines,
-    route_analysis,
     route_operations,
 )
 
@@ -47,33 +39,6 @@ class GuardRoutingTest(unittest.TestCase):
         self.assertEqual(result.status, "GUIDE")
         self.assertEqual(result.reason_code, "AMBIGUOUS_RANKING")
         self.assertIn("가장 큰 금액은?", result.suggestions)
-
-    def test_shadow_engine_is_opt_in_and_queued_without_changing_route(self):
-        tasks = BackgroundTasks()
-        with patch("main.QUESTION_ENGINE_MODE", "legacy"):
-            self.assertFalse(
-                _schedule_shadow_question_engine(
-                    tasks,
-                    "질문",
-                    "PANDAS",
-                    ["structured_query"],
-                )
-            )
-        self.assertEqual(len(tasks.tasks), 0)
-
-        with patch("main.QUESTION_ENGINE_MODE", "shadow"), patch(
-            "main._get_df_schema",
-            return_value='컬럼: "금액"',
-        ):
-            self.assertTrue(
-                _schedule_shadow_question_engine(
-                    tasks,
-                    "질문",
-                    "PANDAS",
-                    ["structured_query"],
-                )
-            )
-        self.assertEqual(len(tasks.tasks), 1)
 
     def test_every_llm_operation_has_an_engine_mapping(self):
         self.assertEqual(
@@ -201,13 +166,12 @@ class GuardRoutingTest(unittest.TestCase):
         result = check_question("장학금 지급 기준 알려줘")
         self.assertEqual(result.status, "PASS")
         self.assertEqual(result.operations, ["document_criteria"])
-        self.assertEqual(_route_with_guard("장학금 지급 기준 알려줘", result), "VECTOR")
+        self.assertEqual(route_operations(result.operations), "VECTOR")
 
     def test_natural_mode_forces_vector_without_changing_default_route(self):
         question = "가장 돈을 많이 낸 사람은?"
         result = check_question(question)
-        self.assertEqual(_route_with_guard(question, result), "PANDAS")
-        self.assertEqual(_route_with_guard(question, result, "natural"), "VECTOR")
+        self.assertEqual(route_operations(result.operations), "PANDAS")
 
         self.assertEqual(ChatRequest(question=question).mode, "auto")
         self.assertEqual(ChatRequest(question=question, mode="natural").mode, "natural")
@@ -270,7 +234,7 @@ class GuardRoutingTest(unittest.TestCase):
                 result = check_question(question)
                 self.assertEqual(result.status, "PASS")
                 self.assertIn(operation, result.operations)
-                self.assertEqual(_route_with_guard(question, result), "PANDAS")
+                self.assertEqual(route_operations(result.operations), "PANDAS")
 
     def test_multiple_aggregations_and_cross_engine_questions_are_guided(self):
         result = check_question("가장 많이 낸 사람과 가장 적게 낸 사람 알려줘")
@@ -328,12 +292,12 @@ class GuardRoutingTest(unittest.TestCase):
     def test_question_is_analyzed_once_and_router_uses_the_shared_result(self):
         analysis = analyze_question("가장 돈을 적게 낸 사람 누구야?")
         self.assertEqual(analysis.operations, ["min_person_by_amount"])
-        self.assertEqual(required_engines(analysis), ["PANDAS"])
-        self.assertEqual(route_analysis(analysis), "PANDAS")
+        self.assertEqual(engines_for_operations(analysis.operations), ["PANDAS"])
+        self.assertEqual(route_operations(analysis.operations), "PANDAS")
 
         result = check_question(analysis.question)
         self.assertIsNotNone(result.analysis)
-        self.assertEqual(_route(analysis.question, result.analysis), "PANDAS")
+        self.assertEqual(route_operations(result.analysis.operations), "PANDAS")
 
     def test_document_inventory_is_not_treated_as_table_rows(self):
         for question in (
@@ -346,13 +310,13 @@ class GuardRoutingTest(unittest.TestCase):
                 self.assertEqual(result.status, "PASS")
                 self.assertEqual(result.operations, ["list_documents"])
                 self.assertEqual(result.domains, ["document_inventory"])
-                self.assertEqual(_route_with_guard(question, result), "DOCUMENTS")
+                self.assertEqual(route_operations(result.operations), "DOCUMENTS")
 
     def test_compare_routes_to_pandas_but_guard_blocks_execution(self):
         analysis = analyze_question("연도별 출연금액을 비교해줘")
         self.assertEqual(analysis.operations, ["compare"])
-        self.assertEqual(required_engines(analysis), ["PANDAS"])
-        self.assertEqual(route_analysis(analysis), "PANDAS")
+        self.assertEqual(engines_for_operations(analysis.operations), ["PANDAS"])
+        self.assertEqual(route_operations(analysis.operations), "PANDAS")
 
         result = check_question(analysis.question)
         self.assertEqual(result.status, "GUIDE")

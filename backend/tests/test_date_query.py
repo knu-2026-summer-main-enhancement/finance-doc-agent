@@ -8,7 +8,7 @@ from datastore.query import _query_pandas_direct
 from datastore.state import _df_labels, _df_namespace, _df_sources
 from pandas_engine.formatter import _format_scalar_result
 from rag.question_analyzer import analyze_question
-from rag.router import route_analysis
+from rag.router import route_operations
 from utils.table_parser import _clean_dataframe
 
 
@@ -59,7 +59,7 @@ class DateQueryTest(unittest.TestCase):
 
     def test_month_range_list_filters_rows_without_llm(self):
         analysis, (result, sources) = self._query("3~4월에 낸 사람 리스트 알려줘")
-        self.assertEqual(route_analysis(analysis), "PANDAS")
+        self.assertEqual(route_operations(analysis.operations), "PANDAS")
         self.assertEqual(len(result), 2)
         self.assertEqual(set(result["이름"]), {"김하나", "이두리"})
         self.assertNotIn("출연금액", result.columns)

@@ -45,7 +45,6 @@ from utils.document_structure import (
 from core.config import (
     OLLAMA_BASE_URL, OLLAMA_MODEL, EMBED_MODEL,
     CHROMA_HOST, CHROMA_PORT, DATA_FOLDER,
-    QUESTION_ENGINE_MODE,
 )
 from core.security import _verify_api_key, _validate_ingest_path
 from core.llm import get_llm_rag
@@ -60,7 +59,6 @@ from datastore.query import (
     _extract_month_from_source,
 )
 from rag.router import (
-    _route,
     pandas_strategy_for_operations,
     route_operations,
 )
@@ -82,7 +80,6 @@ from rag.pandas_rag import _answer_pandas, current_interactive_result
 from pandas_engine.interactive import get_interactive_detail, get_interactive_record_entity
 from rag.question_engine import (
     QuestionEngineError,
-    compare_shadow_decision,
     decide_question,
 )
 from rag.deterministic_query_plan import (
@@ -115,16 +112,6 @@ class QuestionResolution:
     answer: str | None = None
 
 
-def _route_with_guard(
-    question: str,
-    guard_result,
-    mode: Literal["auto", "natural"] = "auto",
-) -> str:
-    if mode == "natural":
-        return "VECTOR"
-    return _route(question, analysis=guard_result.analysis)
-
-
 _NATURAL_MODE_BYPASS_GUARD_REASONS = frozenset(
     {
         "AMBIGUOUS_SUMMARY",
@@ -153,29 +140,6 @@ def _should_return_guide(
     ):
         return False
     return True
-
-
-def _schedule_shadow_question_engine(
-    background_tasks: BackgroundTasks,
-    question: str,
-    legacy_route: str,
-    legacy_operations: list[str] | tuple[str, ...],
-) -> bool:
-    """Queue an observation-only LLM decision while document scope is active."""
-
-    if QUESTION_ENGINE_MODE != "shadow":
-        return False
-    schema = _get_df_schema()
-    background_tasks.add_task(
-        compare_shadow_decision,
-        question,
-        legacy_route,
-        tuple(legacy_operations),
-        schema,
-    )
-    return True
-
-
 
 
 async def _resolve_llm_question(question: str) -> QuestionResolution:
@@ -382,7 +346,7 @@ def health():
         "llm_model":   OLLAMA_MODEL,
         "embed_model": EMBED_MODEL,
         "dataframes":  len(_df_namespace),
-        "question_engine": QUESTION_ENGINE_MODE,
+        "question_engine": "llm",
     }
     try:
         urlopen(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
@@ -555,7 +519,6 @@ def summary(_: None = Depends(_verify_api_key)):
 @app.post("/chat", response_model=ChatResponse) #답변 하기
 async def chat(
     req: ChatRequest,
-    background_tasks: BackgroundTasks,
     _: None = Depends(_verify_api_key),
 ):
     if not req.question.strip():
@@ -577,14 +540,15 @@ async def chat(
                     source="guide",
                     sources=[],
                 )
-            use_llm_engine = (
-                QUESTION_ENGINE_MODE == "llm"
-                and req.mode == "auto"
-            )
             force_numeric_vector = _is_numeric_eligibility_question(
                 req.question
             )
-            if use_llm_engine and force_numeric_vector:
+            if req.mode == "natural":
+                guard_result = check_question(req.question)
+                route = "VECTOR"
+                pandas_strategy = None
+                prepared_plan = None
+            elif force_numeric_vector:
                 # Numeric eligibility still uses the LLM for the judgment.
                 # This bypasses only the upper classification LLM, which can
                 # reject colloquial criterion questions before Vector retrieval.
@@ -592,7 +556,7 @@ async def chat(
                 route = "VECTOR"
                 pandas_strategy = None
                 prepared_plan = None
-            elif use_llm_engine:
+            else:
                 try:
                     resolution = await _resolve_llm_question(req.question)
                     guard_result = resolution.guard_result
@@ -619,35 +583,13 @@ async def chat(
                         source="guide",
                         sources=[],
                     )
-            else:
-                guard_result = check_question(req.question)
-                route = _route_with_guard(
-                    req.question,
-                    guard_result,
-                    req.mode,
-                )
-                pandas_strategy = None
-                prepared_plan = None
 
             if _should_return_guide(guard_result, req.mode):
-                _schedule_shadow_question_engine(
-                    background_tasks,
-                    req.question,
-                    "GUIDE",
-                    guard_result.operations,
-                )
                 logger.info("[GUARD] GUIDE | reason=%s", guard_result.reason_code)
                 return ChatResponse(
                     answer=build_guide_response(guard_result),
                     source="guide",
                     sources=[],
-                )
-            if not use_llm_engine:
-                _schedule_shadow_question_engine(
-                    background_tasks,
-                    req.question,
-                    route,
-                    guard_result.operations,
                 )
             question_id, question_chars = question_log_metadata(req.question)
             logger.info(
@@ -660,12 +602,12 @@ async def chat(
             elif route == "PANDAS":
                 answer, sources, actual_route = await _answer_pandas(
                     req.question,
-                    allow_vector_fallback=not use_llm_engine,
+                    allow_vector_fallback=False,
                     analysis=guard_result.analysis,
                     strategy=pandas_strategy or "AUTO",
                     operation_hint=(
                         guard_result.operations[0]
-                        if use_llm_engine and len(guard_result.operations) == 1
+                        if len(guard_result.operations) == 1
                         else None
                     ),
                     prepared_plan=prepared_plan,
@@ -674,10 +616,7 @@ async def chat(
             else:
                 answer, sources, actual_route = await _answer_vector(
                     req.question,
-                    allow_pandas_fallback=(
-                        req.mode != "natural"
-                        and not use_llm_engine
-                    ),
+                    allow_pandas_fallback=False,
                     analysis=guard_result.analysis,
                 )
                 interactive_result = None
@@ -733,11 +672,17 @@ async def chat_stream(req: ChatRequest, _: None = Depends(_verify_api_key)):
                 if is_incomplete_question(req.question):
                     yield build_guide_response(check_question(req.question))
                     return
-                use_llm_engine = (
-                    QUESTION_ENGINE_MODE == "llm"
-                    and req.mode == "auto"
-                )
-                if use_llm_engine:
+                if req.mode == "natural":
+                    guard_result = check_question(req.question)
+                    route = "VECTOR"
+                    pandas_strategy = None
+                    prepared_plan = None
+                elif _is_numeric_eligibility_question(req.question):
+                    guard_result = check_question(req.question)
+                    route = "VECTOR"
+                    pandas_strategy = None
+                    prepared_plan = None
+                else:
                     try:
                         resolution = await _resolve_llm_question(req.question)
                         guard_result = resolution.guard_result
@@ -753,15 +698,6 @@ async def chat_stream(req: ChatRequest, _: None = Depends(_verify_api_key)):
                             "질문을 조금 더 명확하게 입력해 주세요."
                         )
                         return
-                else:
-                    guard_result = check_question(req.question)
-                    route = _route_with_guard(
-                        req.question,
-                        guard_result,
-                        req.mode,
-                    )
-                    pandas_strategy = None
-                    prepared_plan = None
 
                 if _should_return_guide(guard_result, req.mode):
                     logger.info("[GUARD] GUIDE(stream) | reason=%s", guard_result.reason_code)
@@ -775,12 +711,12 @@ async def chat_stream(req: ChatRequest, _: None = Depends(_verify_api_key)):
                 elif route == "PANDAS":
                     answer, _, _ = await _answer_pandas(
                         req.question,
-                        allow_vector_fallback=not use_llm_engine,
+                        allow_vector_fallback=False,
                         analysis=guard_result.analysis,
                         strategy=pandas_strategy or "AUTO",
                         operation_hint=(
                             guard_result.operations[0]
-                            if use_llm_engine and len(guard_result.operations) == 1
+                            if len(guard_result.operations) == 1
                             else None
                         ),
                         prepared_plan=prepared_plan,

@@ -6,7 +6,6 @@ import unittest
 from rag.question_engine import (
     QuestionEngineError,
     compact_question_schema,
-    compare_shadow_decision,
     decide_question,
     parse_question_decision,
 )
@@ -315,55 +314,6 @@ class QuestionEngineAsyncTest(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(QuestionEngineError):
             await decide_question("질문", schema="표 없음", llm=llm)
-
-    async def test_shadow_comparison_reports_query_plan_strategy(self):
-        llm = FakeLLM(json.dumps(_ready_payload(), ensure_ascii=False))
-        comparison = await compare_shadow_decision(
-            "학점이 144점인 사람",
-            "PANDAS",
-            ["lookup_amount"],
-            '컬럼: "취득학점"',
-            llm=llm,
-        )
-
-        self.assertIsNotNone(comparison)
-        self.assertTrue(comparison.engine_matched)
-        self.assertFalse(comparison.operation_matched)
-        self.assertEqual(comparison.llm_route, "PANDAS")
-        self.assertEqual(comparison.llm_strategy, "QUERY_PLAN")
-
-    async def test_mixed_engines_are_shadowed_as_guide(self):
-        payload = {
-            "status": "ready",
-            "operations": ["sum_amount", "document_criteria"],
-            "reason": "계산과 기준 검색의 혼합 요청",
-            "retrieval_query": "지급 기준",
-        }
-        llm = FakeLLM(json.dumps(payload, ensure_ascii=False))
-        comparison = await compare_shadow_decision(
-            "총액과 지급 기준 알려줘",
-            "GUIDE",
-            ["sum_amount", "document_criteria"],
-            "표 스키마",
-            llm=llm,
-        )
-
-        self.assertIsNotNone(comparison)
-        self.assertEqual(comparison.llm_route, "GUIDE")
-        self.assertTrue(comparison.engine_matched)
-        self.assertTrue(comparison.operation_matched)
-
-    async def test_shadow_failure_is_swallowed(self):
-        llm = FakeLLM(RuntimeError("모델 중단"))
-        comparison = await compare_shadow_decision(
-            "질문",
-            "VECTOR",
-            ["document_explain"],
-            "표 없음",
-            llm=llm,
-        )
-        self.assertIsNone(comparison)
-
 
 if __name__ == "__main__":
     unittest.main()

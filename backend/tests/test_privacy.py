@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import HTTPException
 
 import main
 from core.privacy import question_log_metadata
@@ -11,13 +11,16 @@ class PrivacyTest(unittest.IsolatedAsyncioTestCase):
     async def test_chat_hides_internal_exception_and_question_text(self):
         question = "김현수 이메일 secret@example.com 알려줘"
         request = main.ChatRequest(question=question, mode="auto")
-        with patch.object(main, "QUESTION_ENGINE_MODE", "legacy"), patch.object(
-            main, "_route_with_guard", return_value="PANDAS"
+        resolution = main.QuestionResolution(
+            main.check_question(question), "PANDAS", "QUERY_PLAN"
+        )
+        with patch.object(
+            main, "_resolve_llm_question", new=AsyncMock(return_value=resolution)
         ), patch.object(
             main, "_answer_pandas", new=AsyncMock(side_effect=RuntimeError("C:/private/data.xlsx"))
         ), patch.object(main.logger, "error") as logged:
             with self.assertRaises(HTTPException) as raised:
-                await main.chat(request, BackgroundTasks(), None)
+                await main.chat(request, None)
 
         self.assertEqual(raised.exception.status_code, 500)
         self.assertNotIn("C:/private", str(raised.exception.detail))
@@ -27,8 +30,11 @@ class PrivacyTest(unittest.IsolatedAsyncioTestCase):
     async def test_stream_hides_internal_exception_and_question_text(self):
         question = "010-1234-5678 결제 기록 알려줘"
         request = main.ChatRequest(question=question, mode="auto")
-        with patch.object(main, "QUESTION_ENGINE_MODE", "legacy"), patch.object(
-            main, "_route_with_guard", return_value="PANDAS"
+        resolution = main.QuestionResolution(
+            main.check_question(question), "PANDAS", "QUERY_PLAN"
+        )
+        with patch.object(
+            main, "_resolve_llm_question", new=AsyncMock(return_value=resolution)
         ), patch.object(
             main, "_answer_pandas", new=AsyncMock(side_effect=RuntimeError("database-password"))
         ), patch.object(main.logger, "error") as logged:

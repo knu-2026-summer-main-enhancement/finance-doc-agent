@@ -21,9 +21,6 @@ VECTOR_RERANK_SCORE_MARGIN = max(
     0.0,
     float(os.getenv("VECTOR_RERANK_SCORE_MARGIN", "0.12")),
 )
-QUESTION_ENGINE_MODE = os.getenv("QUESTION_ENGINE_MODE", "legacy").strip().lower()
-if QUESTION_ENGINE_MODE not in {"legacy", "shadow", "llm"}:
-    QUESTION_ENGINE_MODE = "legacy"
 DATA_FOLDER         = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 API_KEY             = os.getenv("API_KEY", "")
 INGEST_ALLOWED_BASE = os.path.realpath(os.getenv("INGEST_ALLOWED_BASE", DATA_FOLDER))
