@@ -473,7 +473,12 @@ def _format_query_execution_result(
             f"{person_prefix}{result.target or '대상 컬럼'} {operation_label}은 "
             f"{formatted_value}{suffix}입니다."
         )
-    return answer + "\n\n" + _format_query_plan_evidence(result)
+    warning = (
+        _mask_warning(result.matched_frame)
+        if isinstance(result.matched_frame, pd.DataFrame)
+        else ""
+    )
+    return warning + answer + "\n\n" + _format_query_plan_evidence(result)
 
 # ---------------------------------------------------------------------------
 # 구조적 보강: 금액/기관/마스킹 답변 템플릿 일반화

@@ -32,7 +32,11 @@ from utils.semantic_schema import (
     is_person_name_column,
     is_source_column,
 )
-from utils.table_parser import IDENTITY_INTERNAL_COLS, normalize_person_name
+from utils.table_parser import (
+    IDENTITY_INTERNAL_COLS,
+    is_masked_name,
+    normalize_person_name,
+)
 
 
 _INTERNAL_COLUMNS = set(SYSTEM_COLUMNS) | set(IDENTITY_INTERNAL_COLS)
@@ -202,6 +206,46 @@ def _apply_filters(df: pd.DataFrame, plan: QueryPlan) -> pd.DataFrame:
         mask = _filter_mask(df, condition).astype(bool)
         combined = combined & mask if plan.filter_logic == "all" else combined | mask
     return df[combined].copy()
+
+
+def _annotate_masked_person_match(
+    frame: pd.DataFrame,
+    source: pd.DataFrame,
+    plan: QueryPlan,
+) -> pd.DataFrame:
+    """Preserve uncertainty when a real query name matched masked source data."""
+
+    if frame.empty:
+        return frame
+    for condition in plan.filters:
+        try:
+            column = _actual_column(source, condition.column)
+        except QueryPlanExecutionError:
+            continue
+        if (
+            condition.operator != "eq"
+            or not is_person_name_column(source, column)
+            or not is_masked_name(condition.value)
+        ):
+            continue
+        query_name = normalize_person_name(condition.source_text)
+        stored_name = normalize_person_name(condition.value)
+        if (
+            not query_name
+            or is_masked_name(query_name)
+            or len(query_name) != len(stored_name)
+            or not all(
+                expected == "*" or expected == actual
+                for expected, actual in zip(stored_name, query_name)
+            )
+        ):
+            continue
+        annotated = frame.copy()
+        annotated["_매칭유형"] = "masked_candidate_match"
+        annotated["_질문이름"] = str(condition.source_text)
+        annotated["_질문마스킹패턴"] = str(condition.value)
+        return annotated
+    return frame
 
 
 def _sort_rows(df: pd.DataFrame, plan: QueryPlan) -> pd.DataFrame:
@@ -393,6 +437,7 @@ def execute_query_plan(validation: PlanValidationResult) -> QueryExecutionResult
     df = validation.dataframe
     source_file = validation.source_file or str(plan.dataframe)
     filtered = _apply_filters(df, plan)
+    filtered = _annotate_masked_person_match(filtered, df, plan)
     raise_if_cancelled()
     filtered_rows = int(len(filtered))
 

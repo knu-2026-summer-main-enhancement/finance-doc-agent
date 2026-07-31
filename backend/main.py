@@ -288,6 +288,7 @@ class ChatRequest(BaseModel): #베이스모델 -> 제이슨으로 return
     question: str #질문 
     sources: list[str] = Field(default_factory=list) #선택한 원본 문서명
     mode: Literal["auto", "natural"] = "auto" #자동 분기 또는 자연어 의미 검색
+    route_hint: Literal["vector"] | None = None
 
     request_id: str | None = Field(default=None, max_length=100)
 
@@ -409,6 +410,7 @@ def chat_suggestions(
                             "text": f"{title} 알려줘",
                             "label": "문서 섹션",
                             "operation": "document_section_question",
+                            "route_hint": "vector",
                             "path": "vector",
                             "path_label": "AI 문서 검색",
                             "featured": True,
@@ -543,7 +545,7 @@ async def chat(
             force_numeric_vector = _is_numeric_eligibility_question(
                 req.question
             )
-            if req.mode == "natural":
+            if req.mode == "natural" or req.route_hint == "vector":
                 guard_result = check_question(req.question)
                 route = "VECTOR"
                 pandas_strategy = None
@@ -584,7 +586,10 @@ async def chat(
                         sources=[],
                     )
 
-            if _should_return_guide(guard_result, req.mode):
+            guard_mode = (
+                "natural" if req.route_hint == "vector" else req.mode
+            )
+            if _should_return_guide(guard_result, guard_mode):
                 logger.info("[GUARD] GUIDE | reason=%s", guard_result.reason_code)
                 return ChatResponse(
                     answer=build_guide_response(guard_result),
@@ -672,7 +677,7 @@ async def chat_stream(req: ChatRequest, _: None = Depends(_verify_api_key)):
                 if is_incomplete_question(req.question):
                     yield build_guide_response(check_question(req.question))
                     return
-                if req.mode == "natural":
+                if req.mode == "natural" or req.route_hint == "vector":
                     guard_result = check_question(req.question)
                     route = "VECTOR"
                     pandas_strategy = None
@@ -699,7 +704,10 @@ async def chat_stream(req: ChatRequest, _: None = Depends(_verify_api_key)):
                         )
                         return
 
-                if _should_return_guide(guard_result, req.mode):
+                guard_mode = (
+                    "natural" if req.route_hint == "vector" else req.mode
+                )
+                if _should_return_guide(guard_result, guard_mode):
                     logger.info("[GUARD] GUIDE(stream) | reason=%s", guard_result.reason_code)
                     yield build_guide_response(guard_result)
                     return

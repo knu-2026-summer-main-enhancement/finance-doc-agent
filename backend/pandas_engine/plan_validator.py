@@ -16,7 +16,11 @@ from pandas_engine.query_grounding import (
 )
 from pandas_engine.query_plan import FilterCondition, QueryPlan
 from utils.semantic_schema import SYSTEM_COLUMNS, infer_data_type, is_person_name_column
-from utils.table_parser import IDENTITY_INTERNAL_COLS
+from utils.table_parser import (
+    IDENTITY_INTERNAL_COLS,
+    is_masked_name,
+    normalize_person_name,
+)
 
 
 ValidationStatus = Literal[
@@ -387,6 +391,29 @@ def _is_grounded_person_display_value(
     )
 
 
+def _is_grounded_masked_person_value(
+    df: pd.DataFrame,
+    column: Hashable,
+    value: object,
+    source_text: str,
+) -> bool:
+    """Allow only a position-compatible masked name backed by query evidence."""
+
+    if not source_text or not is_person_name_column(df, column):
+        return False
+    stored = normalize_person_name(value)
+    query_name = normalize_person_name(source_text)
+    return bool(
+        is_masked_name(stored)
+        and not is_masked_name(query_name)
+        and len(stored) == len(query_name)
+        and all(
+            expected == "*" or expected == actual
+            for expected, actual in zip(stored, query_name)
+        )
+    )
+
+
 def _validate_string_filter_grounding(
     plan: QueryPlan,
     question: str,
@@ -415,6 +442,10 @@ def _validate_string_filter_grounding(
             if _normalized_string_evidence(value) in normalized_evidence:
                 continue
             if source_text and source_text in question and _is_grounded_person_display_value(
+                df, column, value, source_text
+            ):
+                continue
+            if source_text and source_text in question and _is_grounded_masked_person_value(
                 df, column, value, source_text
             ):
                 continue

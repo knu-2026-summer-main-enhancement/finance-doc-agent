@@ -14,6 +14,8 @@ from rag.deterministic_query_plan import (
     is_grounded_person_payment_existence_question,
 )
 from pandas_engine.plan_validator import validate_query_plan
+from pandas_engine.query_executor import execute_query_plan
+from pandas_engine.formatter import _format_query_execution_result
 
 
 class DeterministicQueryPlanTest(unittest.TestCase):
@@ -353,6 +355,46 @@ class DeterministicQueryPlanTest(unittest.TestCase):
         self.assertFalse(has_unmatched_person_field_reference(
             "\uae30\uacc4\uacfc \uc804\ud654\ubc88\ud638 \ubb50\uc57c?", dataframes={"df0": self.df}
         ))
+
+    def test_masked_person_lookup_selects_the_only_matching_sheet(self):
+        masked = pd.DataFrame({
+            "\ud68c\uc6d0\uba85": ["\uc774*\uad6c"],
+            "\uacb0\uc81c_\uae08\uc561": [30_000],
+        })
+        unrelated = pd.DataFrame({
+            "\ud68c\uc6d0\uba85": ["\uae40\ud604\uc218"],
+            "\uacb0\uc81c_\uae08\uc561": [10_000],
+        })
+
+        operation, plan = build_auto_schema_grounded_plan(
+            "\uc774\uacbd\uad6c \uae08\uc561 \uc5bc\ub9c8\uc57c?",
+            dataframes={"masked_sheet": masked, "other_sheet": unrelated},
+        )
+
+        self.assertEqual(operation, "lookup_amount")
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.dataframe, "masked_sheet")
+        self.assertEqual(plan.filters[0].value, "\uc774*\uad6c")
+        self.assertEqual(plan.filters[0].source_text, "\uc774\uacbd\uad6c")
+
+        validation = validate_query_plan(
+            plan,
+            question="\uc774\uacbd\uad6c \uae08\uc561 \uc5bc\ub9c8\uc57c?",
+            dataframes={"masked_sheet": masked, "other_sheet": unrelated},
+            source_by_alias={
+                "masked_sheet": "result.xlsx",
+                "other_sheet": "result.xlsx",
+            },
+            operation_hint=operation,
+        )
+        self.assertTrue(validation.is_executable)
+        result = execute_query_plan(validation)
+        answer = _format_query_execution_result(
+            result, "\uc774\uacbd\uad6c \uae08\uc561 \uc5bc\ub9c8\uc57c?"
+        )
+        self.assertEqual(result.value, 30_000)
+        self.assertIn("\uc774*\uad6c", answer)
+        self.assertIn("\ub9c8\uc2a4\ud0b9", answer)
 
     def test_period_top_person_becomes_ranked_group_sum(self):
         plan = self._plan(

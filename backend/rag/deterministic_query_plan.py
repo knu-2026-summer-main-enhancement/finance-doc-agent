@@ -818,6 +818,43 @@ def build_auto_schema_grounded_plan(
         and date_spec.start_month != date_spec.end_month
     ):
         return "structured_query", None
+    # One uploaded workbook can expose several DataFrames (for example, one
+    # per sheet). A person lookup is still deterministic when exactly one of
+    # those frames contains an exact or compatible masked-name match.
+    if (
+        _LEADING_PERSON_AMOUNT_LOOKUP.search(str(question or ""))
+        or _LEADING_PERSON_FIELD_LOOKUP.search(str(question or ""))
+    ):
+        grounded_person_frames: list[tuple[str, pd.DataFrame]] = []
+        for alias, frame in dataframes.items():
+            person = _first(
+                frame,
+                lambda item: (
+                    item.concept == "entity"
+                    and item.role == "entity_name"
+                    and item.qualifier == "person"
+                ),
+            )
+            if person is not None and _person_filter(
+                frame, person, question
+            ) is not None:
+                grounded_person_frames.append((alias, frame))
+        if len(grounded_person_frames) == 1:
+            alias, frame = grounded_person_frames[0]
+            lookup_hints = (
+                ("lookup_field", "structured_query")
+                if _LEADING_PERSON_FIELD_LOOKUP.search(str(question or ""))
+                else ("lookup_amount", "structured_query")
+            )
+            for lookup_hint in lookup_hints:
+                plan = build_schema_grounded_plan(
+                    question,
+                    dataframes={alias: frame},
+                    operation_hint=lookup_hint,
+                )
+                if plan is not None:
+                    return lookup_hint, plan
+
     normalized = re.sub(r"\s+", "", question).replace("번쨰", "번째")
     if (
         re.search(r"(?:비교|차이)", question)

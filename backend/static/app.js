@@ -77,6 +77,7 @@ const state = {
   ingestPolls: new Map(),
   sidebarSwipe: null,
   pendingVectorSeed: "",
+  pendingVectorSources: null,
 };
 
 const initialChat = elements.chatArea.innerHTML;
@@ -838,6 +839,8 @@ async function openDocumentSection(source, sectionId) {
     ask.addEventListener("click", () => {
       elements.detailDialog.close();
       elements.questionInput.value = `${section.title}에 대해 알려줘`;
+      state.pendingVectorSeed = section.title;
+      state.pendingVectorSources = [source];
       resizeTextarea();
       elements.questionInput.focus();
     });
@@ -999,12 +1002,18 @@ async function sendQuestion(question, options = {}) {
   const request = {
     question: value,
     request_id: requestId,
-    sources: options.sources ? [...options.sources] : [...state.selected],
+    sources: options.sources
+      ? [...options.sources]
+      : state.pendingVectorSources
+        ? [...state.pendingVectorSources]
+        : [...state.selected],
     mode: options.mode
       || (state.pendingVectorSeed ? "natural" : "")
       || (elements.naturalMode.checked ? "natural" : "auto"),
+    route_hint: state.pendingVectorSeed ? "vector" : null,
   };
   state.pendingVectorSeed = "";
+  state.pendingVectorSources = null;
   elements.questionInput.value = "";
   hideQuestionSuggestions();
   resizeTextarea();
@@ -1256,19 +1265,23 @@ async function showDocumentSectionsInChat(source, question) {
 function prepareSectionQuestion(title) {
   elements.questionInput.value = `${title} 알려줘`;
   state.pendingVectorSeed = title;
+  state.pendingVectorSources = null;
   resizeTextarea();
   elements.questionInput.focus();
 }
 
-function chooseQuestionSuggestion(text, operation = "") {
+function chooseQuestionSuggestion(text, operation = "", routeHint = "") {
   recordSuggestionUsage(operation);
   if (operation === "list_document_sections" && state.selected.size === 1) {
     showDocumentSectionsInChat([...state.selected][0], text);
     return;
   }
-  state.pendingVectorSeed = operation === "document_section_question"
+  state.pendingVectorSeed = (
+    routeHint === "vector" || operation === "document_section_question"
+  )
     ? text.trim().split(/\s+/).slice(0, -1).join(" ")
     : "";
+  state.pendingVectorSources = null;
   elements.questionInput.value = text;
   resizeTextarea();
   hideQuestionSuggestions();
@@ -1330,7 +1343,11 @@ function renderQuestionSuggestions(suggestions, query = elements.questionInput.v
     label.textContent = `${suggestion.label} · ${suggestion.path_label || "추천 질문"}`;
     button.append(main, label);
     button.addEventListener("pointerdown", (event) => event.preventDefault());
-    button.addEventListener("click", () => chooseQuestionSuggestion(suggestion.text, suggestion.operation));
+    button.addEventListener("click", () => chooseQuestionSuggestion(
+      suggestion.text,
+      suggestion.operation,
+      suggestion.route_hint,
+    ));
     button.addEventListener("mouseenter", () => setSuggestionIndex(index));
     elements.questionAutocomplete.append(button);
   });
@@ -1708,6 +1725,7 @@ elements.questionInput.addEventListener("input", () => {
     )
   ) {
     state.pendingVectorSeed = "";
+    state.pendingVectorSources = null;
   }
   resizeTextarea();
   scheduleRemotePersonSearch(elements.questionInput.value);

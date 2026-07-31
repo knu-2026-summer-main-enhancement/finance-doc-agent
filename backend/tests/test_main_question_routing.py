@@ -10,6 +10,31 @@ import main
 
 
 class MainQuestionPreRoutingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_hwp_section_route_hint_bypasses_pandas_classification(self):
+        vector_answer = AsyncMock(
+            return_value=("지원 대상은 학부 재학생입니다.", ["운영계획.hwp"], "vector")
+        )
+        with (
+            patch.object(
+                main,
+                "_resolve_llm_question",
+                side_effect=AssertionError("section hint must bypass classification"),
+            ),
+            patch.object(main, "_answer_vector", vector_answer),
+        ):
+            response = await main.chat(
+                main.ChatRequest(
+                    question="지원 대상 알려줘",
+                    sources=["운영계획.hwp"],
+                    route_hint="vector",
+                ),
+                None,
+            )
+
+        self.assertEqual(response.source, "vector")
+        self.assertEqual(response.sources, ["운영계획.hwp"])
+        vector_answer.assert_awaited_once()
+
     async def test_dp_auto_failure_delegates_to_llm_question_analysis(self):
         llm_decision = QuestionDecision.model_validate(
             {

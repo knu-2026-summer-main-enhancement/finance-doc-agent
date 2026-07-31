@@ -175,6 +175,10 @@ class GuardRoutingTest(unittest.TestCase):
 
         self.assertEqual(ChatRequest(question=question).mode, "auto")
         self.assertEqual(ChatRequest(question=question, mode="natural").mode, "natural")
+        self.assertEqual(
+            ChatRequest(question=question, route_hint="vector").route_hint,
+            "vector",
+        )
 
     def test_natural_mode_bypasses_only_semantic_guide_reasons(self):
         semantic_result = check_question("출연금액 합계 평균 알려줘")
