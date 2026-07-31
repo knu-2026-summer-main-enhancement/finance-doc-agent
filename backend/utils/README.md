@@ -17,7 +17,8 @@
 → 병합 셀·헤더·행 복원
 → 공통 표 정제
 → 의미 스키마 생성
-→ Parquet + ChromaDB + manifest
+→ Parquet + semantic sidecar + ChromaDB + manifest
+→ 완성된 DataFrame snapshot 교체
 ```
 
 ## E1. 이미지 처리와 병합 셀 복원
@@ -75,13 +76,20 @@ Excel은 읽기 전에 실제 병합 범위를 확인합니다. 병합된 그룹
 
 Google Sheets는 Excel과 같은 공통 표 파이프라인으로 연결할 수 있도록 원격 읽기와 인증 계층을 분리하는 것이 목표입니다.
 
-### PDF
+### PDF와 HWP/HWPX
 
-텍스트 PDF, 표 PDF, 스캔 PDF를 구분하고 표 추출 실패 시 OCR 경로를 선택하는 방향으로 발전시킵니다.
+현재 PDF는 `pdf-section-v2`, HWP/HWPX는 `hwp-section-v5` 구조로
+상위 섹션, 하위 청크와 표 행을 함께 적재합니다. 텍스트를 직접 추출할
+수 없는 PDF와 이미지 표에는 OCR 경로를 사용합니다. 파서 버전이
+바뀌면 manifest를 기준으로 다시 적재합니다.
 
 ### 과도한 병합 구조
 
 설명 행, 다단 헤더, 여러 표가 한 시트에 있는 문서를 독립 테이블로 나누는 검증을 계속 강화합니다.
+
+현재 의미 스키마 버전은 `2.4`입니다. 적재가 완료되기 전에는 기존
+DataFrame snapshot을 유지하고, 성공한 새 snapshot만 공유 상태로
+교체하므로 질문 도중 반쪽짜리 테이블이 노출되지 않습니다.
 
 ## 주요 파일
 
@@ -96,4 +104,3 @@ Google Sheets는 Excel과 같은 공통 표 파이프라인으로 연결할 수 
 | `parsers/pdf_parser.py` | PDF 본문·표 추출 |
 | `parsers/hwp_parser.py` | HWP/HWPX 변환 |
 | `parsers/image_table_ocr_parser.py` | 이미지 표 OCR |
-

@@ -68,10 +68,12 @@ flowchart TD
     Q[Question] --> SGP[Schema-Grounded Planner]
     SGP -->|Plan ready| V[Plan Validator]
     SGP -->|Cannot ground safely| LLM[LLM Question Analysis]
-    LLM --> QP[LLM QueryPlan]
+    LLM -->|PANDAS| QP[LLM QueryPlan]
     QP --> V
+    LLM -->|VECTOR| R[Document Retrieval]
+    LLM -->|GUIDE or DOCUMENTS| G[Guide or Document List]
     V -->|Valid| E[Deterministic Executor]
-    V -->|Needs clarification| G[Guide]
+    V -->|Needs clarification| G
 ```
 
 주요 변화:
@@ -81,6 +83,7 @@ flowchart TD
 - 이름, 마스킹 이름, 날짜 범위 경계 검증 통합
 - 다중 금액 컬럼은 질문으로 특정되지 않으면 첫 컬럼을 선택하지 않음
 - 빠른 계획이 불가능한 질문만 LLM 분석으로 이동
+- 현재 실행 경로에는 별도의 legacy/shadow 라우터가 없으며 이 단일 경계를 사용
 
 ## VECTOR 문서 검색
 
@@ -89,13 +92,17 @@ flowchart TD
 ```text
 질문
 → 검색어 확장
-→ 선택 문서 범위 안에서 유사도 검색
-→ 관련도 기준 통과 문서 선택
-→ 검색 근거와 질문을 LLM에 전달
+→ 선택 문서의 child chunk 검색
+→ 상대 점수 정책과 reranking
+→ 관련 parent section 확장
+→ 표 행·섹션 근거와 질문을 LLM에 전달
 → 답변
 ```
 
 검색 결과에 근거가 없으면 일반 지식이나 파일명으로 내용을 추측하지 않습니다.
+PDF와 HWP/HWPX는 문서 제목, 상위 섹션, 하위 청크와 표 행 메타데이터를
+함께 사용합니다. 섹션 브라우저에서 시작한 질문과 검증된 문서 질문은
+명시적 Vector route hint로 구조화 표 경로에 빠지지 않게 합니다.
 
 ## 자동완성
 
@@ -103,7 +110,9 @@ flowchart TD
 
 - 기본 E-O operation 질문
 - 문서에 존재하는 인물 이름과 가능한 조회 동작
-- 완전한 날짜 또는 연도·월 구조에서 가능한 날짜 질문
+- 전체·인물·기수 조건의 표 조회
+- 완전한 날짜 또는 연도·월 구조에서 가능한 목록·표·합계·인원 질문
+- `표`와 `테이블` 입력 표현을 유지한 문장 완성
 - 브라우저가 로컬에서 접두사를 비교하므로 키 입력마다 API나 LLM을 호출하지 않음
 
 ## 개인정보 보호 로그
@@ -130,4 +139,3 @@ error_type=<예외 클래스>
 | `pandas_rag.py` | PANDAS 처리 흐름 |
 | `vector.py` | ChromaDB 검색과 답변 |
 | `question_suggestions.py` | 자동완성 카탈로그 |
-

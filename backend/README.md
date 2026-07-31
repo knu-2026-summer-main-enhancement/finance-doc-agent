@@ -20,9 +20,13 @@ Finance Document Agent 백엔드의 실행 방법, API, 데이터 처리 구조�
 ```text
 질문
 → Schema-Grounded Planner
-→ QueryPlan 검증
-→ 결정적 필터·집계·정렬 실행
-→ 답변 + 인물 entity + 계산 reference
+├─ QueryPlan 생성 가능 → 검증 → 결정적 실행
+└─ 안전하게 생성 불가 → LLM Question Decision
+   ├─ PANDAS → 제한된 LLM QueryPlan → 검증 → 결정적 실행
+   ├─ VECTOR → 선택 문서 검색 → 근거 기반 답변
+   └─ GUIDE/DOCUMENTS → 안내 또는 문서 목록
+
+결정적 실행 → 답변 + 표/인물 entity + 계산 reference
 ```
 
 - 자주 쓰는 질문은 LLM 없이 현재 문서 스키마에 직접 연결합니다.
@@ -86,9 +90,16 @@ Finance Document Agent 백엔드의 실행 방법, API, 데이터 처리 구조�
 - 집계 operation, 대상 컬럼, 필터, 유효·제외 행 수
 - 계산 기여 행 상세조회 reference
 - 목록 및 상세 데이터 페이지 정보
+- 명시적 `표`·`테이블` 요청의 원본 컬럼과 행 데이터
 - 사용 문서와 검색 근거
 
 브라우저는 한국어 답변 문자열에서 이름이나 금액을 다시 추출하지 않습니다. 인물 카드와 금액 계산 근거는 API가 제공한 reference로 조회합니다.
+
+일반 `목록` 질문은 이름 중심으로 읽기 쉽게 답합니다. `표` 또는
+`테이블`을 명시하면 동일한 필터 결과를 원본 컬럼 순서의 HTML 표로
+렌더링하며, 200건을 넘는 결과는 `/chat/details/{reference}`로 다음
+페이지를 받아 기존 표에 추가합니다. 내부 파생 컬럼과 연락처는 대량
+표에서 제외합니다.
 
 개인정보 정책:
 
@@ -125,14 +136,16 @@ Finance Document Agent 백엔드의 실행 방법, API, 데이터 처리 구조�
 
 문서를 선택할 때 서버가 실행 가능한 질문 카탈로그를 제공합니다. 이후 일반적인 입력 필터링은 브라우저에서 수행하므로 키 입력마다 API나 LLM을 호출하지 않습니다.
 
-- 전체 목록·기록 수·합계
-- 문서에 존재하는 인물의 금액·기록·원본 필드
-- 연도·월·기간 목록과 집계
+- 전체 목록·전체 표·기록 수·합계
+- 문서에 존재하는 인물의 금액·기록·표·원본 필드
+- 연도·월·기간 목록, 표와 집계
 - 평균·중앙값·최댓값·최솟값·순위
 - 설명형 문서의 전체 섹션 및 주요 섹션 질문
 - 여러 문서에 공통으로 존재하는 스키마 질문
 
-화면에는 통합 순위가 높은 후보를 최대 3개만 표시합니다. 문서 규모가 큰 경우 인물 접두사 API를 별도로 사용합니다.
+화면에는 통합 순위가 높은 후보를 데스크톱 최대 3개, 모바일 최대
+2개만 표시합니다. 인물이 500명을 넘는 문서는 전체 이름을 브라우저에
+보내지 않고 지연 호출되는 접두사 API를 사용합니다.
 
 ## 데이터 저장
 
@@ -157,6 +170,7 @@ Finance Document Agent 백엔드의 실행 방법, API, 데이터 처리 구조�
 | `rag/vector.py` | 문서 검색, reranking, parent section 확장 |
 | `rag/question_suggestions.py` | 자동완성 후보 생성 |
 | `pandas_engine/` | 계획 검증, 실행, 답변, interactive payload |
+| `pandas_engine/presentation.py` | 명시적 표·테이블 표현 감지 |
 | `utils/` | 형식별 파서, 공통 적재, 의미 스키마 |
 | `static/` | 모바일 채팅 UI |
 
@@ -178,6 +192,8 @@ pip install -r requirements.txt
 ```
 
 `.env.example`을 참고해 PostgreSQL, ChromaDB, Ollama 설정을 준비합니다. 실제 `.env`는 커밋하지 않습니다.
+앱 시작 시 LLM과 임베딩 모델을 워밍업하며
+`WARMUP_TIMEOUT_SECONDS`로 각 워밍업 제한 시간을 설정합니다.
 
 기본 개발 환경:
 
@@ -228,7 +244,8 @@ cd backend
   --tag backend_readme_check
 ```
 
-Excel goldset은 `tests/goldsets/goldset.json`, 문서별 Vector goldset은
+Excel goldset은 `tests/goldsets/goldset.json`, 동명이인·LLM 계획
+goldset은 별도 JSON, 문서별 Vector goldset은
 `tests/goldsets/vector_goldset_*.json`에서 관리합니다. 실행 결과는
 `tests/results/`에 저장합니다. 자세한 실행법과 실패 분류 기준은
 [Testing and Goldset](tests/README.md)을 참고하세요. 정답률은 키워드

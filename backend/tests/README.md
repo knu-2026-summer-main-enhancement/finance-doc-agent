@@ -23,7 +23,7 @@
 .\venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
 ```
 
-현재 기준 전체 회귀 테스트는 423개입니다.
+현재 기준 전체 회귀 테스트는 436개입니다.
 
 ## 주요 테스트 범위
 
@@ -37,7 +37,7 @@
 | `test_query_executor.py` | 필터·집계·순위 |
 | `test_date_query.py` | 월, 연도, 기간 |
 | `test_interactive_result.py` | 인물 카드와 계산 상세 |
-| `test_question_suggestions.py` | 자동완성 |
+| `test_question_suggestions.py` | 목록·표·인물·날짜 자동완성 |
 | `test_privacy.py` | 질문 로그와 오류 정보 노출 |
 
 ## Goldset
@@ -46,6 +46,11 @@
 `tests/goldsets/goldset.json`입니다. Excel과 Vector 평가에 사용하는 원본
 질문 파일은 모두 `tests/goldsets/`에서 Git으로 추적하고, 실행 결과는
 `tests/results/`에 저장해 추적하지 않습니다.
+
+추가 구조화 평가 세트:
+
+- `interactive_identity_goldset.json`: 동명이인, 없는 이름, 필드 조회
+- `llm_query_plan_goldset.json`: LLM QueryPlan 생성이 필요한 중간 난도 질문
 
 평가 전에 현재 작업공간 서버인지 확인하고 8081 같은 격리 포트를 사용합니다.
 
@@ -104,4 +109,5 @@ Vector goldset:
 - 다중 날짜 컬럼
 - 동일 이름과 마스킹 이름
 - 200건 이상의 목록
+- `목록`과 `표` presentation 분리, 전체 원본 컬럼과 페이지 추가
 - 재적재 중 동시 질문
