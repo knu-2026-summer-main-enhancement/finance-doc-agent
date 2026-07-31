@@ -14,6 +14,7 @@ from pandas_engine.aggregation import (
 )
 from pandas_engine.money import money_values
 from pandas_engine.query_executor import QueryExecutionResult
+from pandas_engine.presentation import is_explicit_table_request
 from utils.semantic_schema import infer_column_meaning, is_source_column
 from utils.table_parser import IDENTITY_INTERNAL_COLS, normalize_identifier
 
@@ -250,6 +251,8 @@ def _format_list_result(df: pd.DataFrame, question: str = "") -> str:
             f"날짜 기준: {date_evidence.get('period', '')}"
             f" ({date_evidence.get('column', '날짜 컬럼')})\n"
         )
+    if is_explicit_table_request(question):
+        return warning + header + "조건에 맞는 원본 데이터를 아래 표로 표시했습니다."
 
     # A plain list request is primarily asking who matched. Keep every row
     # (including duplicate names that may represent separate people/payments)

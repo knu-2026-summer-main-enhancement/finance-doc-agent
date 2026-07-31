@@ -15,6 +15,7 @@ from pandas_engine.date_filter import parse_date_filter
 from pandas_engine.plan_validator import column_data_type
 from pandas_engine.query_grounding import parse_grounded_comparisons
 from pandas_engine.query_plan import FilterCondition, QueryPlan
+from pandas_engine.presentation import is_explicit_table_request
 from utils.semantic_schema import infer_column_meaning, is_source_column
 from utils.table_parser import is_masked_name, normalize_person_name
 
@@ -548,6 +549,7 @@ def build_schema_grounded_plan(
         lambda item: item.concept == "category" and item.qualifier == "cohort",
     )
     normalized_question = _norm(question)
+    table_request = is_explicit_table_request(question)
     broad_projection = bool(re.search(
         r"(?:전체\s*(?:기록|내역|회원)|모든\s*회원|각\s*회원|회원별)",
         question,
@@ -763,7 +765,7 @@ def build_schema_grounded_plan(
         # 사람") are not implicit output columns.  Keep the person label for
         # readable lists and return only explicitly requested projections.
         filter_columns = {item.column for item in filters}
-        select = tuple(dict.fromkeys((
+        select = () if table_request else tuple(dict.fromkeys((
             *((str(person),) if person is not None else ()),
             *(str(column) for column in requested if column != person and str(column) not in filter_columns),
         )))
@@ -771,7 +773,7 @@ def build_schema_grounded_plan(
             operation_hint != "list_records"
             and not filters
             and direction is None
-            and not (broad_projection and select)
+            and not ((broad_projection and select) or table_request)
         ):
             return None
         sort_column = money if money is not None and re.search(r"(?:금액|돈|회비|결제|납부|후원|기부)", question) else temporal
@@ -856,6 +858,7 @@ def build_auto_schema_grounded_plan(
                     return lookup_hint, plan
 
     normalized = re.sub(r"\s+", "", question).replace("번쨰", "번째")
+    table_request = is_explicit_table_request(question)
     if (
         re.search(r"(?:비교|차이)", question)
         and _MAX_VALUE.search(question)
@@ -891,6 +894,8 @@ def build_auto_schema_grounded_plan(
         r"(?:보여줘|보여|알려줘|조회해줘|확인해줘)?[?!.]*",
         normalized,
     ):
+        hints = ("list_records", "structured_query")
+    elif table_request:
         hints = ("list_records", "structured_query")
     elif broad_projection or missing_request:
         hints = ("structured_query",)

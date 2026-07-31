@@ -31,6 +31,7 @@ class _Template:
 _TEMPLATES = (
     _Template("현재 적재된 문서 목록 보여줘", "list_documents", "문서 목록"),
     _Template("전체 목록 보여줘", "list_records", "전체 목록", "list_records", "fast"),
+    _Template("전체 표로 보여줘", "list_records", "전체 표", "list_records", "fast"),
     _Template("전체 기록은 몇 건이야?", "count_records", "건수", "count_records", "fast"),
     _Template("전체 인원 몇 명이야?", "count_records", "인원", "count_records", "fast"),
     _Template("총 금액 얼마야?", "sum_amount", "합계", "sum_amount", "fast"),
@@ -275,6 +276,7 @@ def build_date_autocomplete_catalog(
         stem = f"{lead} {prefix}".strip()
         templates = (
             _Template(f"{stem} 목록 보여줘", "filter_records", "날짜 목록", "list_records", "fast"),
+            _Template(f"{stem} 표로 보여줘", "filter_records", "날짜 표", "list_records", "fast"),
             _Template(f"{stem} 금액 총합 알려줘", "sum_amount", "날짜 합계", "sum_amount", "fast"),
             _Template(f"{stem} 인원 몇 명이야?", "count_records", "날짜 인원", "count_records", "fast"),
         )
@@ -386,6 +388,7 @@ def _dynamic_templates(
         candidates.extend((
             _Template(f"{person_name} 금액 알려줘", "lookup_amount", "인물 금액", "lookup_amount", "fast", True),
             _Template(f"{person_name} 전체 기록 보여줘", "filter_records", "인물 기록", "filter_records", "fast", True),
+            _Template(f"{person_name} 기록을 표로 보여줘", "filter_records", "인물 표", "filter_records", "fast", True),
             _Template(f"{person_name} 전화번호 알려줘", "lookup_field", "전화번호", "lookup_field", "fast", True),
             _Template(f"{person_name} 이메일 알려줘", "lookup_field", "이메일", "lookup_field", "fast", True),
             _Template(f"{person_name} 학과 알려줘", "lookup_field", "학과", "lookup_field", "fast", True),
@@ -394,13 +397,23 @@ def _dynamic_templates(
     # A condition literal is supplied by the user, never invented from source
     # rows. This adds filter_records without exposing metadata values.
     if re.fullmatch(r"(?:\d{1,3}\s*기|(?:19|20)\d{2}\s*년)", stripped):
-        candidates.append(_Template(
-            f"{stripped} 기록 알려줘",
-            "filter_records",
-            "조건 목록",
-            "filter_records",
-            "fast",
-            True,
+        candidates.extend((
+            _Template(
+                f"{stripped} 기록 알려줘",
+                "filter_records",
+                "조건 목록",
+                "filter_records",
+                "fast",
+                True,
+            ),
+            _Template(
+                f"{stripped} 표로 보여줘",
+                "filter_records",
+                "조건 표",
+                "filter_records",
+                "fast",
+                True,
+            ),
         ))
     return tuple(candidates)
 

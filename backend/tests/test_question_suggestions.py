@@ -93,6 +93,7 @@ class QuestionSuggestionsTest(unittest.TestCase):
         self.assertTrue(catalog["actions"])
         self.assertTrue(all(action["suffix"] for action in catalog["actions"]))
         self.assertTrue(all(action["path"] == "fast" for action in catalog["actions"]))
+        self.assertTrue(any("표로 보여줘" in action["suffix"] for action in catalog["actions"]))
 
     def test_person_prefix_matches_are_limited_and_mask_aware(self):
         dataframes = {"payments": _payment_dataframe()}
@@ -157,8 +158,9 @@ class QuestionSuggestionsTest(unittest.TestCase):
 
         self.assertEqual(
             [action["operation"] for action in catalog["actions"]],
-            ["filter_records", "sum_amount", "count_records"],
+            ["filter_records", "filter_records", "sum_amount", "count_records"],
         )
+        self.assertTrue(any("표로 보여줘" in action["suffix"] for action in catalog["actions"]))
 
     def test_date_catalog_supports_separate_year_month_columns(self):
         dataframes = {"payments": _document_dataframe({
@@ -181,7 +183,19 @@ class QuestionSuggestionsTest(unittest.TestCase):
         catalog = build_date_autocomplete_catalog(dataframes)
         operations = [action["operation"] for action in catalog["actions"]]
 
-        self.assertEqual(operations, ["filter_records", "count_records"])
+        self.assertEqual(
+            operations,
+            ["filter_records", "filter_records", "count_records"],
+        )
+
+    def test_whole_and_condition_table_suggestions_are_schema_grounded(self):
+        dataframes = {"payments": _payment_dataframe()}
+
+        whole = build_question_suggestions("표", dataframes=dataframes, limit=20)
+        conditioned = build_question_suggestions("49기", dataframes=dataframes, limit=20)
+
+        self.assertTrue(any(item["text"] == "전체 표로 보여줘" for item in whole))
+        self.assertTrue(any(item["text"] == "49기 표로 보여줘" for item in conditioned))
 
     def test_date_catalog_rejects_month_only_and_missing_date_schemas(self):
         month_only = {"payments": _document_dataframe({

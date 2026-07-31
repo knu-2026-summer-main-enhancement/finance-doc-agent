@@ -16,6 +16,7 @@ import pandas as pd
 
 from pandas_engine.query_executor import QueryExecutionResult
 from pandas_engine.money import parse_money_value
+from pandas_engine.presentation import is_explicit_table_request
 from utils.semantic_schema import SYSTEM_COLUMNS, infer_column_meaning, is_source_column
 from utils.table_parser import IDENTITY_INTERNAL_COLS, normalize_person_name
 
@@ -566,8 +567,15 @@ def _inline_segments(answer: str, entities: list[dict[str, Any]], calculation: d
     return segments
 
 
-def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 200, answer: str | None = None) -> dict[str, Any]:
+def build_interactive_result(
+    result: QueryExecutionResult,
+    *,
+    page_size: int = 200,
+    answer: str | None = None,
+    question: str | None = None,
+) -> dict[str, Any]:
     """Return a bounded JSON-safe result contract for the current execution."""
+    table_request = is_explicit_table_request(question)
     frame = result.value if isinstance(result.value, pd.DataFrame) else result.matched_frame
     is_record_result = isinstance(result.value, pd.DataFrame)
     records: list[dict[str, Any]] = []
@@ -670,7 +678,7 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 2
         _store_detail(records_detail_ref, {
             "version": "1",
             "kind": "records_detail",
-            "title": "조회 결과 전체 목록",
+            "title": "조회 결과 전체 표" if table_request else "조회 결과 전체 목록",
             "_record_frame": frame,
             "_entity_frame": result.matched_frame,
         })
@@ -713,6 +721,10 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 2
         }
         if result.operation == "mean" and result.value is not None:
             calculation["formula"] = {"numerator": _json_value(result.value * result.valid_rows), "denominator": result.valid_rows}
+    table = None
+    if is_record_result and table_request:
+        columns = list(records[0]) if records else []
+        table = {"columns": columns, "rows": records}
     payload = {
         "version": "1",
         "kind": "records" if is_record_result else "scalar",
@@ -723,6 +735,7 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 2
         "calculation": calculation,
         "records_detail_ref": records_detail_ref,
         "person_detail": person_detail,
+        "table": table,
         "page": {"offset": 0, "limit": page_size, "total": total, "has_more": total > page_size} if is_record_result else None,
     }
     if answer is not None:
@@ -782,8 +795,15 @@ def build_interactive_result(result: QueryExecutionResult, *, page_size: int = 2
     return payload
 
 
-def build_interactive_dataframe(frame: pd.DataFrame, *, page_size: int = 200, answer: str | None = None) -> dict[str, Any]:
+def build_interactive_dataframe(
+    frame: pd.DataFrame,
+    *,
+    page_size: int = 200,
+    answer: str | None = None,
+    question: str | None = None,
+) -> dict[str, Any]:
     """Structured view for verified legacy/direct dataframe queries."""
+    table_request = is_explicit_table_request(question)
     records = _visible_records(frame, limit=page_size)
     inline_entities = []
     seen_entity_ids: set[str] = set()
@@ -818,14 +838,19 @@ def build_interactive_dataframe(frame: pd.DataFrame, *, page_size: int = 200, an
         _store_detail(records_detail_ref, {
             "version": "1",
             "kind": "records_detail",
-            "title": "조회 결과 전체 목록",
+            "title": "조회 결과 전체 표" if table_request else "조회 결과 전체 목록",
             "_record_frame": frame,
             "_entity_frame": frame,
         })
+    table = None
+    if table_request:
+        columns = list(records[0]) if records else []
+        table = {"columns": columns, "rows": records}
     payload = {
         "version": "1", "kind": "records", "operation": "list",
         "records": records, "entities": entities, "name_list": name_list, "calculation": None,
         "records_detail_ref": records_detail_ref,
+        "table": table,
         "page": {"offset": 0, "limit": page_size, "total": int(len(frame)), "has_more": len(frame) > page_size},
     }
     if answer is not None:

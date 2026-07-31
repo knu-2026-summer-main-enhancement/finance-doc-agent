@@ -57,6 +57,28 @@ class DeterministicQueryPlanTest(unittest.TestCase):
             )
         )
 
+    def test_explicit_table_request_keeps_all_source_columns(self):
+        operation, plan = build_auto_schema_grounded_plan(
+            "2025년 표로 보여줘",
+            dataframes={"payments": self.df},
+        )
+
+        self.assertEqual(operation, "list_records")
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.operation, "list")
+        self.assertEqual(plan.select, ())
+        self.assertTrue(
+            any(item.column == "년" and item.value == 2025 for item in plan.filters)
+        )
+
+    def test_person_name_containing_pyo_does_not_trigger_table_mode(self):
+        operation, _ = build_auto_schema_grounded_plan(
+            "표세웅 목록 보여줘",
+            dataframes={"payments": self.df},
+        )
+
+        self.assertNotEqual(operation, "list_records")
+
     def test_person_lookup_uses_only_canonical_person_filter(self):
         dataframe = pd.DataFrame(
             {

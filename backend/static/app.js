@@ -945,10 +945,52 @@ function appendRecordRows(message, records, columns, recordEntities = [], bullet
   body.insertBefore(continuation, evidence || null);
 }
 
+function appendTableRows(tableBody, records, columns) {
+  (records || []).forEach((record) => {
+    const row = document.createElement("tr");
+    columns.forEach((column) => {
+      const cell = document.createElement("td");
+      const value = record?.[column];
+      cell.textContent = value === null || value === undefined || value === "" ? "-" : String(value);
+      row.append(cell);
+    });
+    tableBody.append(row);
+  });
+}
+
+function renderStructuredTable(message, table) {
+  if (!table?.columns?.length) return false;
+  const body = message.querySelector(".message-body");
+  const wrapper = document.createElement("div");
+  wrapper.className = "structured-result-table-wrap";
+  wrapper.tabIndex = 0;
+  wrapper.setAttribute("role", "region");
+  wrapper.setAttribute("aria-label", "조회 결과 표");
+  const element = document.createElement("table");
+  element.className = "structured-result-table";
+  const head = document.createElement("thead");
+  const heading = document.createElement("tr");
+  table.columns.forEach((column) => {
+    const cell = document.createElement("th");
+    cell.scope = "col";
+    cell.textContent = column;
+    heading.append(cell);
+  });
+  head.append(heading);
+  const rows = document.createElement("tbody");
+  appendTableRows(rows, table.rows, table.columns);
+  element.append(head, rows);
+  wrapper.append(element);
+  body.append(wrapper);
+  return true;
+}
+
 function appendRecordsMoreAction(message, result) {
   const page = result?.page;
   if (!result?.records_detail_ref || !page?.has_more) return;
-  const columns = [...new Set((result.records || []).flatMap((record) => Object.keys(record || {})))];
+  const columns = result.table?.columns?.length
+    ? result.table.columns
+    : [...new Set((result.records || []).flatMap((record) => Object.keys(record || {})))];
   const bulletList = /^\s*-\s+/m.test(message.querySelector(".message-body").textContent);
   const action = document.createElement("button");
   action.type = "button";
@@ -969,10 +1011,15 @@ function appendRecordsMoreAction(message, result) {
       );
       if (!response.ok) throw new Error(await errorMessage(response));
       const detail = await response.json();
-      appendRecordRows(
-        message, detail.records, columns, detail.record_entities || [], bulletList,
-        result.records_detail_ref,
-      );
+      const tableBody = message.querySelector(".structured-result-table tbody");
+      if (tableBody) {
+        appendTableRows(tableBody, detail.records, columns);
+      } else {
+        appendRecordRows(
+          message, detail.records, columns, detail.record_entities || [], bulletList,
+          result.records_detail_ref,
+        );
+      }
       offset = (Number(detail.page?.offset) || offset) + (detail.records?.length || 0);
       if (detail.page?.has_more) {
         updateLabel(Number(detail.page.total) || offset);
@@ -1041,12 +1088,15 @@ async function sendQuestion(question, options = {}) {
       false,
       data.evidence || [],
     );
-    const renderedNameList = renderExpandableNameList(
+    const renderedTable = renderStructuredTable(message, data.result?.table);
+    const renderedNameList = !renderedTable && renderExpandableNameList(
       message.querySelector(".message-body"), data.result?.name_list,
       data.result?.records_detail_ref, data.answer || "",
     );
-    if (!renderedNameList) {
+    if (!renderedNameList && !renderedTable) {
       renderInlineSegments(message.querySelector(".message-body"), data.result?.inline_segments, data.answer || "");
+    }
+    if (renderedTable || !renderedNameList) {
       appendRecordsMoreAction(message, data.result);
     }
   } catch (error) {
@@ -1587,7 +1637,11 @@ function rankDateCompletions(query) {
     ...action,
     text: `${action.lead ? `${action.lead} ` : ""}${prefix} ${action.suffix}`,
     category: "date",
-  }));
+  })).map((candidate) => (
+    /테이블/u.test(query) && /표로/u.test(candidate.text)
+      ? { ...candidate, text: candidate.text.replace("표로", "테이블로") }
+      : candidate
+  ));
   const normalizedQuery = normalizedSuggestionText(query);
   return candidates.filter((candidate) => normalizedSuggestionText(candidate.text).startsWith(normalizedQuery));
 }
@@ -1623,7 +1677,15 @@ function rankUnifiedSuggestions(query) {
     ...rankPersonCompletions(query),
     ...rankDateCompletions(query),
     ...state.suggestionCatalog.map((suggestion) => ({ ...suggestion, category: "general" })),
-  ];
+  ].map((candidate) => (
+    /테이블/u.test(query) && /표로/u.test(candidate.text)
+      ? {
+          ...candidate,
+          text: candidate.text.replace("표로", "테이블로"),
+          label: String(candidate.label || "").replace("표", "테이블"),
+        }
+      : candidate
+  ));
   const seen = new Set();
   const ranked = candidates
     .map((candidate, index) => scoreSuggestionCandidate(candidate, query, index))
@@ -1659,7 +1721,7 @@ function showLocalQuestionSuggestions() {
   const query = elements.questionInput.value.trim();
   const dateState = dateExpressionState(query);
   const rangeHint = dateState.rangePending
-    ? "종료 날짜를 입력하면 기간 목록·합계·인원 질문을 추천합니다."
+    ? "종료 날짜를 입력하면 기간 목록·표·합계·인원 질문을 추천합니다."
     : "";
   renderQuestionSuggestions(rankUnifiedSuggestions(query), query, rangeHint);
 }

@@ -925,7 +925,9 @@ def _format_direct_dataframe_with_evidence(
         unique_people = int(df[person_column].dropna().nunique())
         lines.append(f"- 조건 충족 고유 인원: {unique_people:,}명")
     answer = "\n".join(lines)
-    _interactive_result.set(build_interactive_dataframe(df, answer=answer))
+    _interactive_result.set(
+        build_interactive_dataframe(df, answer=answer, question=question)
+    )
     return answer
 
 
@@ -964,7 +966,9 @@ async def _answer_query_plan(
             )
             raise_if_cancelled()
             answer = _format_query_execution_result(execution, question)
-            _interactive_result.set(build_interactive_result(execution, answer=answer))
+            _interactive_result.set(
+                build_interactive_result(execution, answer=answer, question=question)
+            )
             logger.info("[PANDAS] 스키마 기반 선행 계획 실행 | operation=%s", execution.operation)
             return answer, [execution.source_file], "pandas"
     try:
@@ -994,7 +998,9 @@ async def _answer_query_plan(
                 )
                 raise_if_cancelled()
                 answer = _format_query_execution_result(execution, question)
-                _interactive_result.set(build_interactive_result(execution, answer=answer))
+                _interactive_result.set(
+                    build_interactive_result(execution, answer=answer, question=question)
+                )
                 logger.warning("[PANDAS] 스키마 기반 폴백 계획 실행 | operation=%s", execution.operation)
                 return answer, [execution.source_file], "pandas"
         return (
@@ -1053,7 +1059,9 @@ async def _answer_query_plan(
                 )
                 raise_if_cancelled()
                 answer = _format_query_execution_result(execution, question)
-                _interactive_result.set(build_interactive_result(execution, answer=answer))
+                _interactive_result.set(
+                    build_interactive_result(execution, answer=answer, question=question)
+                )
                 logger.warning("[PANDAS] 검증 실패 후 스키마 기반 폴백 실행 | operation=%s", execution.operation)
                 return answer, [execution.source_file], "pandas"
         if any(
@@ -1089,7 +1097,9 @@ async def _answer_query_plan(
         execution.source_file,
     )
     answer = _format_query_execution_result(execution, question)
-    _interactive_result.set(build_interactive_result(execution, answer=answer))
+    _interactive_result.set(
+        build_interactive_result(execution, answer=answer, question=question)
+    )
     return answer, [execution.source_file], "pandas"
 
 

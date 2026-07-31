@@ -200,6 +200,13 @@ button { color: inherit; }
 .records-more-button { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--accent-dark); background: #fff; font-size: 12px; font-weight: 800; cursor: pointer; transition: .15s ease; }
 .records-more-button:hover { border-color: var(--accent); background: var(--accent-soft); transform: translateY(-1px); }
 .record-continuation { white-space: pre-wrap; }
+.structured-result-table-wrap { overflow-x: auto; max-width: 100%; margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; background: #fff; -webkit-overflow-scrolling: touch; }
+.structured-result-table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; color: #27332d; font-size: 12px; line-height: 1.45; }
+.structured-result-table th, .structured-result-table td { max-width: 260px; padding: 9px 11px; border-right: 1px solid #e7ebe8; border-bottom: 1px solid #e7ebe8; text-align: left; vertical-align: top; white-space: nowrap; }
+.structured-result-table th { position: sticky; top: 0; z-index: 1; color: #435249; background: #f4f7f5; font-size: 11px; font-weight: 800; }
+.structured-result-table th:last-child, .structured-result-table td:last-child { border-right: 0; }
+.structured-result-table tbody tr:last-child td { border-bottom: 0; }
+.structured-result-table tbody tr:nth-child(even) td { background: #fafcfb; }
 .expandable-name-list { margin-top: 8px; }
 .expandable-name-extra { overflow: hidden; }
 .expandable-name-extra[hidden] { display: none; }

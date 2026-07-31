@@ -46,6 +46,17 @@ class InteractiveResultTest(unittest.TestCase):
         self.assertIn("전화번호", [a["column"] for a in detail["attributes"]])
         self.assertFalse({"source", "표시명", "엔티티 타입", "person_candidate_key"} & {a["column"] for a in detail["attributes"]})
 
+    def test_explicit_table_payload_uses_visible_source_columns(self):
+        result = build_interactive_result(
+            self._execute("list"),
+            question="전체 테이블 보여줘",
+        )
+
+        self.assertEqual(result["table"]["columns"], ["회원명", "전공", "결제 금액"])
+        self.assertEqual(len(result["table"]["rows"]), 2)
+        self.assertNotIn("전화번호", result["table"]["columns"])
+        self.assertNotIn("source", result["table"]["columns"])
+
     def test_mean_has_formula_and_bounded_contributors(self):
         result = build_interactive_result(self._execute("mean", "결제 금액"), page_size=1)
         calculation = result["calculation"]
