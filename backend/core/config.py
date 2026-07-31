@@ -8,6 +8,7 @@ import os
 OLLAMA_BASE_URL     = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL        = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
 EMBED_MODEL         = os.getenv("EMBED_MODEL", "bge-m3")
+WARMUP_TIMEOUT_SECONDS = max(1.0, float(os.getenv("WARMUP_TIMEOUT_SECONDS", "120")))
 CHROMA_HOST         = os.getenv("CHROMA_HOST", "localhost")
 CHROMA_PORT         = int(os.getenv("CHROMA_PORT", "8000"))
 COLLECTION_NAME     = os.getenv("COLLECTION_NAME", "scholarship_rules")

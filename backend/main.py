@@ -43,7 +43,7 @@ from utils.document_structure import (
     suggested_section_titles,
 )
 from core.config import (
-    OLLAMA_BASE_URL, OLLAMA_MODEL, EMBED_MODEL,
+    OLLAMA_BASE_URL, OLLAMA_MODEL, EMBED_MODEL, WARMUP_TIMEOUT_SECONDS,
     CHROMA_HOST, CHROMA_PORT, DATA_FOLDER,
 )
 from core.security import _verify_api_key, _validate_ingest_path
@@ -250,11 +250,15 @@ async def lifespan(app: FastAPI): #비동기 함수 (돌아가는 동안 다른�
         logger.info("LLM 워밍업 중... (model=%s)", OLLAMA_MODEL) #llm
         await asyncio.wait_for(
             get_llm_rag().ainvoke("안녕"),
-            timeout=15,
+            timeout=WARMUP_TIMEOUT_SECONDS,
         ) #워밍업
         logger.info("LLM 워밍업 완료") 
     except TimeoutError:
-        logger.warning("LLM 워밍업 시간 초과 | model=%s timeout=15s", OLLAMA_MODEL)
+        logger.warning(
+            "LLM 워밍업 시간 초과 | model=%s timeout=%ss",
+            OLLAMA_MODEL,
+            WARMUP_TIMEOUT_SECONDS,
+        )
     except Exception as e:
         logger.warning("LLM 워밍업 실패 | model=%s err=%s", OLLAMA_MODEL, e)
     try:
@@ -267,11 +271,15 @@ async def lifespan(app: FastAPI): #비동기 함수 (돌아가는 동안 다른�
                 ).embed_query,
                 "안녕",
             ),
-            timeout=15,
+            timeout=WARMUP_TIMEOUT_SECONDS,
         ) #워밍업
         logger.info("임베딩 워밍업 완료")
     except TimeoutError:
-        logger.warning("임베딩 워밍업 시간 초과 | model=%s timeout=15s", EMBED_MODEL)
+        logger.warning(
+            "임베딩 워밍업 시간 초과 | model=%s timeout=%ss",
+            EMBED_MODEL,
+            WARMUP_TIMEOUT_SECONDS,
+        )
     except Exception as e:
         logger.warning("임베딩 워밍업 실패 | model=%s err=%s", EMBED_MODEL, e)
 
