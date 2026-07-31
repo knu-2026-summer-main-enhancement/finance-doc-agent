@@ -76,6 +76,7 @@ const state = {
   documentsLoaded: false,
   ingestPolls: new Map(),
   sidebarSwipe: null,
+  pendingVectorSeed: "",
 };
 
 const initialChat = elements.chatArea.innerHTML;
@@ -999,8 +1000,11 @@ async function sendQuestion(question, options = {}) {
     question: value,
     request_id: requestId,
     sources: options.sources ? [...options.sources] : [...state.selected],
-    mode: options.mode || (elements.naturalMode.checked ? "natural" : "auto"),
+    mode: options.mode
+      || (state.pendingVectorSeed ? "natural" : "")
+      || (elements.naturalMode.checked ? "natural" : "auto"),
   };
+  state.pendingVectorSeed = "";
   elements.questionInput.value = "";
   hideQuestionSuggestions();
   resizeTextarea();
@@ -1251,6 +1255,7 @@ async function showDocumentSectionsInChat(source, question) {
 
 function prepareSectionQuestion(title) {
   elements.questionInput.value = `${title} 알려줘`;
+  state.pendingVectorSeed = title;
   resizeTextarea();
   elements.questionInput.focus();
 }
@@ -1261,6 +1266,9 @@ function chooseQuestionSuggestion(text, operation = "") {
     showDocumentSectionsInChat([...state.selected][0], text);
     return;
   }
+  state.pendingVectorSeed = operation === "document_section_question"
+    ? text.trim().split(/\s+/).slice(0, -1).join(" ")
+    : "";
   elements.questionInput.value = text;
   resizeTextarea();
   hideQuestionSuggestions();
@@ -1693,6 +1701,14 @@ elements.chatForm.addEventListener("submit", (event) => {
   sendQuestion(elements.questionInput.value);
 });
 elements.questionInput.addEventListener("input", () => {
+  if (
+    state.pendingVectorSeed
+    && !normalizedSuggestionText(elements.questionInput.value).includes(
+      normalizedSuggestionText(state.pendingVectorSeed)
+    )
+  ) {
+    state.pendingVectorSeed = "";
+  }
   resizeTextarea();
   scheduleRemotePersonSearch(elements.questionInput.value);
   scheduleQuestionSuggestions();
