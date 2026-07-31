@@ -861,6 +861,46 @@ class VectorRetrievalTests(unittest.TestCase):
         self.assertIn("미달합니다", answer)
         self.assertIn("추천할 수 없습니다", answer)
 
+    def test_numeric_criteria_terms_are_not_false_exclusion_reasons(self):
+        answer = _explicit_numeric_criteria_answer(
+            "최상훈 장학금은 직전학기 평점평균이 3.4이고 "
+            "총평점평균이 3.8이면 받을 수 있어?",
+            [
+                Document(page_content=(
+                    "직전학기 평점평균 3.5 이상이며, "
+                    "총평점 평균이 3.5 이상인 자"
+                )),
+                Document(
+                    page_content=(
+                        "[문서: 최상훈 장학금 선발계획]\n"
+                        "추천 제외\n"
+                        "- 초과학기자 및 졸업 예정자 제외"
+                    ),
+                    metadata={"section_title": "추천 제외"},
+                ),
+            ],
+        )
+
+        self.assertIn("직전학기 평점평균 3.4", answer)
+        self.assertIn("미달합니다", answer)
+        self.assertIn("추천할 수 없습니다", answer)
+        self.assertNotIn("선발 제한 조건에", answer)
+
+    def test_explicit_excluded_subject_still_blocks_numeric_eligibility(self):
+        answer = _explicit_numeric_criteria_answer(
+            "초과학기자가 직전학기 평점평균 4.0이면 받을 수 있어?",
+            [
+                Document(page_content="직전학기 평점평균 3.5 이상"),
+                Document(
+                    page_content="- 초과학기자 및 졸업 예정자 제외",
+                    metadata={"section_title": "추천 제외"},
+                ),
+            ],
+        )
+
+        self.assertIn("초과학기자", answer)
+        self.assertIn("선발될 수 없습니다", answer)
+
     def test_bare_selection_word_does_not_trigger_criteria_guard(self):
         docs = [Document(page_content="추진 일정과 담당 업무")]
 

@@ -573,15 +573,18 @@ def _explicit_numeric_criteria_answer(
         and term not in {"장학생", "장학금", "선발", "기준", "자격"}
     }
     for doc in documents:
-        text = str(doc.page_content)
-        if not re.search(
-            r"제한|제외|불가|금지",
-            str(doc.metadata.get("section_title", "")) + " " + text,
-        ):
-            continue
-        for term in question_terms:
-            if term in text and term not in exclusion_hits:
-                exclusion_hits.append(term)
+        # A section title such as "추천 제외" can cover a long chunk that also
+        # repeats the document title and ordinary score terminology. Matching
+        # a query term anywhere in that chunk turns harmless words such as
+        # "직전학기" into a false exclusion. Require the term and the actual
+        # restriction predicate to occur in the same source line.
+        for raw_line in str(doc.page_content).splitlines():
+            line = re.sub(r"\s+", " ", raw_line).strip(" -*◦")
+            if not re.search(r"제한|제외|불가|금지", line):
+                continue
+            for term in question_terms:
+                if term in line and term not in exclusion_hits:
+                    exclusion_hits.append(term)
     if exclusion_hits:
         return (
             "수치 기준과 별개로 문서의 선발 제한 조건에 "
